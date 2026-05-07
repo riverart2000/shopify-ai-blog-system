@@ -22,8 +22,9 @@ import shopify_client
 import state
 from config import StoreConfig
 from providers import AllModelsFailedError
-from services import image_service, llm_service, title_service
+from services import image_service, llm_service, logo_service, title_service
 from services.quality_service import html_to_review_text, review_draft
+from utils import text_to_html
 
 router = APIRouter()
 logger = logging.getLogger("ai_blog_server")
@@ -226,6 +227,194 @@ async def api_errors(request: Request, store_id: str = "", limit: int = 30):
     return {"errors": rows}
 
 
+# --- Schedule CRUD ---
+
+@router.get("/api/schedule/jobs")
+async def api_schedule_jobs(request: Request, store_id: str = ""):
+    """Return all jobs for a store. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    rows = await db.get_scheduled_jobs(sid) if sid else []
+    return {"jobs": rows, "store_id": sid}
+
+
+class JobUpsertRequest(BaseModel):
+    store_id: str = ""
+    job_id: str = ""
+    name: str
+    prompt_id: str
+    blog_handle: str = "news"
+    author: str = ""
+    cron_expr: str
+    timezone: str = "UTC"
+    is_active: bool = True
+    is_product_blog: bool = False
+    use_keyword_pool: bool = False
+
+
+@router.post("/api/schedule/save")
+async def api_schedule_save(request: Request, payload: JobUpsertRequest):
+    """Create or update a scheduled job. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="store_id is required")
+
+    if not payload.name.strip() or not payload.cron_expr.strip() or not payload.prompt_id.strip():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name, prompt_id and cron_expr are required")
+
+    try:
+        from croniter import croniter as _croniter  # type: ignore
+        if not _croniter.is_valid(payload.cron_expr.strip()):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid cron expression (use 5-field format)")
+        import datetime
+        _next = int(_croniter(payload.cron_expr.strip(), datetime.datetime.utcnow()).get_next(float))
+    except ImportError:
+        _next = None
+
+    job_id = await db.upsert_job({
+        "id": payload.job_id.strip() or None,
+        "store_id": sid,
+        "name": payload.name.strip(),
+        "prompt_id": payload.prompt_id.strip(),
+        "blog_handle": payload.blog_handle.strip() or "news",
+        "author": payload.author.strip(),
+        "cron_expr": payload.cron_expr.strip(),
+        "timezone": payload.timezone.strip() or "UTC",
+        "is_active": 1 if payload.is_active else 0,
+        "next_run_at": _next,
+        "is_product_blog": 1 if payload.is_product_blog else 0,
+        "use_keyword_pool": 1 if payload.use_keyword_pool else 0,
+    })
+    return {"ok": True, "job_id": job_id}
+
+
+@router.post("/api/schedule/delete")
+async def api_schedule_delete(request: Request):
+    """Delete a scheduled job by id. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    job_id = (body.get("job_id") or "").strip()
+    if not job_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="job_id is required")
+    await db.delete_job(job_id)
+    return {"ok": True}
+
+
+@router.post("/api/schedule/toggle")
+async def api_schedule_toggle(request: Request):
+    """Toggle a job's is_active flag. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    job_id = (body.get("job_id") or "").strip()
+    is_active = bool(body.get("is_active", True))
+    if not job_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="job_id is required")
+    # Fetch all jobs across all stores to find this one
+    import aiosqlite as _aiosqlite
+    from db.base import get_db_path as _get_db_path
+    async with _aiosqlite.connect(_get_db_path()) as _db:
+        _db.row_factory = _aiosqlite.Row
+        async with _db.execute("SELECT * FROM scheduled_jobs WHERE id=?", (job_id,)) as _cur:
+            row = await _cur.fetchone()
+    if row:
+        job = dict(row)
+        try:
+            from croniter import croniter as _croniter  # type: ignore
+            import datetime
+            _next = int(_croniter(job["cron_expr"], datetime.datetime.utcnow()).get_next(float)) if is_active else job.get("next_run_at")
+        except Exception:
+            _next = job.get("next_run_at")
+        await db.upsert_job({**job, "is_active": 1 if is_active else 0, "next_run_at": _next})
+    return {"ok": True}
+
+
+# --- Prompts CRUD ---
+
+@router.get("/api/prompts")
+async def api_prompts(request: Request, store_id: str = ""):
+    """Return prompts for a store. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    rows = await db.get_prompts(sid) if sid else []
+    return {"prompts": rows, "store_id": sid}
+
+
+class PromptUpsertRequest(BaseModel):
+    store_id: str = ""
+    prompt_id: str = ""
+    name: str
+    text: str
+    sort_order: int = 0
+
+
+@router.post("/api/prompts/save")
+async def api_prompts_save(request: Request, payload: PromptUpsertRequest):
+    """Create or update a prompt. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    import uuid as _uuid
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="store_id is required")
+    if not payload.name.strip() or not payload.text.strip():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name and text are required")
+    prompt_id = payload.prompt_id.strip() or str(_uuid.uuid4())
+    await db.upsert_prompt({
+        "id": prompt_id,
+        "store_id": sid,
+        "name": payload.name.strip(),
+        "text": payload.text.strip(),
+        "sort_order": payload.sort_order,
+    })
+    return {"ok": True, "prompt_id": prompt_id}
+
+
+@router.post("/api/prompts/delete")
+async def api_prompts_delete(request: Request):
+    """Delete a prompt by id. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    prompt_id = (body.get("prompt_id") or "").strip()
+    if not prompt_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="prompt_id is required")
+    await db.delete_prompt(prompt_id)
+    return {"ok": True}
+
+
+# --- Stores list (read-only, for dropdowns) ---
+
+@router.get("/api/stores")
+async def api_stores(request: Request):
+    """Return all configured backend stores. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    stores = await db.get_stores()
+    safe = [{"id": s["id"], "name": s["name"], "myshopify_domain": s["myshopify_domain"],
+             "default_blog_handle": s.get("default_blog_handle", "news"),
+             "default_author": s.get("default_author", "")} for s in stores]
+    return {"stores": safe}
+
+
 @router.get("/history", response_class=HTMLResponse)
 async def history(request: Request):
     store_id = request.session.get("store_id", "")
@@ -324,3 +513,602 @@ async def delete_store_post(
             f"/history?scan_store=1&scan_error={quote_plus(str(exc)[:180])}",
             status_code=303,
         )
+
+
+# ===========================================================================
+# Full generate / publish pipeline — consumed by the Shopify Remix admin app
+# ===========================================================================
+
+@router.get("/api/init")
+async def api_init(request: Request, store_id: str = ""):
+    """Return data needed to render the generate form (prompts, models, blogs)."""
+    _verify_backend_api_key(request)
+    import json as _json
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=404, detail="No stores configured.")
+    store = await db.get_store(sid)
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Unknown store: {sid}")
+    prompts = await db.get_prompts(sid)
+    models = [m for m in await db.get_models(sid) if m.get("model_type") == "text" and m.get("is_active")]
+    default_prompt_id = await db.get_store_setting(sid, "default_prompt_id", "")
+    try:
+        blogs = _json.loads(await db.get_store_setting(sid, "cached_blogs", "[]"))
+    except Exception:
+        blogs = []
+    return {
+        "store_id": sid,
+        "store": {"id": store["id"], "name": store["name"], "default_blog_handle": store.get("default_blog_handle", "news"), "default_author": store.get("default_author", "")},
+        "prompts": prompts,
+        "models": models,
+        "blogs": blogs,
+        "default_prompt_id": default_prompt_id,
+    }
+
+
+class GenerateDraftRequest(BaseModel):
+    store_id: str = ""
+    prompt_id: str = ""
+    custom_prompt: str = ""
+    blog_handle: str = ""
+    author: str = ""
+    model_id: str = ""
+    product_url: str = ""
+
+
+@router.post("/api/generate/draft")
+async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
+    """Full blog generation (LLM + images + quality review). Returns draft data."""
+    _verify_backend_api_key(request)
+    import re as _re
+    store = await _resolve_generation_store(payload.store_id)
+    store_id = store["id"]
+    store_cfg = _store_config_from_row(store)
+
+    # Resolve prompt text
+    if payload.prompt_id and payload.prompt_id != "custom":
+        prompts = await db.get_prompts(store_id)
+        prompt_cfg = next((p for p in prompts if p["id"] == payload.prompt_id), None)
+        if not prompt_cfg:
+            raise HTTPException(status_code=404, detail=f"Unknown prompt: {payload.prompt_id}")
+        extra = payload.custom_prompt.strip()
+        prompt_text = f"{prompt_cfg['text']}\n\n{extra}" if extra else prompt_cfg["text"]
+    else:
+        prompt_text = payload.custom_prompt.strip()
+        if not prompt_text:
+            raise HTTPException(status_code=400, detail="prompt text is required")
+
+    resolved_blog_handle = payload.blog_handle.strip() or store["default_blog_handle"]
+    resolved_author = payload.author.strip() or store["default_author"]
+    resolved_product_url = payload.product_url.strip()
+    product_title = ""
+
+    # Product URL enrichment
+    if resolved_product_url:
+        product_handle_pre = resolved_product_url.rstrip("/").split("/")[-1]
+        product_details = await shopify_client.fetch_product_details(store_cfg, product_handle_pre)
+        if product_details:
+            import re as _re_html
+            desc = _re_html.sub(r"<[^>]+>", " ", product_details["description"]).strip()
+            desc = " ".join(desc.split())[:600]
+            product_title = product_details["title"]
+            product_info = f"Product name: {product_title}\nProduct URL: {resolved_product_url}"
+            if desc:
+                product_info += f"\nProduct description: {desc}"
+            if product_details["tags"]:
+                product_info += f"\nProduct tags/categories: {product_details['tags']}"
+            prompt_text = (
+                f"{prompt_text}\n\nWrite this blog post specifically about the following "
+                f"product from {store['name']}:\n{product_info}"
+            )
+        else:
+            prompt_text = f"{prompt_text}\n\nWrite this blog post about the product: {resolved_product_url}"
+
+    # Title pool / keyword pool injection
+    title_pool_id = 0
+    if not resolved_product_url:
+        title_row = await title_service.pop_blog_title(store_id)
+        if title_row:
+            title_pool_id = title_row["id"]
+            title_inject = f"\n\nIMPORTANT — You MUST use exactly this title: {title_row['title']}"
+            if title_row.get("keyword"):
+                title_inject += f"\nFocus keyword: {title_row['keyword']}"
+            if title_row.get("meta_description"):
+                title_inject += f"\nUse this as the summary/meta description: {title_row['meta_description']}"
+            prompt_text = f"{prompt_text}{title_inject}"
+        else:
+            kw_row = await db.pop_keyword(store_id)
+            if kw_row:
+                kw_block = f"\n\nFocus keyword for this article: {kw_row['keyword']}"
+                kw_content = kw_row.get("content", "").strip()
+                if kw_content:
+                    kw_block += f"\n\nContext (do not quote directly):\n{kw_content[:600]}"
+                prompt_text = f"{prompt_text}{kw_block}"
+
+    # LLM generation
+    try:
+        blog_data = await llm_service.generate_text(store_id, prompt_text, model_id=payload.model_id or None)
+    except AllModelsFailedError as exc:
+        raise HTTPException(status_code=502, detail=f"Blog generation failed: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Unexpected error during draft generation")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    title = blog_data["title"]
+    summary = blog_data["summary"]
+    content = blog_data["content"]
+    content = _re.sub(
+        r"^\s*(?:<h[12][^>]*>.*?</h[12]>|#{1,2}\s+[^\n]+|\*\*[^\n]+\*\*)\s*\n?",
+        "", content, count=1, flags=_re.IGNORECASE | _re.DOTALL,
+    ).lstrip()
+    keywords = blog_data.get("keywords", [])
+    hashtags = blog_data.get("hashtags", [])
+    generated_by = blog_data.get("_model_name", "")
+
+    # Images
+    if resolved_product_url:
+        product_handle = resolved_product_url.rstrip("/").split("/")[-1]
+        product_image_cdn = await shopify_client.fetch_product_image_url(store_cfg, product_handle)
+        image_url_list = [product_image_cdn] if product_image_cdn else []
+        image_types = ["product"] if image_url_list else []
+    else:
+        image_url_list = await image_service.generate_images(store_id, title, summary, prompt_text)
+        image_types = ["photo", "infographic"][: len(image_url_list)]
+
+    # Quality review
+    quality_report = (await review_draft(
+        store_id=store_id,
+        title=title,
+        summary=summary,
+        content=content,
+        keywords=keywords,
+        prompt_text=prompt_text,
+        product_url=resolved_product_url,
+        product_title=product_title,
+        image_count=len(image_url_list),
+    )).as_dict()
+
+    return {
+        "ok": True,
+        "store_id": store_id,
+        "prompt_id": payload.prompt_id,
+        "prompt_text": prompt_text,
+        "blog_handle": resolved_blog_handle,
+        "author": resolved_author,
+        "title": title,
+        "summary": summary,
+        "content": content,
+        "keywords": keywords,
+        "hashtags": hashtags,
+        "image_urls": image_url_list,
+        "image_types": image_types,
+        "generated_by": generated_by,
+        "product_url": resolved_product_url,
+        "product_title": product_title,
+        "quality_report": quality_report,
+        "title_pool_id": title_pool_id,
+    }
+
+
+class PublishArticleRequest(BaseModel):
+    store_id: str = ""
+    prompt_id: str = ""
+    prompt_text: str = ""
+    blog_handle: str = "news"
+    author: str = ""
+    title: str
+    summary: str = ""
+    content: str
+    keywords: list[str] = []
+    hashtags: list[str] = []
+    image_urls: list[str] = []
+    image_types: list[str] = []
+    selected_image_index: int = 0
+    product_url: str = ""
+    product_title: str = ""
+    title_pool_id: int = 0
+
+
+@router.post("/api/publish/article")
+async def api_publish_article(request: Request, payload: PublishArticleRequest):
+    """Publish an (optionally edited) draft to Shopify."""
+    _verify_backend_api_key(request)
+    store_row = await _resolve_generation_store(payload.store_id)
+    store_id = store_row["id"]
+    store = _store_config_from_row(store_row)
+
+    # Quality check
+    quality_report = await review_draft(
+        store_id=store_id,
+        title=payload.title,
+        summary=payload.summary,
+        content=payload.content,
+        keywords=payload.keywords,
+        prompt_text=payload.prompt_text,
+        product_url=payload.product_url,
+        product_title=payload.product_title,
+        image_count=len(payload.image_urls),
+    )
+    if quality_report.publish_blocked:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Quality checks blocked publishing (score {quality_report.score}). Fix failing items and try again.",
+        )
+
+    # Re-stamp images with logo
+    logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
+    composited: list[str] = []
+    for i, url in enumerate(payload.image_urls):
+        img_type = payload.image_types[i] if i < len(payload.image_types) else "photo"
+        if payload.product_url or img_type == "product":
+            composited.append(await logo_service.stamp_infographic(url, logo_b64))
+        elif img_type == "photo":
+            composited.append(await logo_service.stamp_photo(url, payload.title, logo_b64))
+        else:
+            composited.append(await logo_service.stamp_infographic(url, logo_b64))
+
+    if composited and 0 < payload.selected_image_index < len(composited):
+        composited = (
+            [composited[payload.selected_image_index]]
+            + composited[: payload.selected_image_index]
+            + composited[payload.selected_image_index + 1:]
+        )
+
+    content_html = text_to_html(payload.content)
+    if payload.product_url.strip():
+        cta_label = f"Shop {payload.product_title.strip()}" if payload.product_title.strip() else "Shop this product"
+        content_html += f'\n<p><a href="{payload.product_url}" target="_blank" rel="noopener">{cta_label}</a></p>'
+
+    try:
+        result = await shopify_client.publish_article(
+            store=store,
+            blog_handle=payload.blog_handle,
+            title=payload.title,
+            content_html=content_html,
+            summary=payload.summary,
+            keywords=payload.keywords,
+            hashtags=payload.hashtags,
+            author=payload.author,
+            image_url_list=composited,
+            product_url=payload.product_url.strip(),
+            product_title=payload.product_title.strip(),
+        )
+    except shopify_client.ShopifyError as exc:
+        logger.error("Shopify publish failed via API: %s", exc)
+        raise HTTPException(status_code=502, detail=f"Could not publish to Shopify: {exc}") from exc
+
+    await db.log_generation(
+        store_id=store_id,
+        store_name=store_row["name"],
+        blog_handle=payload.blog_handle,
+        prompt_id=payload.prompt_id,
+        prompt_text=payload.prompt_text,
+        title=payload.title,
+        summary=payload.summary,
+        keywords=payload.keywords,
+        hashtags=payload.hashtags,
+        image_count=len(composited),
+        article_id=str(result.article_id),
+        article_url=result.article_url,
+        status="published",
+    )
+    if payload.title_pool_id and not payload.product_url.strip():
+        await db.mark_title_published(payload.title_pool_id)
+
+    return {"ok": True, "article_url": result.article_url, "article_id": str(result.article_id), "message": "Published successfully."}
+
+
+# ===========================================================================
+# AI models CRUD
+# ===========================================================================
+
+@router.get("/api/models")
+async def api_models_list(request: Request, store_id: str = ""):
+    """List all AI models for a store."""
+    _verify_backend_api_key(request)
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    rows = await db.get_models(sid) if sid else []
+    return {"models": rows, "store_id": sid}
+
+
+class ModelUpsertRequest(BaseModel):
+    store_id: str = ""
+    model_id: str = ""
+    name: str
+    provider: str
+    model_type: str = "text"
+    model_name: str = ""
+    api_key: str = ""
+    endpoint: str = ""
+    extra_json: str = "{}"
+    priority: int = 0
+    is_active: bool = True
+
+
+@router.post("/api/models/save")
+async def api_models_save(request: Request, payload: ModelUpsertRequest):
+    """Create or update an AI model."""
+    _verify_backend_api_key(request)
+    import json as _json
+    import uuid as _uuid
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    if not payload.name.strip() or not payload.provider.strip():
+        raise HTTPException(status_code=400, detail="name and provider are required")
+    try:
+        _json.loads(payload.extra_json.strip() or "{}")
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"extra_json is not valid JSON: {exc}") from exc
+    mid = payload.model_id.strip() or str(_uuid.uuid4())
+    await db.upsert_model({
+        "id": mid, "store_id": sid,
+        "name": payload.name.strip(), "provider": payload.provider.strip(),
+        "model_type": payload.model_type.strip() or "text",
+        "model_name": payload.model_name.strip(), "api_key": payload.api_key.strip(),
+        "endpoint": payload.endpoint.strip(), "extra_json": payload.extra_json.strip() or "{}",
+        "priority": payload.priority, "is_active": 1 if payload.is_active else 0,
+    })
+    return {"ok": True, "model_id": mid}
+
+
+@router.post("/api/models/delete")
+async def api_models_delete(request: Request):
+    """Delete an AI model by id."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    model_id = (body.get("model_id") or "").strip()
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    await db.delete_model(model_id)
+    return {"ok": True}
+
+
+@router.post("/api/models/toggle")
+async def api_models_toggle(request: Request):
+    """Toggle a model's is_active flag."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    model_id = (body.get("model_id") or "").strip()
+    is_active = bool(body.get("is_active", True))
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    await db.set_model_active(model_id, is_active)
+    return {"ok": True}
+
+
+# ===========================================================================
+# Store settings
+# ===========================================================================
+
+@router.get("/api/settings")
+async def api_settings_get(request: Request, store_id: str = ""):
+    """Get store settings (no sensitive values returned in full)."""
+    _verify_backend_api_key(request)
+    import json as _json
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=404, detail="No stores configured.")
+    store = await db.get_store(sid)
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Unknown store: {sid}")
+    logo_data = await db.get_store_setting(sid, "logo_data", "")
+    prompt_ending = await db.get_store_setting(sid, "prompt_ending", "")
+    tavily_api_key = await db.get_store_setting(sid, "tavily_api_key", "")
+    exa_api_key = await db.get_store_setting(sid, "exa_api_key", "")
+    keyword_niche = await db.get_store_setting(sid, "keyword_niche", "")
+    keyword_max_pool = int(await db.get_store_setting(sid, "keyword_max_pool", "100"))
+    title_gen_model_id = await db.get_store_setting(sid, "title_gen_model_id", "")
+    title_gen_prompt_id = await db.get_store_setting(sid, "title_gen_prompt_id", "")
+    default_prompt_id = await db.get_store_setting(sid, "default_prompt_id", "")
+    try:
+        social_share_buttons = _json.loads(
+            await db.get_store_setting(sid, "social_share_buttons", '["x","facebook","linkedin"]')
+        )
+    except Exception:
+        social_share_buttons = ["x", "facebook", "linkedin"]
+    social_x_handle = await db.get_store_setting(sid, "social_x_handle", "")
+    return {
+        "store_id": sid,
+        "default_blog_handle": store.get("default_blog_handle", "news"),
+        "default_author": store.get("default_author", ""),
+        "myshopify_domain": store.get("myshopify_domain", ""),
+        "has_logo": bool(logo_data),
+        "prompt_ending": prompt_ending,
+        "tavily_api_key_set": bool(tavily_api_key),
+        "exa_api_key_set": bool(exa_api_key),
+        "keyword_niche": keyword_niche,
+        "keyword_max_pool": keyword_max_pool,
+        "title_gen_model_id": title_gen_model_id,
+        "title_gen_prompt_id": title_gen_prompt_id,
+        "default_prompt_id": default_prompt_id,
+        "social_share_buttons": social_share_buttons,
+        "social_x_handle": social_x_handle,
+    }
+
+
+class SettingsSaveRequest(BaseModel):
+    store_id: str = ""
+    default_blog_handle: str = ""
+    default_author: str = ""
+    prompt_ending: str = ""
+    tavily_api_key: str = ""
+    exa_api_key: str = ""
+    keyword_niche: str = ""
+    keyword_max_pool: int = 100
+    title_gen_model_id: str = ""
+    title_gen_prompt_id: str = ""
+    default_prompt_id: str = ""
+    social_x_handle: str = ""
+
+
+@router.post("/api/settings/save")
+async def api_settings_save(request: Request, payload: SettingsSaveRequest):
+    """Save store settings."""
+    _verify_backend_api_key(request)
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    store = await db.get_store(sid)
+    if not store:
+        raise HTTPException(status_code=404, detail=f"Unknown store: {sid}")
+    if payload.default_blog_handle.strip() or payload.default_author.strip():
+        await db.upsert_store({
+            **store,
+            "default_blog_handle": payload.default_blog_handle.strip() or store["default_blog_handle"],
+            "default_author": payload.default_author.strip() or store["default_author"],
+        })
+    settings_to_save: dict = {
+        "prompt_ending": payload.prompt_ending,
+        "keyword_niche": payload.keyword_niche.strip(),
+        "keyword_max_pool": str(max(10, min(500, payload.keyword_max_pool))),
+        "title_gen_model_id": payload.title_gen_model_id.strip(),
+        "title_gen_prompt_id": payload.title_gen_prompt_id.strip(),
+        "default_prompt_id": payload.default_prompt_id.strip(),
+        "social_x_handle": payload.social_x_handle.strip().lstrip("@"),
+    }
+    if payload.tavily_api_key.strip():
+        settings_to_save["tavily_api_key"] = payload.tavily_api_key.strip()
+    if payload.exa_api_key.strip():
+        settings_to_save["exa_api_key"] = payload.exa_api_key.strip()
+    await db.set_store_settings(sid, settings_to_save)
+    return {"ok": True, "message": "Settings saved."}
+
+
+# ===========================================================================
+# Keyword pool
+# ===========================================================================
+
+@router.get("/api/keywords")
+async def api_keywords_list(request: Request, store_id: str = "", limit: int = 200):
+    """Return the keyword pool for a store."""
+    _verify_backend_api_key(request)
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    rows = await db.get_keyword_pool(sid, limit=min(limit, 500)) if sid else []
+    count = await db.count_keyword_pool(sid) if sid else 0
+    niche = await db.get_store_setting(sid, "keyword_niche", "") if sid else ""
+    return {"keywords": rows, "count": count, "keyword_niche": niche, "store_id": sid}
+
+
+@router.post("/api/keywords/fetch")
+async def api_keywords_fetch(request: Request):
+    """Trigger an immediate keyword fetch for a store."""
+    _verify_backend_api_key(request)
+    from services.keyword_service import fetch_keywords
+    body = await request.json()
+    sid = (body.get("store_id") or "").strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    niche = await db.get_store_setting(sid, "keyword_niche", "")
+    max_pool = int(await db.get_store_setting(sid, "keyword_max_pool", "100"))
+    result = await fetch_keywords(sid, niche, max_pool=max_pool)
+    return {"ok": result.get("error") is None, **result}
+
+
+@router.post("/api/keywords/delete")
+async def api_keywords_delete(request: Request):
+    """Delete a single keyword by id."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    keyword_id = body.get("keyword_id")
+    if keyword_id is None:
+        raise HTTPException(status_code=400, detail="keyword_id is required")
+    await db.delete_keyword(int(keyword_id))
+    return {"ok": True}
+
+
+@router.post("/api/keywords/clear")
+async def api_keywords_clear(request: Request):
+    """Clear the entire keyword pool for a store."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    sid = (body.get("store_id") or "").strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    count = await db.clear_keyword_pool(sid)
+    return {"ok": True, "count": count}
+
+
+# ===========================================================================
+# Title pool
+# ===========================================================================
+
+@router.get("/api/titles")
+async def api_titles_list(request: Request, store_id: str = "", limit: int = 200):
+    """Return the title pool for a store."""
+    _verify_backend_api_key(request)
+    sid = store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    rows = await db.get_title_pool(sid, limit=min(limit, 500)) if sid else []
+    count = await db.count_title_pool(sid) if sid else 0
+    return {"titles": rows, "count": count, "store_id": sid}
+
+
+@router.post("/api/titles/generate")
+async def api_titles_generate(request: Request):
+    """Trigger an immediate title batch generation for a store."""
+    _verify_backend_api_key(request)
+    from services.title_service import fetch_titles as _fetch_titles
+    body = await request.json()
+    sid = (body.get("store_id") or "").strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    result = await _fetch_titles(sid)
+    return {"ok": result.get("error") is None, **result}
+
+
+@router.post("/api/titles/delete")
+async def api_titles_delete(request: Request):
+    """Delete a single title by id."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    title_id = body.get("title_id")
+    if title_id is None:
+        raise HTTPException(status_code=400, detail="title_id is required")
+    await db.delete_title(int(title_id))
+    return {"ok": True}
+
+
+@router.post("/api/titles/clear")
+async def api_titles_clear(request: Request):
+    """Clear the entire title pool for a store."""
+    _verify_backend_api_key(request)
+    body = await request.json()
+    sid = (body.get("store_id") or "").strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+    count = await db.clear_title_pool(sid)
+    return {"ok": True, "count": count}

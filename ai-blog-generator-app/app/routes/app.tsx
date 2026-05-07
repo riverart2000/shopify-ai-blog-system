@@ -21,6 +21,9 @@ export default function App() {
         <s-link href="/app">Blog Studio</s-link>
         <s-link href="/app/history">History</s-link>
         <s-link href="/app/schedule">Schedule</s-link>
+        <s-link href="/app/prompts">Prompts</s-link>
+        <s-link href="/app/models">Models</s-link>
+        <s-link href="/app/settings">Settings</s-link>
         <s-link href="/app/additional">Setup &amp; Limits</s-link>
       </s-app-nav>
       <Outlet />

@@ -1,5 +1,6 @@
-import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import React, { useState, useEffect } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 
 const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
@@ -8,7 +9,7 @@ const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENE
 type ScheduledJob = {
   id: string;
   store_id: string;
-  store_name: string;
+  store_name?: string;
   name: string;
   prompt_id: string;
   blog_handle: string;
@@ -16,175 +17,272 @@ type ScheduledJob = {
   cron_expr: string;
   timezone: string;
   is_active: number;
+  is_product_blog: number;
+  use_keyword_pool: number;
   last_run_at: number | null;
   next_run_at: number | null;
   created_at: number;
 };
 
+type Prompt = { id: string; name: string; text: string };
+type Store = { id: string; name: string; myshopify_domain: string; default_blog_handle: string; default_author: string };
+
+async function backendFetch(path: string, opts: RequestInit = {}) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    ...opts,
+    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
+  });
+  if (!res.ok) throw new Error(`Backend ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-
-  let jobs: ScheduledJob[] = [];
-  let error: string | null = null;
-
-  if (!BACKEND_KEY) {
-    error = "AI_BLOG_BACKEND_API_KEY is not configured.";
-  } else {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/schedule`, {
-        headers: { "x-api-key": BACKEND_KEY },
-      });
-      if (!res.ok) {
-        error = `Backend returned ${res.status}: ${await res.text()}`;
-      } else {
-        const data = await res.json() as { jobs: ScheduledJob[] };
-        jobs = data.jobs ?? [];
-      }
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Failed to reach backend";
-    }
+  if (!BACKEND_KEY) return { jobs: [], prompts: [], stores: [], storeId: "", error: "AI_BLOG_BACKEND_API_KEY is not configured." };
+  try {
+    const [jobsData, storesData] = await Promise.all([
+      backendFetch("/api/schedule/jobs"),
+      backendFetch("/api/stores"),
+    ]);
+    const storeId: string = jobsData.store_id || storesData.stores?.[0]?.id || "";
+    const promptsData = storeId ? await backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : { prompts: [] };
+    return { jobs: jobsData.jobs as ScheduledJob[], prompts: promptsData.prompts as Prompt[], stores: storesData.stores as Store[], storeId, error: null };
+  } catch (e) {
+    return { jobs: [], prompts: [], stores: [], storeId: "", error: e instanceof Error ? e.message : "Failed to reach backend" };
   }
-
-  return { jobs, error };
 };
 
-function formatDate(epochSeconds: number | null) {
-  if (!epochSeconds) return "—";
-  return new Date(epochSeconds * 1000).toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+export const action = async ({ request }: ActionFunctionArgs) => {
+  await authenticate.admin(request);
+  const form = await request.formData();
+  const intent = String(form.get("intent") || "");
+  if (!BACKEND_KEY) return { ok: false, error: "AI_BLOG_BACKEND_API_KEY not configured" };
+  try {
+    if (intent === "save") {
+      await backendFetch("/api/schedule/save", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: form.get("store_id") || "",
+          job_id: form.get("job_id") || "",
+          name: form.get("name") || "",
+          prompt_id: form.get("prompt_id") || "",
+          blog_handle: form.get("blog_handle") || "news",
+          author: form.get("author") || "",
+          cron_expr: form.get("cron_expr") || "",
+          timezone: form.get("timezone") || "UTC",
+          is_active: form.get("is_active") === "1",
+          is_product_blog: form.get("is_product_blog") === "1",
+          use_keyword_pool: form.get("use_keyword_pool") === "1",
+        }),
+      });
+      return { ok: true, message: "Schedule saved." };
+    }
+    if (intent === "delete") {
+      await backendFetch("/api/schedule/delete", { method: "POST", body: JSON.stringify({ job_id: form.get("job_id") }) });
+      return { ok: true, message: "Schedule deleted." };
+    }
+    if (intent === "toggle") {
+      await backendFetch("/api/schedule/toggle", { method: "POST", body: JSON.stringify({ job_id: form.get("job_id"), is_active: form.get("is_active") === "1" }) });
+      return { ok: true, message: null };
+    }
+    return { ok: false, error: "Unknown intent" };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Action failed" };
+  }
+};
+
+function fmt(epoch: number | null) {
+  if (!epoch) return "—";
+  return new Date(epoch * 1000).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+const TIMEZONES = ["UTC", "Europe/London", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Asia/Tokyo", "Asia/Singapore", "Australia/Sydney"];
+
+const inputStyle: React.CSSProperties = { borderRadius: "10px", border: "1px solid #d1d5db", padding: "9px 12px", font: "inherit", width: "100%", boxSizing: "border-box" as const };
+const labelStyle: React.CSSProperties = { display: "grid", gap: "5px", fontSize: "0.875rem" };
+
+function JobForm({ job, prompts, stores, storeId, onCancel }: {
+  job?: ScheduledJob;
+  prompts: Prompt[];
+  stores: Store[];
+  storeId: string;
+  onCancel: () => void;
+}) {
+  const navigation = useNavigation();
+  const saving = navigation.state !== "idle";
+  const defaultStore = stores.find(s => s.id === storeId) || stores[0];
+  return (
+    <Form method="post">
+      <input type="hidden" name="intent" value="save" />
+      <input type="hidden" name="job_id" value={job?.id || ""} />
+      <div style={{ display: "grid", gap: "14px" }}>
+        {stores.length > 1 && (
+          <label style={labelStyle}>
+            <span>Store</span>
+            <select name="store_id" defaultValue={job?.store_id || storeId} style={inputStyle}>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+        )}
+        {stores.length <= 1 && <input type="hidden" name="store_id" value={job?.store_id || storeId} />}
+        <label style={labelStyle}>
+          <span>Name <span style={{ color: "#dc2626" }}>*</span></span>
+          <input name="name" defaultValue={job?.name || ""} required style={inputStyle} placeholder="Daily wellness blog" />
+        </label>
+        <label style={labelStyle}>
+          <span>Prompt <span style={{ color: "#dc2626" }}>*</span></span>
+          <select name="prompt_id" defaultValue={job?.prompt_id || ""} required style={inputStyle}>
+            <option value="">— select prompt —</option>
+            {prompts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {prompts.length === 0 && <span style={{ color: "#92400e", fontSize: "0.8rem" }}>No prompts yet — add one in the Prompts page first.</span>}
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+          <label style={labelStyle}>
+            <span>Blog handle</span>
+            <input name="blog_handle" defaultValue={job?.blog_handle || defaultStore?.default_blog_handle || "news"} style={inputStyle} placeholder="news" />
+          </label>
+          <label style={labelStyle}>
+            <span>Author</span>
+            <input name="author" defaultValue={job?.author || defaultStore?.default_author || ""} style={inputStyle} placeholder="Store Team" />
+          </label>
+        </div>
+        <label style={labelStyle}>
+          <span>Cron expression <span style={{ color: "#dc2626" }}>*</span></span>
+          <input name="cron_expr" defaultValue={job?.cron_expr || "0 9 * * *"} required style={inputStyle} placeholder="0 9 * * *" />
+          <span style={{ color: "#6b7280", fontSize: "0.78rem" }}>5-field cron: minute hour day-of-month month day-of-week. E.g. <code>0 9 * * 1</code> = every Monday 9am</span>
+        </label>
+        <label style={labelStyle}>
+          <span>Timezone</span>
+          <select name="timezone" defaultValue={job?.timezone || "UTC"} style={inputStyle}>
+            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+        </label>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px" }}>
+          <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <input type="checkbox" name="is_active" value="1" defaultChecked={job ? !!job.is_active : true} style={{ marginRight: 6 }} />
+            <span>Active</span>
+          </label>
+          <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <input type="checkbox" name="is_product_blog" value="1" defaultChecked={!!job?.is_product_blog} style={{ marginRight: 6 }} />
+            <span>Product blog</span>
+          </label>
+          <label style={{ ...labelStyle, flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <input type="checkbox" name="use_keyword_pool" value="1" defaultChecked={!!job?.use_keyword_pool} style={{ marginRight: 6 }} />
+            <span>Use keyword pool</span>
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: "10px", marginTop: 4 }}>
+          <button type="submit" disabled={saving} style={{ borderRadius: "999px", border: 0, background: "#111827", color: "white", padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
+            {saving ? "Saving…" : job ? "Update schedule" : "Create schedule"}
+          </button>
+          <button type="button" onClick={onCancel} style={{ borderRadius: "999px", border: "1px solid #d1d5db", background: "white", padding: "10px 20px", cursor: "pointer" }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Form>
+  );
 }
 
 export default function ScheduleRoute() {
-  const { jobs, error } = useLoaderData<typeof loader>();
+  const { jobs, prompts, stores, storeId, error } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>() as { ok: boolean; message?: string | null; error?: string } | undefined;
+  const [editing, setEditing] = useState<string | null>(null);
+  const navigation = useNavigation();
 
-  const activeJobs = jobs.filter((j) => j.is_active);
-  const inactiveJobs = jobs.filter((j) => !j.is_active);
+  useEffect(() => {
+    if (actionData?.ok) setEditing(null);
+  }, [actionData]);
 
   return (
     <s-page heading="Scheduled Blog Generation">
-      {error ? (
+      {error || actionData?.error ? (
         <s-section>
-          <div
-            style={{
-              borderRadius: "12px",
-              padding: "14px 16px",
-              background: "rgba(239,68,68,0.08)",
-              border: "1px solid rgba(239,68,68,0.3)",
-              color: "#991b1b",
-              fontSize: "0.9rem",
-            }}
-          >
-            {error}
+          <div style={{ borderRadius: "12px", padding: "12px 16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", color: "#991b1b", fontSize: "0.875rem" }}>
+            {error || actionData?.error}
+          </div>
+        </s-section>
+      ) : null}
+      {actionData?.ok && actionData.message ? (
+        <s-section>
+          <div style={{ borderRadius: "12px", padding: "12px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#065f46", fontSize: "0.875rem" }}>
+            {actionData.message}
           </div>
         </s-section>
       ) : null}
 
-      <s-section heading={`Active schedules (${activeJobs.length})`}>
-        {activeJobs.length === 0 && !error ? (
-          <s-paragraph>No active schedules. Configure them in the Python backend at /schedule.</s-paragraph>
+      {editing === "new" ? (
+        <s-section heading="New schedule">
+          <JobForm prompts={prompts} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+        </s-section>
+      ) : (
+        <s-section>
+          <button onClick={() => setEditing("new")} style={{ borderRadius: "999px", border: 0, background: "#111827", color: "white", padding: "10px 20px", fontWeight: 700, cursor: "pointer" }}>
+            + New schedule
+          </button>
+        </s-section>
+      )}
+
+      <s-section heading={`Schedules (${jobs.length})`}>
+        {jobs.length === 0 && !error ? (
+          <s-paragraph>No schedules yet. Create one above.</s-paragraph>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: "0.875rem",
-              }}
-            >
-              <thead>
-                <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Name</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Store</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Blog</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Cron</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Timezone</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Last run</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Next run</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeJobs.map((j, i) => (
-                  <tr
-                    key={j.id}
-                    style={{
-                      borderBottom: "1px solid #f3f4f6",
-                      background: i % 2 === 0 ? "transparent" : "#f9fafb",
-                    }}
-                  >
-                    <td style={{ padding: "10px 12px", fontWeight: 500 }}>{j.name}</td>
-                    <td style={{ padding: "10px 12px", color: "#374151" }}>{j.store_name}</td>
-                    <td style={{ padding: "10px 12px", color: "#374151" }}>{j.blog_handle}</td>
-                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: "0.8rem", color: "#4b5563" }}>
-                      {j.cron_expr}
-                    </td>
-                    <td style={{ padding: "10px 12px", color: "#6b7280" }}>{j.timezone}</td>
-                    <td style={{ padding: "10px 12px", color: "#6b7280", whiteSpace: "nowrap" }}>
-                      {formatDate(j.last_run_at)}
-                    </td>
-                    <td
-                      style={{
-                        padding: "10px 12px",
-                        whiteSpace: "nowrap",
-                        color: j.next_run_at && j.next_run_at * 1000 < Date.now() ? "#dc2626" : "#059669",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {formatDate(j.next_run_at)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div style={{ display: "grid", gap: "12px" }}>
+            {jobs.map(job => (
+              <div key={job.id} style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "16px", background: job.is_active ? "white" : "#f9fafb" }}>
+                {editing === job.id ? (
+                  <JobForm job={job} prompts={prompts} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+                ) : (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px" }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: "1rem" }}>
+                          {job.name}
+                          {!job.is_active && <span style={{ marginLeft: 8, fontSize: "0.75rem", background: "#f3f4f6", color: "#6b7280", borderRadius: "999px", padding: "2px 8px" }}>paused</span>}
+                        </div>
+                        <div style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: 2 }}>
+                          {job.store_name || job.store_id} · {job.blog_handle} · <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 4 }}>{job.cron_expr}</code> ({job.timezone})
+                        </div>
+                        <div style={{ fontSize: "0.78rem", color: "#9ca3af", marginTop: 4 }}>
+                          Last: {fmt(job.last_run_at)} · Next: <span style={{ color: job.next_run_at && job.next_run_at * 1000 < Date.now() ? "#dc2626" : "#059669" }}>{fmt(job.next_run_at)}</span>
+                        </div>
+                        {(job.is_product_blog || job.use_keyword_pool) && (
+                          <div style={{ marginTop: 4, display: "flex", gap: 6 }}>
+                            {job.is_product_blog ? <span style={{ fontSize: "0.7rem", background: "#ede9fe", color: "#5b21b6", borderRadius: "999px", padding: "2px 7px" }}>product blog</span> : null}
+                            {job.use_keyword_pool ? <span style={{ fontSize: "0.7rem", background: "#fef3c7", color: "#92400e", borderRadius: "999px", padding: "2px 7px" }}>keyword pool</span> : null}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", flexShrink: 0 }}>
+                        <Form method="post" style={{ display: "inline" }}>
+                          <input type="hidden" name="intent" value="toggle" />
+                          <input type="hidden" name="job_id" value={job.id} />
+                          <input type="hidden" name="is_active" value={job.is_active ? "0" : "1"} />
+                          <button type="submit" disabled={navigation.state !== "idle"} style={{ borderRadius: "999px", border: "1px solid #d1d5db", background: "white", padding: "6px 14px", fontSize: "0.8rem", cursor: "pointer" }}>
+                            {job.is_active ? "Pause" : "Resume"}
+                          </button>
+                        </Form>
+                        <button onClick={() => setEditing(job.id)} style={{ borderRadius: "999px", border: "1px solid #d1d5db", background: "white", padding: "6px 14px", fontSize: "0.8rem", cursor: "pointer" }}>
+                          Edit
+                        </button>
+                        <Form method="post" style={{ display: "inline" }} onSubmit={e => { if (!confirm(`Delete "${job.name}"?`)) e.preventDefault(); }}>
+                          <input type="hidden" name="intent" value="delete" />
+                          <input type="hidden" name="job_id" value={job.id} />
+                          <button type="submit" style={{ borderRadius: "999px", border: "1px solid #fca5a5", background: "#fff5f5", color: "#dc2626", padding: "6px 14px", fontSize: "0.8rem", cursor: "pointer" }}>
+                            Delete
+                          </button>
+                        </Form>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </s-section>
-
-      {inactiveJobs.length > 0 ? (
-        <s-section heading={`Paused schedules (${inactiveJobs.length})`}>
-          <div style={{ overflowX: "auto" }}>
-            <table
-              style={{
-                width: "100%",
-                borderCollapse: "collapse",
-                fontSize: "0.875rem",
-                opacity: 0.65,
-              }}
-            >
-              <thead>
-                <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Name</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Store</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Blog</th>
-                  <th style={{ padding: "10px 12px", fontWeight: 700 }}>Cron</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inactiveJobs.map((j, i) => (
-                  <tr
-                    key={j.id}
-                    style={{
-                      borderBottom: "1px solid #f3f4f6",
-                      background: i % 2 === 0 ? "transparent" : "#f9fafb",
-                    }}
-                  >
-                    <td style={{ padding: "10px 12px" }}>{j.name}</td>
-                    <td style={{ padding: "10px 12px" }}>{j.store_name}</td>
-                    <td style={{ padding: "10px 12px" }}>{j.blog_handle}</td>
-                    <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: "0.8rem" }}>
-                      {j.cron_expr}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </s-section>
-      ) : null}
     </s-page>
   );
 }
+
