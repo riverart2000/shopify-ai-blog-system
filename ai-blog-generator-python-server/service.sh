@@ -98,7 +98,12 @@ fi
 
 CADDY="${CADDY:-caddy}"
 NPM="${NPM:-npm}"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+# Dev uses 3000; prod uses 3001 so nginx can keep the old site on 3000 for port 443
+if [[ "$IS_DEV" == "true" ]]; then
+    FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+else
+    FRONTEND_PORT="${FRONTEND_PORT:-3001}"
+fi
 PYTHON_BACKEND_PORT="${PYTHON_BACKEND_PORT:-4000}"
 
 if [[ "$IS_DEV" != "true" ]] && ! command -v "$CADDY" &>/dev/null; then
