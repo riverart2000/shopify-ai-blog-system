@@ -50,7 +50,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 # Paths that don't require authentication
 _PUBLIC_PATHS = {"/login", "/health", "/api/generate"}
-_PUBLIC_PREFIXES = ("/static/",)
+_PUBLIC_PREFIXES = ("/static/", "/api/")
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
