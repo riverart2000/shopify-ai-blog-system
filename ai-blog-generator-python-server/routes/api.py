@@ -186,6 +186,46 @@ async def api_products(store_id: str):
         return {"products": product_list, "cached": True, "error": str(exc)}
 
 
+# ---------------------------------------------------------------------------
+# JSON endpoints consumed by the Shopify Remix app (no session cookie needed)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/history")
+async def api_history(request: Request, limit: int = 50):
+    """Return recent blog generations as JSON. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    rows = await db.get_recent_generations(limit=min(limit, 200))
+    return {"generations": rows}
+
+
+@router.get("/api/schedule")
+async def api_schedule(request: Request):
+    """Return all active scheduled jobs as JSON. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    rows = await db.get_all_active_jobs()
+    return {"jobs": rows}
+
+
+@router.get("/api/errors")
+async def api_errors(request: Request, store_id: str = "", limit: int = 30):
+    """Return recent generation errors as JSON. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    if store_id:
+        rows = await db.get_recent_errors(store_id=store_id, limit=min(limit, 100))
+    else:
+        # No store filter — read directly so we don't need store_id
+        import aiosqlite as _aiosqlite
+        from db.base import get_db_path as _get_db_path
+        async with _aiosqlite.connect(_get_db_path()) as _db:
+            _db.row_factory = _aiosqlite.Row
+            async with _db.execute(
+                "SELECT * FROM generation_errors ORDER BY created_at DESC LIMIT ?",
+                (min(limit, 100),),
+            ) as _cur:
+                rows = [dict(r) for r in await _cur.fetchall()]
+    return {"errors": rows}
+
+
 @router.get("/history", response_class=HTMLResponse)
 async def history(request: Request):
     store_id = request.session.get("store_id", "")
