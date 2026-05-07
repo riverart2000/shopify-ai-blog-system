@@ -337,7 +337,7 @@ do_setup() {
         echo "  Building React app for production..."
         "$NPM" run build
         echo "  Running Prisma migrations..."
-        npx prisma generate --silent
+        npx prisma generate
         npx prisma migrate deploy
     fi
 
