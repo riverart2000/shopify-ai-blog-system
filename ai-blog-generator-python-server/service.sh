@@ -310,7 +310,52 @@ _start_caddy() {
 
 # ── Commands ──────────────────────────────────────────────────────────────────
 
+do_setup() {
+    echo "Setting up dependencies [${ENV_LABEL}]..."
+
+    # ── Python virtualenv ────────────────────────────────────────────────────
+    if [[ ! -x "$APP_DIR/.venv/bin/python" ]]; then
+        echo "  Creating Python virtualenv..."
+        python3 -m venv "$APP_DIR/.venv"
+    fi
+    PYTHON="$APP_DIR/.venv/bin/python"
+    echo "  Installing Python requirements..."
+    "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+    echo "  Python dependencies ready."
+
+    # ── Node / React app ─────────────────────────────────────────────────────
+    if [[ ! -d "$FRONTEND_DIR" ]]; then
+        echo "WARNING: React app directory not found: $FRONTEND_DIR — skipping frontend setup" >&2
+        return
+    fi
+
+    echo "  Installing Node dependencies..."
+    cd "$FRONTEND_DIR"
+    "$NPM" install --silent
+
+    if [[ "$IS_DEV" != "true" ]]; then
+        echo "  Building React app for production..."
+        "$NPM" run build
+        echo "  Running Prisma migrations..."
+        npx prisma generate --silent
+        npx prisma migrate deploy
+    fi
+
+    echo "  Frontend dependencies ready."
+    cd "$APP_DIR"
+    echo "Setup complete."
+}
+
 do_start() {
+    # Auto-setup if venv or node_modules are missing
+    if [[ ! -x "$APP_DIR/.venv/bin/python" ]] || [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+        echo "  Dependencies missing — running setup first..."
+        do_setup
+    fi
+    # Prefer venv python if setup just created it
+    if [[ -x "$APP_DIR/.venv/bin/python" ]]; then
+        PYTHON="$APP_DIR/.venv/bin/python"
+    fi
     echo "Starting services [${ENV_LABEL}]..."
     _start_main
     _start_scheduler
@@ -367,8 +412,9 @@ case "${1:-}" in
     stop)    do_stop    ;;
     restart) do_restart ;;
     status)  do_status  ;;
+    setup)   do_setup   ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status}"
+        echo "Usage: $0 {start|stop|restart|status|setup}"
         exit 1
         ;;
 esac
