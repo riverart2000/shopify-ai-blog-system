@@ -220,6 +220,37 @@ _stop_pid() {
     fi
 }
 
+# Kill any process (not tracked by a PID file) holding the given TCP/UDP port.
+_kill_port() {
+    local port="$1"
+    local pids
+    # fuser is available on Linux; on macOS fall back to lsof
+    if command -v fuser &>/dev/null; then
+        pids=$(fuser "${port}/tcp" "${port}/udp" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' || true)
+    else
+        pids=$(lsof -ti "tcp:${port}" -ti "udp:${port}" 2>/dev/null || true)
+    fi
+    if [[ -n "$pids" ]]; then
+        echo "  Killing stale process(es) on port $port: $pids"
+        echo "$pids" | xargs -r kill 2>/dev/null || true
+        sleep 1
+        # Force-kill survivors
+        local survivors
+        survivors=$(echo "$pids" | xargs -r -I{} sh -c 'kill -0 {} 2>/dev/null && echo {}' || true)
+        if [[ -n "$survivors" ]]; then
+            echo "$survivors" | xargs -r kill -9 2>/dev/null || true
+        fi
+    fi
+}
+
+_kill_stale_ports() {
+    _kill_port "$PYTHON_BACKEND_PORT"   # FastAPI / uvicorn  (4000)
+    _kill_port "$FRONTEND_PORT"          # React app          (3000)
+    if [[ "$IS_DEV" != "true" ]]; then
+        _kill_port 8443                  # Caddy TCP+UDP
+    fi
+}
+
 # ── Start helpers ─────────────────────────────────────────────────────────────
 
 _start_frontend() {
@@ -374,6 +405,7 @@ do_stop() {
     _stop_pid "React app"    "$FRONTEND_PID"
     _stop_pid "scheduler.py" "$SCHED_PID"
     _stop_pid "main.py"      "$MAIN_PID"
+    _kill_stale_ports
     echo "Done."
 }
 
