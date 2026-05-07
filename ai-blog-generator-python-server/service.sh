@@ -270,6 +270,7 @@ _start_frontend() {
         echo "  Starting React app (dev — shopify app dev)..."
         cd "$FRONTEND_DIR"
         PORT="$FRONTEND_PORT" \
+        DATABASE_URL="${DATABASE_URL:-file:${FRONTEND_DIR}/prisma/dev.sqlite}" \
         AI_BLOG_BACKEND_URL="http://127.0.0.1:${PYTHON_BACKEND_PORT}" \
         nohup "$NPM" run dev >> "$FRONTEND_LOG" 2>&1 &
         local pid=$!
@@ -287,7 +288,12 @@ _start_frontend() {
         echo "  Starting React app (production — react-router-serve)..."
         cd "$FRONTEND_DIR"
         PORT="$FRONTEND_PORT" \
+        DATABASE_URL="${DATABASE_URL:-file:${FRONTEND_DIR}/prisma/prod.sqlite}" \
+        SHOPIFY_API_KEY="${SHOPIFY_API_KEY:-}" \
+        SHOPIFY_API_SECRET="${SHOPIFY_API_SECRET:-}" \
+        SCOPES="${SCOPES:-}" \
         AI_BLOG_BACKEND_URL="${AI_BLOG_BACKEND_URL:-http://127.0.0.1:${PYTHON_BACKEND_PORT}}" \
+        AI_BLOG_BACKEND_API_KEY="${AI_BLOG_BACKEND_API_KEY:-}" \
         SHOPIFY_REACT_APP_URL="${SHOPIFY_REACT_APP_URL:-https://${DOMAIN:-localhost}:8443}" \
         nohup "$NPM" run start >> "$FRONTEND_LOG" 2>&1 &
         local pid=$!
