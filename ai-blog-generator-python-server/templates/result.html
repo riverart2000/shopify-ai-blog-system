@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blog Published — AI Blog Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: #0f172a; padding: 0 32px; display: flex; align-items: center;
+      gap: 0; height: 52px; border-bottom: 1px solid #1e293b;
+    }
+    nav .logo-nav { color: #fff; font-weight: 700; font-size: 15px; margin-right: 32px; }
+    nav a {
+      color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500;
+      padding: 0 16px; height: 52px; display: flex; align-items: center;
+      border-bottom: 2px solid transparent; transition: color 0.15s;
+    }
+    nav a:hover { color: #fff; }
+    nav a.active { color: #fff; border-bottom-color: #3b82f6; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 92px 16px 40px;
+    }
+
+    .card {
+      background: #1e293b;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      padding: 40px 48px;
+      width: 100%;
+      max-width: 680px;
+    }
+
+    .success-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16,185,129,0.12);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 24px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #6ee7b7;
+      margin-bottom: 24px;
+    }
+
+    .success-badge::before {
+      content: "✓";
+      font-size: 14px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      color: #f1f5f9;
+      line-height: 1.3;
+      margin-bottom: 12px;
+    }
+
+    .meta {
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 24px;
+    }
+
+    .meta strong {
+      color: #cbd5e1;
+    }
+
+    .summary-box {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 16px 18px;
+      font-size: 14px;
+      color: #cbd5e1;
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .tags-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 24px;
+    }
+
+    .tag {
+      background: rgba(59,130,246,0.15);
+      color: #93c5fd;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .hashtag {
+      background: rgba(16,185,129,0.12);
+      color: #6ee7b7;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .stat-row {
+      display: flex;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    .stat {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 14px 18px;
+      flex: 1;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: #60a5fa;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-top: 2px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #334155;
+      margin: 24px 0;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      display: inline-block;
+    }
+
+    .btn-primary {
+      background: #2563eb;
+      color: #fff;
+    }
+
+    .btn-primary:hover { background: #1d4ed8; }
+
+    .btn-secondary {
+      background: #334155;
+      color: #cbd5e1;
+      border: 1px solid #475569;
+    }
+
+    .btn-secondary:hover { background: #475569; }
+
+    .article-link {
+      font-size: 13px;
+      color: #64748b;
+      word-break: break-all;
+      margin-top: 12px;
+    }
+
+    .article-link a {
+      color: #60a5fa;
+      text-decoration: none;
+    }
+
+    .article-link a:hover { text-decoration: underline; }
+
+    .share-section { margin-top: 8px; }
+    .share-label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .share-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    .btn-share {
+      padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      text-decoration: none; cursor: pointer; border: none; display: inline-block;
+      transition: opacity 0.15s; line-height: 1.4;
+    }
+    .btn-share:hover { opacity: 0.82; }
+    .btn-x        { background: #000; color: #fff; }
+    .btn-facebook { background: #1877f2; color: #fff; }
+    .btn-linkedin { background: #0a66c2; color: #fff; }
+    .btn-copy     { background: #334155; color: #cbd5e1; border: 1px solid #475569; }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="logo-nav">AI Blog Generator</span>
+  <a href="/">Generate</a>
+  <a href="/history">History</a>
+  <a href="/setup">Setup</a>
+  <a href="/logout" style="margin-left:auto;">Logout</a>
+</nav>
+
+  <div class="card">
+    <div class="success-badge">Blog Published Successfully</div>
+
+    <h1>{{ title }}</h1>
+
+    <div class="meta">
+      Published to <strong>{{ store.name }}</strong>
+      &nbsp;·&nbsp; Blog: <strong>{{ result.blog_handle }}</strong>
+      &nbsp;·&nbsp; Article ID: <strong>{{ result.article_id }}</strong>
+    </div>
+
+    <div class="summary-box">{{ summary }}</div>
+
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-value">{{ keywords | length }}</div>
+        <div class="stat-label">Keywords</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ hashtags | length }}</div>
+        <div class="stat-label">Hashtags</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ image_count }}</div>
+        <div class="stat-label">Images</div>
+      </div>
+    </div>
+
+    {% if keywords %}
+    <div class="tags-row">
+      {% for kw in keywords %}
+      <span class="tag">{{ kw }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if hashtags %}
+    <div class="tags-row">
+      {% for tag in hashtags %}
+      <span class="hashtag">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if social_share_buttons %}
+    <hr class="divider" />
+
+    <div class="share-section">
+      <p class="share-label">Share this post</p>
+      <div class="share-row">
+        {% if 'x' in social_share_buttons %}<a id="share-x" class="btn-share btn-x" target="_blank" rel="noopener noreferrer">Post on X</a>{% endif %}
+        {% if 'facebook' in social_share_buttons %}<a id="share-facebook" class="btn-share btn-facebook" target="_blank" rel="noopener noreferrer">Share on Facebook</a>{% endif %}
+        {% if 'linkedin' in social_share_buttons %}<a id="share-linkedin" class="btn-share btn-linkedin" target="_blank" rel="noopener noreferrer">Share on LinkedIn</a>{% endif %}
+        {% if hashtags and social_share_buttons %}
+        <button class="btn-share btn-copy" id="copy-hashtags-btn" onclick="copyHashtags()">Copy Hashtags</button>
+        {% endif %}
+      </div>
+      {% if social_x_handle or social_facebook_url or social_linkedin_url %}
+      <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+        <span style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;">Follow</span>
+        {% if social_x_handle %}
+        <a href="https://twitter.com/{{ social_x_handle }}" target="_blank" rel="noopener noreferrer"
+           style="font-size:13px;color:#94a3b8;text-decoration:none;background:#0f172a;border:1px solid #334155;padding:4px 10px;border-radius:6px;">@{{ social_x_handle }}</a>
+        {% endif %}
+        {% if social_facebook_url %}
+        <a href="{{ social_facebook_url }}" target="_blank" rel="noopener noreferrer"
+           style="font-size:13px;color:#94a3b8;text-decoration:none;background:#0f172a;border:1px solid #334155;padding:4px 10px;border-radius:6px;">Facebook</a>
+        {% endif %}
+        {% if social_linkedin_url %}
+        <a href="{{ social_linkedin_url }}" target="_blank" rel="noopener noreferrer"
+           style="font-size:13px;color:#94a3b8;text-decoration:none;background:#0f172a;border:1px solid #334155;padding:4px 10px;border-radius:6px;">LinkedIn</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <hr class="divider" />
+
+    <div class="btn-row">
+      <a href="/" class="btn btn-primary">Generate Another Blog</a>
+      <a href="{{ result.article_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">View on Store ↗</a>
+      {% if product_url %}
+      <a href="{{ product_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">{% if product_title %}{{ product_title }}{% else %}View Product{% endif %} ↗</a>
+      {% endif %}
+    </div>
+
+    <div class="article-link">
+      <a href="{{ result.article_url }}" target="_blank" rel="noopener noreferrer">{{ result.article_url }}</a>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const articleUrl = encodeURIComponent({{ result.article_url | tojson }});
+      const text = encodeURIComponent({{ title | tojson }});
+      const tags = {{ hashtags | tojson }}.map(t => t.replace(/^#/, '')).join(',');
+      const xHandle = {{ social_x_handle | tojson }};
+      const fbPageUrl = {{ social_facebook_url | tojson }};
+      const liPageUrl = {{ social_linkedin_url | tojson }};
+
+      const elX = document.getElementById('share-x');
+      if (elX) {
+        let xUrl = 'https://twitter.com/intent/tweet?text=' + text + '&url=' + articleUrl;
+        if (tags) xUrl += '&hashtags=' + tags;
+        if (xHandle) xUrl += '&via=' + encodeURIComponent(xHandle);
+        elX.href = xUrl;
+      }
+      const elFb = document.getElementById('share-facebook');
+      if (elFb) {
+        // If a store Facebook page is set, link to it with u= so the dialog pre-selects their page
+        const fbBase = fbPageUrl
+          ? 'https://www.facebook.com/dialog/feed?app_id=&link=' + articleUrl + '&redirect_uri=' + articleUrl
+          : 'https://www.facebook.com/sharer/sharer.php?u=' + articleUrl;
+        elFb.href = 'https://www.facebook.com/sharer/sharer.php?u=' + articleUrl;
+      }
+      const elLi = document.getElementById('share-linkedin');
+      if (elLi) elLi.href = 'https://www.linkedin.com/sharing/share-offsite/?url=' + articleUrl;
+    })();
+
+    function copyHashtags() {
+      const tags = {{ hashtags | tojson }}.join(' ');
+      navigator.clipboard.writeText(tags).then(function () {
+        var btn = document.getElementById('copy-hashtags-btn');
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = 'Copy Hashtags'; }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+.ai-blog-guide-card {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 22px;
+  padding: 1.25rem;
+  background: linear-gradient(180deg, #fffdf7 0%, #ffffff 100%);
+  color: #111827;
+  box-shadow: 0 20px 45px -32px rgba(15, 23, 42, 0.5);
+}
+
+.ai-blog-guide-card--empty {
+  border-style: dashed;
+  background: #f9fafb;
+}
+
+.ai-blog-guide-card__eyebrow {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9a3412;
+}
+
+.ai-blog-guide-card__heading {
+  margin: 0;
+  font-size: clamp(1.2rem, 2vw, 1.45rem);
+  line-height: 1.2;
+}
+
+.ai-blog-guide-card__title {
+  margin: 0.6rem 0 0;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.ai-blog-guide-card__excerpt {
+  margin: 0.75rem 0 0;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.ai-blog-guide-card__actions {
+  margin-top: 1rem;
+}
+
+.ai-blog-guide-card__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 999px;
+  padding: 0.8rem 1.1rem;
+  background: #111827;
+  color: #ffffff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.ai-blog-guide-card__link:hover,
+.ai-blog-guide-card__link:focus-visible {
+  background: #7c2d12;
+  color: #ffffff;
+}

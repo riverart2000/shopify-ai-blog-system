@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>History — AI Blog Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a; color: #f1f5f9; min-height: 100vh;
+    }
+    nav {
+      background: #0f172a; padding: 0 32px; display: flex; align-items: center;
+      gap: 0; height: 52px; border-bottom: 1px solid #1e293b;
+    }
+    nav .logo { color: #fff; font-weight: 700; font-size: 15px; margin-right: 32px; }
+    nav a {
+      color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500;
+      padding: 0 16px; height: 52px; display: flex; align-items: center;
+      border-bottom: 2px solid transparent; transition: color 0.15s;
+    }
+    nav a:hover { color: #fff; }
+    nav a.active { color: #fff; border-bottom-color: #3b82f6; }
+
+    .page { max-width: 960px; margin: 0 auto; padding: 36px 16px 60px; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .page-sub { font-size: 14px; color: #94a3b8; margin-bottom: 32px; }
+
+    .alert {
+      border-radius: 12px; padding: 12px 16px; margin-bottom: 18px;
+      border: 1px solid transparent; font-size: 14px;
+    }
+    .alert-success {
+      background: rgba(16,185,129,0.10); color: #6ee7b7; border-color: rgba(16,185,129,0.28);
+    }
+    .alert-error {
+      background: rgba(239,68,68,0.10); color: #fecaca; border-color: rgba(239,68,68,0.28);
+    }
+
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-bottom: 14px; flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 8px; border: 1px solid #334155; background: #1e293b;
+      color: #f1f5f9; padding: 9px 14px; font-size: 13px; font-weight: 600;
+      cursor: pointer; text-decoration: none;
+    }
+    .btn:hover { background: #273549; }
+    .btn-danger {
+      background: rgba(127,29,29,0.45); border-color: rgba(248,113,113,0.25); color: #fecaca;
+    }
+    .btn-danger:hover { background: rgba(153,27,27,0.55); }
+
+    .empty-state {
+      background: #1e293b; border-radius: 12px; padding: 60px;
+      text-align: center; color: #64748b; font-size: 15px;
+    }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: #1e293b; padding: 10px 14px; text-align: left;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #64748b;
+      border-bottom: 1px solid #334155;
+    }
+    tbody tr { border-bottom: 1px solid #1e293b; transition: background 0.1s; }
+    tbody tr:hover { background: #1e293b; }
+    td { padding: 12px 14px; font-size: 13px; color: #cbd5e1; vertical-align: top; }
+    td.title { font-weight: 600; color: #f1f5f9; max-width: 260px; }
+    td.summary { color: #94a3b8; max-width: 300px; }
+
+    .tag {
+      display: inline-block; background: rgba(59,130,246,0.15); color: #93c5fd;
+      border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500;
+      margin: 2px 2px 2px 0;
+    }
+    .badge {
+      display: inline-block; border-radius: 20px; padding: 3px 10px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-published { background: rgba(16,185,129,0.12); color: #6ee7b7; }
+    .badge-failed    { background: rgba(239,68,68,0.12); color: #fca5a5; }
+    .badge-blocked_quality { background: rgba(239,68,68,0.12); color: #fca5a5; }
+    .badge-ready { background: rgba(16,185,129,0.12); color: #6ee7b7; }
+    .badge-review { background: rgba(245,158,11,0.12); color: #fcd34d; }
+    .badge-blocked { background: rgba(239,68,68,0.12); color: #fca5a5; }
+
+    .card-wrap {
+      background: #1e293b; border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3); overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    a.link { color: #60a5fa; text-decoration: none; }
+    a.link:hover { text-decoration: underline; }
+
+    .ts { color: #64748b; font-size: 12px; white-space: nowrap; }
+    .muted { color: #94a3b8; font-size: 12px; }
+    .issue { color: #cbd5e1; font-size: 12px; line-height: 1.5; max-width: 360px; }
+    .nowrap { white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="logo">AI Blog Generator</span>
+  <a href="/">Generate</a>
+  <a href="/history" class="active">History</a>
+  <a href="/setup">Setup</a>
+  <a href="/logout" style="margin-left:auto;">Logout</a>
+</nav>
+
+<div class="page">
+  <h1>Generation History</h1>
+  <div class="page-sub">Last 50 local blog generations. Use the live scan below to review current Shopify posts and remove weak ones.</div>
+
+  {% if deleted %}
+  <div class="alert alert-success">Shopify post deleted. The live store scan below has been refreshed.</div>
+  {% endif %}
+
+  {% if scan_error %}
+  <div class="alert alert-error">Could not scan or update store posts: {{ scan_error }}</div>
+  {% endif %}
+
+  {% if not is_admin %}
+  <div class="section-head">
+    <div>
+      <h2 style="font-size:18px;font-weight:700;">Current Store Posts</h2>
+      <div class="muted">Scan live posts from {{ store_name }} and review them with the same local quality rules.</div>
+    </div>
+    <a href="/history?scan_store=1" class="btn">Scan Current Store Posts</a>
+  </div>
+
+  {% if scan_requested and not store_posts and not scan_error %}
+  <div class="empty-state" style="padding:36px; margin-bottom:24px;">No current Shopify posts found for this store.</div>
+  {% elif store_posts %}
+  <div class="card-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Blog</th>
+          <th>Score</th>
+          <th>Verdict</th>
+          <th>Top Issues</th>
+          <th>Date</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for post in store_posts %}
+        <tr>
+          <td class="title">
+            <a href="{{ post.article_url }}" target="_blank" rel="noopener" class="link">{{ post.title }}</a>
+          </td>
+          <td>{{ post.blog_handle }}</td>
+          <td class="nowrap"><strong>{{ post.quality.score }}</strong></td>
+          <td><span class="badge badge-{{ post.quality.verdict }}">{{ post.quality.verdict_label }}</span></td>
+          <td class="issue">{{ post.top_issue }}</td>
+          <td class="ts">{{ post.published_at[:10] if post.published_at else 'Unknown' }}</td>
+          <td>
+            {% if post.quality.verdict != 'ready' %}
+            <form method="POST" action="/history/store-posts/delete" onsubmit="return confirm('Delete Shopify post: {{ post.title|replace("'", "&#39;") }}?');">
+              <input type="hidden" name="article_id" value="{{ post.id }}" />
+              <input type="hidden" name="blog_id" value="{{ post.blog_id }}" />
+              <button type="submit" class="btn btn-danger">Delete</button>
+            </form>
+            {% else %}
+            <span class="muted">Keep</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <div class="section-head" style="margin-top:8px;">
+    <div>
+      <h2 style="font-size:18px;font-weight:700;">Local Generation History</h2>
+      <div class="muted">Recent posts created through this app.</div>
+    </div>
+  </div>
+
+  {% if not rows %}
+  <div class="empty-state">No blogs generated yet.</div>
+  {% else %}
+  <div class="card-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Title</th>
+          <th>Store</th>
+          <th>Blog</th>
+          <th>Images</th>
+          <th>Status</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td class="ts">{{ row.id }}</td>
+          <td class="title">
+            {% if row.article_url %}
+            <a href="{{ row.article_url }}" target="_blank" rel="noopener" class="link">{{ row.title }}</a>
+            {% else %}
+            {{ row.title }}
+            {% endif %}
+            <div style="margin-top:4px;">
+              {% for kw in row.keywords[:4] %}
+              <span class="tag">{{ kw }}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>{{ row.store_name }}</td>
+          <td>{{ row.blog_handle }}</td>
+          <td style="text-align:center;">{{ row.image_count }}</td>
+          <td><span class="badge badge-{{ row.status }}">{{ row.status }}</span></td>
+          <td class="ts">{{ row.created_at | datetimeformat }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+</body>
+</html>

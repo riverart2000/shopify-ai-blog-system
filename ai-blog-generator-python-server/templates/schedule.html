@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule — AI Blog Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f1f5f9; min-height: 100vh; }
+    nav {
+      background: #0f172a; padding: 0 32px; display: flex; align-items: center;
+      gap: 0; height: 52px; border-bottom: 1px solid #1e293b;
+    }
+    nav .logo { color: #fff; font-weight: 700; font-size: 15px; margin-right: 32px; }
+    nav a {
+      color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500;
+      padding: 0 16px; height: 52px; display: flex; align-items: center;
+      border-bottom: 2px solid transparent; transition: color 0.15s;
+    }
+    nav a:hover { color: #fff; }
+    nav a.active { color: #fff; border-bottom-color: #3b82f6; }
+
+    .page { max-width: 860px; margin: 0 auto; padding: 36px 16px 60px; }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .page-sub { font-size: 14px; color: #94a3b8; margin-bottom: 32px; }
+
+    .alert { border-radius: 10px; padding: 12px 16px; font-size: 14px; margin-bottom: 24px; border: 1px solid; }
+    .alert-success { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #6ee7b7; }
+    .alert-error   { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: #fca5a5; }
+
+    .card { background: #1e293b; border-radius: 12px; padding: 28px 32px; margin-bottom: 24px; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+    .card-title { font-size: 15px; font-weight: 700; color: #f1f5f9; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #334155; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #94a3b8; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.05em; }
+    input[type="text"], select {
+      width: 100%; padding: 9px 12px; border: 1px solid #334155; border-radius: 8px;
+      font-size: 14px; color: #f1f5f9; background: #0f172a; outline: none; transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+
+    .btn { padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: background 0.15s; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-danger  { background: rgba(239,68,68,0.15); color: #fca5a5; }
+    .btn-danger:hover { background: rgba(239,68,68,0.25); }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .btn-ghost { background: #334155; color: #cbd5e1; border: 1px solid #475569; }
+    .btn-ghost:hover { background: #475569; }
+
+    .item-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+    .list-item {
+      background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+      padding: 16px 20px; display: flex; align-items: flex-start; gap: 16px;
+    }
+    .item-info { flex: 1; min-width: 0; }
+    .item-name { font-weight: 700; font-size: 14px; color: #f1f5f9; }
+    .item-meta { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+    .item-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+
+    .badge { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 4px; padding: 2px 7px; margin-left: 6px; }
+    .badge-green  { background: rgba(16,185,129,0.15); color: #6ee7b7; }
+    .badge-red    { background: rgba(239,68,68,0.15); color: #fca5a5; }
+
+    .toggle-switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; background: #334155; border-radius: 20px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-slider:before {
+      content: ""; position: absolute; width: 14px; height: 14px; border-radius: 50%;
+      background: #94a3b8; left: 3px; top: 3px; transition: transform 0.2s, background 0.2s;
+    }
+    input:checked + .toggle-slider { background: rgba(59,130,246,0.4); }
+    input:checked + .toggle-slider:before { transform: translateX(16px); background: #3b82f6; }
+
+    .hint { font-size: 11px; color: #64748b; margin-top: 3px; }
+    .empty-state { text-align: center; padding: 32px; color: #64748b; font-size: 14px; }
+    .edit-form { display: none; margin-top: 12px; }
+    .edit-form.open { display: block; }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="logo">AI Blog Generator</span>
+  <a href="/">Generate</a>
+  <a href="/history">History</a>
+  <a href="/setup">Setup</a>
+  <a href="/schedule" class="active">Schedule</a>
+  <a href="/logout" style="margin-left:auto;">Logout</a>
+</nav>
+
+<div class="page">
+  <h1>Scheduled Jobs</h1>
+  <div class="page-sub">Automate blog generation. A separate scheduler process picks up due jobs every minute.</div>
+
+  {% if saved %}
+  <div class="alert alert-success">
+    {% if saved == "job" %}Job saved.
+    {% elif saved == "deleted" %}Job deleted.
+    {% elif saved == "toggled" %}Job updated.
+    {% else %}Saved.
+    {% endif %}
+  </div>
+  {% endif %}
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="item-list">
+    {% for job in jobs %}
+    <div class="list-item">
+      <div class="item-info">
+        <div class="item-name">
+          {{ job.name }}
+          {% if job.is_active %}<span class="badge badge-green">active</span>{% else %}<span class="badge badge-red">paused</span>{% endif %}
+          {% if job.is_product_blog %}<span class="badge" style="background:rgba(168,85,247,0.15);color:#d8b4fe;border:1px solid rgba(168,85,247,0.3);">product blog</span>{% endif %}
+        </div>
+        <div class="item-meta">
+          {{ job.cron_expr }} &nbsp;·&nbsp;
+          Blog: {{ job.blog_handle or '(store default)' }} &nbsp;·&nbsp;
+          {% if job.last_run_at %}Last run: {{ job.last_run_at }}{% else %}Never run{% endif %}
+          {% if job.next_run_at %} &nbsp;·&nbsp; Next: {{ job.next_run_at }}{% endif %}
+        </div>
+        <!-- Edit form -->
+        <div id="edit-job-{{ job.id }}" class="edit-form">
+          <form method="POST" action="/schedule/save" style="margin-top:12px;">
+            <input type="hidden" name="job_id" value="{{ job.id }}" />
+            <div class="grid2">
+              <div class="field"><label>Name</label><input type="text" name="name" value="{{ job.name }}" required /></div>
+              <div class="field"><label>Cron Expression</label>
+                <input type="text" name="cron_expr" value="{{ job.cron_expr }}" placeholder="0 9 * * *" required />
+                <div class="hint">5-field cron: min hour day month weekday. E.g. <code>0 9 * * 1-5</code> = weekdays 9am</div>
+              </div>
+              <div class="field"><label>Prompt Template</label>
+                <select name="prompt_id">
+                  <option value="">— None —</option>
+                  {% for p in prompts %}
+                  <option value="{{ p.id }}" {% if p.id == job.prompt_id %}selected{% endif %}>{{ p.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="field"><label>Blog Handle</label>
+                {% if cached_blogs %}
+                <select name="blog_handle">
+                  <option value="">(store default)</option>
+                  {% for b in cached_blogs %}
+                  <option value="{{ b.handle }}" {% if b.handle == job.blog_handle %}selected{% endif %}>{{ b.title }} ({{ b.handle }})</option>
+                  {% endfor %}
+                </select>
+                {% else %}
+                <input type="text" name="blog_handle" value="{{ job.blog_handle }}" placeholder="news" />
+                {% endif %}
+                <div class="hint">Leave blank to use store default.</div>
+              </div>
+              <div class="field"><label>Author</label>
+                <input type="text" name="author" value="{{ job.author }}" placeholder="(store default)" />
+              </div>
+              <div class="field"><label>Timezone</label>
+                <input type="text" name="timezone" value="{{ job.timezone or 'UTC' }}" placeholder="UTC" />
+              </div>
+            </div>
+            <div class="field" style="margin-bottom:16px;">
+              <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+                <input type="checkbox" name="is_product_blog" value="1"
+                  {% if job.is_product_blog %}checked{% endif %}
+                  style="width:16px;height:16px;accent-color:#a855f7;" />
+                <span>Product Blog — pick a random product each run</span>
+              </label>
+              <div class="hint" style="margin-top:6px;margin-left:26px;">When checked, a product is selected at random, its image is used, and the blog is written specifically about that product.</div>
+            </div>
+            <div class="field" style="margin-bottom:16px;">
+              <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+                <input type="checkbox" name="use_keyword_pool" value="1"
+                  {% if job.use_keyword_pool %}checked{% endif %}
+                  style="width:16px;height:16px;accent-color:#a855f7;" />
+                <span>Use long-tail keyword from pool each run</span>
+              </label>
+              <div class="hint" style="margin-top:6px;margin-left:26px;">When checked, a keyword is popped from the pool and injected into the prompt. If the pool is empty, a fresh one is fetched automatically.</div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">Save</button>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="toggleEdit('job','{{ job.id }}')">Cancel</button>
+          </form>
+        </div>
+      </div>
+      <div class="item-actions">
+        <!-- Active toggle -->
+        <form method="POST" action="/schedule/toggle" style="display:flex;align-items:center;gap:6px;">
+          <input type="hidden" name="job_id" value="{{ job.id }}" />
+          <input type="hidden" name="is_active" value="{{ '0' if job.is_active else '1' }}" />
+          <label class="toggle-switch" title="{{ 'Pause' if job.is_active else 'Activate' }}">
+            <input type="checkbox" {% if job.is_active %}checked{% endif %} onchange="this.closest('form').submit()" />
+            <span class="toggle-slider"></span>
+          </label>
+        </form>
+        <button class="btn btn-ghost btn-sm" onclick="toggleEdit('job','{{ job.id }}')">Edit</button>
+        <form method="POST" action="/schedule/delete" style="display:inline;" onsubmit="return confirm('Delete job {{ job.name }}?')">
+          <input type="hidden" name="job_id" value="{{ job.id }}" />
+          <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="empty-state">No scheduled jobs yet. Add one below.</div>
+    {% endfor %}
+  </div>
+
+  <div class="card">
+    <div class="card-title">Add Scheduled Job</div>
+    <form method="POST" action="/schedule/save">
+      <input type="hidden" name="job_id" value="" />
+      <div class="grid2">
+        <div class="field"><label>Name</label><input type="text" name="name" required placeholder="Daily Morning Post" /></div>
+        <div class="field"><label>Cron Expression</label>
+          <input type="text" name="cron_expr" placeholder="0 9 * * *" required />
+          <div class="hint">5-field cron. E.g. <code>0 9 * * 1-5</code> = Mon–Fri 9am</div>
+        </div>
+        <div class="field"><label>Prompt Template</label>
+          <select name="prompt_id">
+            <option value="">— None —</option>
+            {% for p in prompts %}
+            <option value="{{ p.id }}">{{ p.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field"><label>Blog Handle</label>
+          {% if cached_blogs %}
+          <select name="blog_handle">
+            <option value="">(store default)</option>
+            {% for b in cached_blogs %}
+            <option value="{{ b.handle }}">{{ b.title }} ({{ b.handle }})</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input type="text" name="blog_handle" placeholder="news" />
+          {% endif %}
+          <div class="hint">Leave blank to use store default.</div>
+        </div>
+        <div class="field"><label>Author</label>
+          <input type="text" name="author" placeholder="(store default)" />
+        </div>
+        <div class="field"><label>Timezone</label>
+          <input type="text" name="timezone" value="UTC" placeholder="UTC" />
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:16px;">
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+          <input type="checkbox" name="is_product_blog" value="1"
+            style="width:16px;height:16px;accent-color:#a855f7;" />
+          <span>Product Blog — pick a random product each run</span>
+        </label>
+        <div class="hint" style="margin-top:6px;margin-left:26px;">When checked, a product is selected at random from the store, its image is used, and the blog is written specifically about that product.</div>
+      </div>
+      <div class="field" style="margin-bottom:20px;">
+        <label style="display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer;">
+          <input type="checkbox" name="use_keyword_pool" value="1"
+            style="width:16px;height:16px;accent-color:#a855f7;" />
+          <span>Use long-tail keyword from pool each run</span>
+        </label>
+        <div class="hint" style="margin-top:6px;margin-left:26px;">When checked, a keyword is popped from the pool and injected into the prompt. If the pool is empty, a fresh one is fetched automatically.</div>
+      </div>
+      <button type="submit" class="btn btn-primary">Add Job</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  function toggleEdit(type, id) {
+    const el = document.getElementById(`edit-${type}-${id}`);
+    if (el) el.classList.toggle('open');
+  }
+</script>
+</body>
+</html>

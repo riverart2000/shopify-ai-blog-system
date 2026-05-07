@@ -1,0 +1,77 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4000,
+    "mode": "debug",
+    "secret_key": "47v348t5ytv45"
+  },
+  "logging": {
+    "file_path": "logs/ai-blog-server.log",
+    "max_bytes": 5242880,
+    "backup_count": 3
+  },
+  "deepseek": {
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "model": "deepseek-chat",
+    "temperature": 0.7,
+    "timeout_seconds": 90,
+    "max_retries": 2,
+    "system_prompt": "You are a senior content strategist and SEO writer creating long-form Shopify blog posts. Write in British English. Return exactly one valid JSON object with no markdown fences, no commentary, just raw JSON."
+  },
+  "grok": {
+    "api_key_env": "GROK_API_KEY",
+    "endpoint": "https://api.x.ai/v1/images/generations",
+    "model": "grok-imagine-image",
+    "image_count": 2,
+    "timeout_seconds": 60
+  },
+  "stores": [
+    {
+      "id": "store_1",
+      "name": "BioluxeLab",
+      "myshopify_domain": "xfxs8g-hn.myshopify.com",
+      "client_id_env": "SHOPIFY_CLIENT_ID",
+      "client_secret_env": "SHOPIFY_CLIENT_SECRET",
+      "default_blog_handle": "news",
+      "default_author": "BioluxeLab Team"
+    },
+    {
+      "id": "store_2",
+      "name": "My Second Store",
+      "myshopify_domain": "mysecondstore.myshopify.com",
+      "client_id_env": "SHOPIFY_CLIENT_ID",
+      "client_secret_env": "SHOPIFY_CLIENT_SECRET",
+      "default_blog_handle": "news",
+      "default_author": "Store Team"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "skincare_tips",
+      "name": "Skincare Tips & Advice",
+      "text": "Write a detailed, practical skincare tips blog post for a premium wellness brand. Focus on ingredients, routines, and results. Tone: warm, expert, and commercially useful without being salesy."
+    },
+    {
+      "id": "product_spotlight",
+      "name": "Product Spotlight",
+      "text": "Write an in-depth product spotlight blog post for a luxury skincare product. Cover benefits, key ingredients, how to use it, and who it is for. Tone: premium, informative, and authoritative."
+    },
+    {
+      "id": "ingredient_deep_dive",
+      "name": "Ingredient Deep Dive",
+      "text": "Write an educational deep-dive blog post about a key skincare ingredient. Explain the science, benefits, how it works, what skin types it suits, and how to incorporate it. Tone: expert, clear, and trustworthy."
+    },
+    {
+      "id": "seasonal_guide",
+      "name": "Seasonal Skincare Guide",
+      "text": "Write a seasonal skincare guide blog post with practical advice for adapting a routine. Cover key concerns, product recommendations, and daily habits. Tone: helpful, actionable, and brand-appropriate."
+    },
+    {
+      "id": "custom",
+      "name": "Custom Prompt",
+      "text": ""
+    }
+  ]
+
+}

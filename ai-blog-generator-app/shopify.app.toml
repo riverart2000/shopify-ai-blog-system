@@ -1,0 +1,47 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "a3d6eb8bb803ee6904df466e816935d9"
+application_url = "https://revenuemindproai.com"
+embedded = true
+name = "BioluxeLab AI Blog Studio"
+description = "Generate, review, and publish AI-assisted Shopify blog articles from an embedded app."
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_content,write_content,read_files,write_files,read_products,write_products"
+
+[product.metafields.app.related_guide_title]
+name = "Related guide title"
+description = "Title of the related blog guide published by the app"
+type = "single_line_text_field"
+access.admin = "merchant_read"
+
+[product.metafields.app.related_guide_url]
+name = "Related guide URL"
+description = "Storefront URL of the related blog guide published by the app"
+type = "url"
+access.admin = "merchant_read"
+
+[product.metafields.app.related_guide_excerpt]
+name = "Related guide excerpt"
+description = "Short excerpt for the related blog guide published by the app"
+type = "multi_line_text_field"
+access.admin = "merchant_read"
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+[auth]
+redirect_urls = [ "https://revenuemindproai.com/auth/callback" ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true

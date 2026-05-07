@@ -1,0 +1,34 @@
+# Caddyfile — TLS termination for AI Blog Generator
+#
+# Traffic path: Cloudflare (public HTTPS) → this server :8443 (TLS) → Python server :4000 (plain HTTP)
+#
+# Cloudflare should be set to "Full" SSL mode (not Full Strict) so it
+# trusts the cert on this origin server.
+#
+# SHOPIFY_REACT_APP_URL in .env must match the public URL Cloudflare exposes,
+# e.g. https://revenuemindproai.com:8443
+#
+# TLS cert — managed via certbot DNS challenge (no port 80 needed):
+#   sudo certbot certonly --manual --preferred-challenges dns -d {your-domain}
+#   Certs land in /etc/letsencrypt/live/{your-domain}/
+#
+# Renewal (run via cron every 60 days, then reload caddy):
+#   sudo certbot renew --manual --preferred-challenges dns && caddy reload
+#
+# AWS security group: open port 8443 inbound only.
+
+{$DOMAIN}:8443 {
+    tls {$CERT_FILE} {$KEY_FILE}
+
+    reverse_proxy localhost:4000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/access.log
+        format console
+    }
+}

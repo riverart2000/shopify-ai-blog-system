@@ -1,0 +1,78 @@
+{% liquid
+  assign guide_url = product.metafields["$app"].related_guide_url.value
+  assign guide_title = product.metafields["$app"].related_guide_title.value
+  assign guide_excerpt = product.metafields["$app"].related_guide_excerpt.value
+  if guide_url == blank
+    assign guide_url = product.metafields.custom.ai_blog_related_guide_url.value
+  endif
+  if guide_title == blank
+    assign guide_title = product.metafields.custom.ai_blog_related_guide_title.value
+  endif
+  if guide_excerpt == blank
+    assign guide_excerpt = product.metafields.custom.ai_blog_related_guide_excerpt.value
+  endif
+  assign eyebrow = block.settings.eyebrow | strip
+  assign heading = block.settings.heading | strip
+  assign button_label = block.settings.button_label | strip
+%}
+
+{% if product and guide_url != blank and guide_title != blank %}
+  <aside class="ai-blog-guide-card" {{ block.shopify_attributes }}>
+    {% if eyebrow != blank %}
+      <p class="ai-blog-guide-card__eyebrow">{{ eyebrow }}</p>
+    {% endif %}
+
+    {% if heading != blank %}
+      <h2 class="ai-blog-guide-card__heading">{{ heading }}</h2>
+    {% endif %}
+
+    <p class="ai-blog-guide-card__title">{{ guide_title }}</p>
+
+    {% if guide_excerpt != blank %}
+      <p class="ai-blog-guide-card__excerpt">{{ guide_excerpt }}</p>
+    {% endif %}
+
+    <div class="ai-blog-guide-card__actions">
+      <a class="ai-blog-guide-card__link" href="{{ guide_url }}">
+        {{ button_label | default: 'Read the guide' }}
+      </a>
+    </div>
+  </aside>
+{% elsif request.design_mode %}
+  <aside class="ai-blog-guide-card ai-blog-guide-card--empty" {{ block.shopify_attributes }}>
+    <p class="ai-blog-guide-card__eyebrow">App preview</p>
+    <h2 class="ai-blog-guide-card__heading">Publish a linked product guide to populate this block.</h2>
+    <p class="ai-blog-guide-card__excerpt">Once a blog is published with a related product selected, this block will surface the guide automatically on that product page.</p>
+  </aside>
+{% endif %}
+
+{% schema %}
+{
+  "name": "Related product guide",
+  "target": "section",
+  "stylesheet": "related-guide.css",
+  "enabled_on": {
+    "templates": ["product"]
+  },
+  "settings": [
+    {
+      "type": "text",
+      "id": "eyebrow",
+      "label": "Eyebrow",
+      "default": "From our blog"
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Need a deeper guide before you buy?"
+    },
+    {
+      "type": "text",
+      "id": "button_label",
+      "label": "Button label",
+      "default": "Read the guide"
+    }
+  ]
+}
+{% endschema %}

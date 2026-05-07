@@ -1,0 +1,41 @@
+# ── Secrets & environment ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+.pytest_cache/
+
+# ── Databases & runtime data ─────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+ai-blog-generator-python-server/data/
+ai-blog-generator-python-server/logs/
+ai-blog-generator-python-server/run/
+
+# ── Node / React ─────────────────────────────────────────────────────────────
+node_modules/
+ai-blog-generator-app/build/
+ai-blog-generator-app/.cache/
+ai-blog-generator-app/.shopify/
+ai-blog-generator-app/prisma/*.db
+ai-blog-generator-app/prisma/*.sqlite
+
+# ── Rust ─────────────────────────────────────────────────────────────────────
+ai-blog-generator-rust-server/target/
+
+# ── Backup / temp files ───────────────────────────────────────────────────────
+*.bak
+*.orig
+*.tmp
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
