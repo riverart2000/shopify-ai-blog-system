@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "a3d6eb8bb803ee6904df466e816935d9"
-application_url = "https://revenuemindproai.com"
+application_url = "https://revenuemindproai.com:8443"
 embedded = true
 name = "BioluxeLab AI Blog Studio"
 description = "Generate, review, and publish AI-assisted Shopify blog articles from an embedded app."
