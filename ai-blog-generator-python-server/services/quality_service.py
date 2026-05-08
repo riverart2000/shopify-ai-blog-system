@@ -727,14 +727,12 @@ def evaluate_draft(
             hint=_ARTIFACT_HINT,
         )
 
-    _SEO_HINT = "Target: at least one bullet list (-), FAQ/question section, and a final link or CTA"
+    _SEO_HINT = "Target: at least one bullet list (-) and a FAQ/question section (links/CTAs are auto-added at publish)"
     seo_gaps: list[str] = []
     if not _BULLET_RE.search(content):
-        seo_gaps.append("bullets")
+        seo_gaps.append("bullet lists")
     if not _FAQ_RE.search(content):
         seo_gaps.append("FAQ/question section")
-    if not (_LINK_RE.search(content) or product_url.strip() or _CTA_RE.search(content[-700:].lower())):
-        seo_gaps.append("internal link or final CTA")
     if not seo_gaps:
         _add_check(
             checks,
