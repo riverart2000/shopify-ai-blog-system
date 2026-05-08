@@ -148,7 +148,7 @@ ${domain}:8443 {
         not header Authorization *
     }
 $(if [[ -n "$basic_auth_user" && -n "$basic_auth_hash" ]]; then
-echo "    basic_auth @landing {"
+echo "    basicauth @landing {"
 echo "        ${basic_auth_user} ${basic_auth_hash}"
 echo "    }"
 fi)
@@ -192,7 +192,7 @@ ${domain} {
         not header Authorization *
     }
 $(if [[ -n "$basic_auth_user" && -n "$basic_auth_hash" ]]; then
-echo "    basic_auth @landing {"
+echo "    basicauth @landing {"
 echo "        ${basic_auth_user} ${basic_auth_hash}"
 echo "    }"
 fi)
