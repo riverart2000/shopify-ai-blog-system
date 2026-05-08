@@ -47,7 +47,7 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  if (!BACKEND_KEY) return { settings: null, keywords: [], titles: [], prompts: [], models: [], storeId: "" };
+  if (!BACKEND_KEY) return { backendConfigured: false, settings: null, keywords: [], titles: [], prompts: [], models: [], storeId: "" };
   const [settingsData, keywordsData, titlesData, modelsData, promptsData] = await Promise.allSettled([
     backendFetch("/api/settings"),
     backendFetch("/api/keywords"),
@@ -61,7 +61,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const models = modelsData.status === "fulfilled" ? (modelsData.value.models ?? []) as Model[] : [];
   const prompts = promptsData.status === "fulfilled" ? (promptsData.value.prompts ?? []) as Prompt[] : [];
   const storeId = settings?.store_id || "";
-  return { settings, keywords, titles, prompts, models, storeId };
+  return { backendConfigured: true, settings, keywords, titles, prompts, models, storeId };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -127,7 +127,7 @@ function Alert({ message, tone }: { message: string; tone: "success" | "error" |
 }
 
 export default function SettingsRoute() {
-  const { settings, keywords, titles, prompts, models, storeId } = useLoaderData<typeof loader>();
+  const { backendConfigured, settings, keywords, titles, prompts, models, storeId } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; error?: string; intent?: string; message?: string } | undefined;
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
@@ -141,7 +141,7 @@ export default function SettingsRoute() {
 
   return (
     <s-page heading="Store Settings">
-      {!BACKEND_KEY ? (
+      {!backendConfigured ? (
         <s-section>
           <Alert message="AI_BLOG_BACKEND_API_KEY is not configured. Add it to your .env file." tone="error" />
         </s-section>

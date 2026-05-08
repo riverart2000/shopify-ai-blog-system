@@ -40,12 +40,12 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  if (!BACKEND_KEY) return { models: [], storeId: "" };
+  if (!BACKEND_KEY) return { backendConfigured: false, models: [], storeId: "" };
   try {
     const data = await backendFetch("/api/models");
-    return { models: (data.models ?? []) as AiModel[], storeId: (data.store_id ?? "") as string };
+    return { backendConfigured: true, models: (data.models ?? []) as AiModel[], storeId: (data.store_id ?? "") as string };
   } catch {
-    return { models: [], storeId: "" };
+    return { backendConfigured: true, models: [], storeId: "" };
   }
 };
 
@@ -172,7 +172,7 @@ function ModelForm({ storeId, model, onClose }: ModelFormProps) {
 }
 
 export default function ModelsRoute() {
-  const { models, storeId } = useLoaderData<typeof loader>();
+  const { backendConfigured, models, storeId } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; error?: string } | undefined;
   const [editing, setEditing] = useState<string | null>(null); // model.id or "new"
 
@@ -182,6 +182,13 @@ export default function ModelsRoute() {
 
   return (
     <s-page heading="AI Models">
+      {!backendConfigured ? (
+        <s-section>
+          <div style={{ borderRadius: "12px", padding: "12px 16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", color: "#991b1b", fontSize: "0.875rem" }}>
+            AI_BLOG_BACKEND_API_KEY is not configured. Add it to your .env file.
+          </div>
+        </s-section>
+      ) : null}
       {actionData && !actionData.ok && actionData.error ? (
         <s-section>
           <div style={{ borderRadius: "12px", padding: "12px 16px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", color: "#991b1b", fontSize: "0.875rem" }}>
