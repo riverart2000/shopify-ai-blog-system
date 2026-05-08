@@ -88,6 +88,9 @@ async def get_recent_runs_for_job(job_id: str, limit: int = 10) -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+async def log_model_error(
     store_id: str,
     model_id: Optional[str],
     provider: Optional[str],
