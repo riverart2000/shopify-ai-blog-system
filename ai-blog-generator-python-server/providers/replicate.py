@@ -14,8 +14,8 @@ from utils import log_debug_payload
 logger = logging.getLogger("ai_blog_server")
 
 _PREDICTIONS_URL = "https://api.replicate.com/v1/predictions"
-_POLL_INTERVAL = 3
-_MAX_POLLS = 30
+_POLL_INTERVAL = 5
+_MAX_POLLS = 60   # 5 min total (large reasoning models like DeepSeek R1 can take 3-4 min)
 
 
 class ReplicateImageProvider(ImageProvider):
