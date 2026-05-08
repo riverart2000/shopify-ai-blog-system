@@ -40,7 +40,7 @@ api_version = "2026-07"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://revenuemindproai.com/auth/callback" ]
+redirect_urls = [ "https://revenuemindproai.com:8443/auth/callback" ]
 
 [build]
 automatically_update_urls_on_dev = true
