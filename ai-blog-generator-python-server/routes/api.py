@@ -341,6 +341,18 @@ async def api_schedule_toggle(request: Request):
     return {"ok": True}
 
 
+@router.get("/api/schedule/recent-runs")
+async def api_schedule_recent_runs(request: Request, job_id: str = "", limit: int = 10):
+    """Return the most recent published generations for a scheduled job. Auth: x-api-key header."""
+    _verify_backend_api_key(request)
+    if not job_id.strip():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="job_id is required")
+    limit = max(1, min(limit, 50))
+    runs = await db.get_recent_runs_for_job(job_id.strip(), limit)
+    return {"runs": runs}
+
+
 # --- Prompts CRUD ---
 
 @router.get("/api/prompts")

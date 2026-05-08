@@ -194,6 +194,10 @@ _V9_COLUMNS = [
     "ALTER TABLE blog_title_pool ADD COLUMN used_at INTEGER",
 ]
 
+_V10_COLUMNS = [
+    "ALTER TABLE generations ADD COLUMN scheduled_job_id TEXT",
+]
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -248,6 +252,12 @@ async def init_db() -> None:
                 pass  # column already exists
 
         for stmt in _V9_COLUMNS:
+            try:
+                await db.execute(stmt)
+            except Exception:
+                pass  # column already exists
+
+        for stmt in _V10_COLUMNS:
             try:
                 await db.execute(stmt)
             except Exception:

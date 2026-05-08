@@ -39,6 +39,7 @@ async def run(
     system_prompt: str = "",
     product_url: str = "",
     product_title: str = "",
+    scheduled_job_id: str = "",
 ) -> PipelineResult:
     """Full pipeline: generate text → generate images → publish → log.
 
@@ -156,6 +157,7 @@ async def run(
             article_id=None,
             article_url=None,
             status="blocked_quality",
+            scheduled_job_id=scheduled_job_id or None,
         )
         logger.warning(
             "Pipeline blocked by quality checks | store=%s title=%r score=%s duplicate=%r",
@@ -206,6 +208,7 @@ async def run(
         article_id=str(result.article_id),
         article_url=result.article_url,
         status="published",
+        scheduled_job_id=scheduled_job_id or None,
     )
 
     # --- Mark title pool entry as published ---

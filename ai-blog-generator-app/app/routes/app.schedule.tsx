@@ -24,6 +24,14 @@ type ScheduledJob = {
   created_at: number;
 };
 
+type RecentRun = {
+  id: number;
+  title: string;
+  article_url: string | null;
+  blog_handle: string;
+  created_at: number;
+};
+
 type Prompt = { id: string; name: string; text: string };
 type Store = { id: string; name: string; myshopify_domain: string; default_blog_handle: string; default_author: string };
 
@@ -38,17 +46,27 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  if (!BACKEND_KEY) return { jobs: [], prompts: [], stores: [], storeId: "", error: "AI_BLOG_BACKEND_API_KEY is not configured." };
+  if (!BACKEND_KEY) return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: "AI_BLOG_BACKEND_API_KEY is not configured." };
   try {
     const [jobsData, storesData] = await Promise.all([
       backendFetch("/api/schedule/jobs"),
       backendFetch("/api/stores"),
     ]);
     const storeId: string = jobsData.store_id || storesData.stores?.[0]?.id || "";
-    const promptsData = storeId ? await backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : { prompts: [] };
-    return { jobs: jobsData.jobs as ScheduledJob[], prompts: promptsData.prompts as Prompt[], stores: storesData.stores as Store[], storeId, error: null };
+    const jobs = jobsData.jobs as ScheduledJob[];
+    const [promptsData, ...runsResults] = await Promise.all([
+      storeId ? backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : Promise.resolve({ prompts: [] }),
+      ...jobs.map((j: ScheduledJob) =>
+        backendFetch(`/api/schedule/recent-runs?job_id=${encodeURIComponent(j.id)}&limit=10`).catch(() => ({ runs: [] }))
+      ),
+    ]);
+    const recentRuns: Record<string, RecentRun[]> = {};
+    jobs.forEach((j: ScheduledJob, i: number) => {
+      recentRuns[j.id] = runsResults[i]?.runs ?? [];
+    });
+    return { jobs, prompts: promptsData.prompts as Prompt[], stores: storesData.stores as Store[], storeId, recentRuns, error: null };
   } catch (e) {
-    return { jobs: [], prompts: [], stores: [], storeId: "", error: e instanceof Error ? e.message : "Failed to reach backend" };
+    return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: e instanceof Error ? e.message : "Failed to reach backend" };
   }
 };
 
@@ -186,7 +204,7 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
 }
 
 export default function ScheduleRoute() {
-  const { jobs, prompts, stores, storeId, error } = useLoaderData<typeof loader>();
+  const { jobs, prompts, stores, storeId, recentRuns, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; message?: string | null; error?: string } | undefined;
   const [editing, setEditing] = useState<string | null>(null);
   const navigation = useNavigation();
@@ -251,6 +269,25 @@ export default function ScheduleRoute() {
                           <div style={{ marginTop: 4, display: "flex", gap: 6 }}>
                             {job.is_product_blog ? <span style={{ fontSize: "0.7rem", background: "#ede9fe", color: "#5b21b6", borderRadius: "999px", padding: "2px 7px" }}>product blog</span> : null}
                             {job.use_keyword_pool ? <span style={{ fontSize: "0.7rem", background: "#fef3c7", color: "#92400e", borderRadius: "999px", padding: "2px 7px" }}>keyword pool</span> : null}
+                          </div>
+                        )}
+                        {(recentRuns[job.id] ?? []).length > 0 && (
+                          <div style={{ marginTop: 10 }}>
+                            <div style={{ fontSize: "0.75rem", fontWeight: 600, color: "#6b7280", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.05em" }}>Recent runs</div>
+                            <div style={{ display: "grid", gap: "4px" }}>
+                              {(recentRuns[job.id] ?? []).map(run => (
+                                <div key={run.id} style={{ display: "flex", alignItems: "baseline", gap: "8px", fontSize: "0.8rem" }}>
+                                  <span style={{ color: "#9ca3af", whiteSpace: "nowrap", flexShrink: 0 }}>{fmt(run.created_at)}</span>
+                                  {run.article_url ? (
+                                    <a href={run.article_url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      {run.title}
+                                    </a>
+                                  ) : (
+                                    <span style={{ color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.title}</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

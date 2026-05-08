@@ -174,6 +174,7 @@ async def _process_job(job: dict) -> None:
             prompt_id=job["prompt_id"],
             product_url=product_url,
             product_title=product_title,
+            scheduled_job_id=job_id,
         )
         logger.info(
             "Job '%s' completed | title=%r article_id=%s",
