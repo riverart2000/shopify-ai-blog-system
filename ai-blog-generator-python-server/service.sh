@@ -123,6 +123,9 @@ _write_caddyfile() {
     local cert="${CERT_FILE:-}"
     local key="${KEY_FILE:-}"
 
+    local basic_auth_user="${BASIC_AUTH_USER:-}"
+    local basic_auth_hash="${BASIC_AUTH_HASH:-}"
+
     if [[ -n "$cert" && -r "$cert" && -n "$key" && -r "$key" ]]; then
         # ── Explicit cert mode (certbot / manual) ──────────────────────────
         echo "  Caddy TLS mode: explicit cert ($cert)"
@@ -137,6 +140,18 @@ _write_caddyfile() {
 
 ${domain}:8443 {
     tls ${cert} ${key}
+
+    # Protect the public landing page only.
+    # /auth/* and /webhooks/* stay open — Shopify requires them.
+    @landing {
+        path /
+        not header Authorization *
+    }
+$(if [[ -n "$basic_auth_user" && -n "$basic_auth_hash" ]]; then
+echo "    basic_auth @landing {"
+echo "        ${basic_auth_user} ${basic_auth_hash}"
+echo "    }"
+fi)
 
     reverse_proxy localhost:${FRONTEND_PORT} {
         header_up X-Real-IP {remote_host}
@@ -170,6 +185,18 @@ CADDYFILE
 }
 
 ${domain} {
+    # Protect the public landing page only.
+    # /auth/* and /webhooks/* stay open — Shopify requires them.
+    @landing {
+        path /
+        not header Authorization *
+    }
+$(if [[ -n "$basic_auth_user" && -n "$basic_auth_hash" ]]; then
+echo "    basic_auth @landing {"
+echo "        ${basic_auth_user} ${basic_auth_hash}"
+echo "    }"
+fi)
+
     reverse_proxy localhost:${FRONTEND_PORT} {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto https
