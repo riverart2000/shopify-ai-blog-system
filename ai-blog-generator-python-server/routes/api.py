@@ -1112,3 +1112,126 @@ async def api_titles_clear(request: Request):
         raise HTTPException(status_code=400, detail="store_id is required")
     count = await db.clear_title_pool(sid)
     return {"ok": True, "count": count}
+
+
+# ── Quality check endpoints ────────────────────────────────────────────────
+
+_LLM_REVIEW_SYSTEM = (
+    "You are a senior ecommerce SEO editor. Review drafts for usefulness, search intent, "
+    "commerce fit, readability, claim safety, and brand trust. Be concise and actionable."
+)
+_LLM_REVIEW_PROMPT_ENDING = """Return ONLY a single valid JSON object with exactly these fields:
+    "title": string - concise editorial verdict with a score, for example "Editorial Review - 82/100"
+    "summary": string - 1-2 sentence overall assessment
+    "keywords": array of strings - 3-6 short issue categories
+    "hashtags": array of strings - empty array
+    "content": string - actionable review notes in plain text. Use ## headings and - bullets. Include Strengths, Issues, and Recommended Edits. Do not rewrite the full article.
+
+No markdown fences. No explanation. Raw JSON only."""
+
+
+class QualityReviewRequest(BaseModel):
+    store_id: str = ""
+    title: str = ""
+    summary: str = ""
+    content: str = ""
+    keywords: list[str] = []
+    prompt_text: str = ""
+    product_url: str = ""
+    product_title: str = ""
+    image_count: int = 0
+
+
+class LlmReviewRequest(BaseModel):
+    store_id: str = ""
+    title: str = ""
+    summary: str = ""
+    content: str = ""
+    keywords: list[str] = []
+    prompt_text: str = ""
+    product_url: str = ""
+    product_title: str = ""
+    model_id: str = ""
+
+
+@router.post("/api/quality/review")
+async def api_quality_review(request: Request, payload: QualityReviewRequest):
+    """Run fast heuristic quality checks on a draft."""
+    _verify_backend_api_key(request)
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    report = await review_draft(
+        store_id=sid,
+        title=payload.title,
+        summary=payload.summary,
+        content=payload.content,
+        keywords=payload.keywords,
+        prompt_text=payload.prompt_text,
+        product_url=payload.product_url,
+        product_title=payload.product_title,
+        image_count=payload.image_count,
+    )
+    return {"ok": True, "quality_report": report.as_dict()}
+
+
+@router.post("/api/quality/llm-review")
+async def api_quality_llm_review(request: Request, payload: LlmReviewRequest):
+    """Run a full LLM editorial review on a draft."""
+    _verify_backend_api_key(request)
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    keywords = payload.keywords or []
+    review_prompt = f"""
+Review this generated ecommerce blog draft before publishing.
+
+Original prompt:
+{payload.prompt_text.strip() or "(not provided)"}
+
+Target SEO keywords:
+{', '.join(keywords) if keywords else "(not provided)"}
+
+Related product title:
+{payload.product_title.strip() or "(not provided)"}
+
+Related product URL:
+{payload.product_url.strip() or "(not provided)"}
+
+Draft title:
+{payload.title.strip()}
+
+Draft summary:
+{payload.summary.strip()}
+
+Draft content:
+{payload.content.strip()}
+
+Review for prompt relevance, search intent, SEO completeness, product fit, readability, trust and claim safety, AI artifacts, and concrete edit recommendations.
+""".strip()
+    try:
+        review = await llm_service.generate_text(
+            sid,
+            review_prompt,
+            system_prompt=_LLM_REVIEW_SYSTEM,
+            model_id=payload.model_id.strip() or None,
+            prompt_ending_override=_LLM_REVIEW_PROMPT_ENDING,
+        )
+    except AllModelsFailedError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM review failed: {exc}")
+    except Exception as exc:
+        logger.exception("Unexpected error during LLM quality review")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {exc}")
+    return {
+        "ok": True,
+        "review": {
+            "title": review.get("title", "Editorial Review"),
+            "summary": review.get("summary", ""),
+            "content": review.get("content", ""),
+            "keywords": review.get("keywords", []),
+            "model": review.get("_model_name", ""),
+            "provider": review.get("_model_provider", ""),
+        },
+    }
