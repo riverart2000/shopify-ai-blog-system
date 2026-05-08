@@ -79,6 +79,21 @@ def setup_logging(cfg: AppConfig) -> None:
     root.addHandler(file_handler)
     root.addHandler(stdout_handler)
 
+    # Dedicated quality.log — one JSON line per quality check run
+    quality_log_path = log_path.parent / "quality.log"
+    quality_handler = logging.handlers.RotatingFileHandler(
+        filename=str(quality_log_path),
+        maxBytes=cfg.logging.max_bytes,
+        backupCount=cfg.logging.backup_count,
+        encoding="utf-8",
+    )
+    quality_handler.setFormatter(logging.Formatter("%(message)s"))
+    quality_handler.setLevel(logging.INFO)
+    quality_logger = logging.getLogger("ai_blog_server.quality")
+    quality_logger.setLevel(logging.INFO)
+    quality_logger.addHandler(quality_handler)
+    quality_logger.propagate = False  # keep quality.log separate from main.log
+
     if not cfg.server.is_debug:
         logging.getLogger("httpx").setLevel(logging.WARNING)
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)

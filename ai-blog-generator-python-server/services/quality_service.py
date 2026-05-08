@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+import datetime
 import html as _html
+import json
+import logging
 import re
 from dataclasses import asdict, dataclass
 from typing import Optional
 
 import db
+
+_quality_log = logging.getLogger("ai_blog_server.quality")
 
 
 _WORD_RE = re.compile(r"\b[\w'-]+\b")
@@ -992,4 +997,28 @@ async def review_draft(
         )
 
     _recompute_verdict(report, title=title, summary=summary, content=content)
+
+    # Emit a single JSON line to quality.log for later analysis
+    try:
+        _quality_log.info(json.dumps({
+            "ts": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "store_id": store_id,
+            "title": title,
+            "score": report.score,
+            "verdict": report.verdict,
+            "publish_blocked": report.publish_blocked,
+            "word_count": report.word_count,
+            "heading_count": report.heading_count,
+            "paragraph_count": report.paragraph_count,
+            "image_count": report.image_count,
+            "duplicate_similarity": round(report.duplicate_similarity, 3),
+            "duplicate_title": report.duplicate_title,
+            "checks": [
+                {"key": c.key, "status": c.status, "impact": c.impact, "message": c.message}
+                for c in report.checks
+            ],
+        }, ensure_ascii=False))
+    except Exception:
+        pass
+
     return report

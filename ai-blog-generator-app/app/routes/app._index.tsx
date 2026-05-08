@@ -613,12 +613,15 @@ function PreviewStep({ draft, models, onBack }: { draft: DraftData; models: { id
             )}
 
             {qr.publish_blocked ? (
-              <Alert message="Quality checks are blocking publish. Fix the issues above and click Re-run Checks, then publish." tone="error" />
+              <Alert message="Quality checks are blocking publish. Fix the issues above, re-score, then publish." tone="error" />
             ) : null}
 
-            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
               <button type="submit" disabled={submitting || qr.publish_blocked} style={{ borderRadius: "999px", border: 0, background: "#16a34a", color: "white", padding: "13px 28px", fontWeight: 700, cursor: "pointer", fontSize: "0.95rem", opacity: (submitting || qr.publish_blocked) ? 0.6 : 1 }}>
                 {submitting ? "Publishing…" : "Publish to Shopify"}
+              </button>
+              <button type="button" onClick={() => triggerRecheck()} disabled={recheckState === "loading"} style={{ borderRadius: "999px", border: "1px solid #2563eb", background: "white", color: "#2563eb", padding: "13px 20px", cursor: "pointer", fontWeight: 600, fontSize: "0.9rem", opacity: recheckState === "loading" ? 0.6 : 1 }}>
+                {recheckState === "loading" ? "Scoring…" : "Re-score"}
               </button>
               <button type="button" onClick={onBack} style={{ borderRadius: "999px", border: "1px solid #d1d5db", background: "white", padding: "13px 18px", cursor: "pointer" }}>
                 Discard &amp; start over
