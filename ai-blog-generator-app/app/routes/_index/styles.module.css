@@ -206,8 +206,126 @@
 
 /* ── footer ── */
 .footer {
+  background: #0f172a;
+  color: rgba(255,255,255,0.85);
+  padding: 3rem 1.5rem 1.5rem;
+}
+
+.footerInner {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.5rem;
+}
+
+.footerBrand {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.footerLogo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: white;
+}
+
+.footerLogoText {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: white;
+}
+
+.footerTagline {
+  font-size: 0.875rem;
+  color: rgba(255,255,255,0.55);
+  line-height: 1.6;
+  max-width: 28rem;
+  margin: 0;
+}
+
+.footerContact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.footerContactHeading {
+  font-size: 1rem;
+  font-weight: 700;
+  color: white;
+  margin: 0;
+}
+
+.footerContactLinks {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.footerLink {
+  font-size: 0.875rem;
+  color: rgba(255,255,255,0.6);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footerLink:hover {
+  color: white;
+}
+
+.footerSocials {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.socialBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 12px;
+  transition: transform 0.15s, opacity 0.15s;
+  text-decoration: none;
+}
+
+.socialBtn:hover {
+  transform: translateY(-2px);
+  opacity: 0.9;
+}
+
+.socialLinkedin { background: rgba(10,102,194,0.2); color: #60a5fa; }
+.socialX        { background: rgba(255,255,255,0.1); color: white; }
+.socialFacebook { background: rgba(24,119,242,0.2); color: #93c5fd; }
+
+.footerBottom {
+  max-width: 72rem;
+  margin: 2rem auto 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(255,255,255,0.1);
   text-align: center;
-  padding: 2rem 1rem;
   font-size: 0.8rem;
-  color: #9ca3af;
+  color: rgba(255,255,255,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.footerBottom p {
+  margin: 0;
+}
+
+.footerCredit {
+  color: rgba(255,255,255,0.25);
+}
+
+@media (max-width: 48rem) {
+  .footerInner {
+    grid-template-columns: 1fr;
+  }
 }
