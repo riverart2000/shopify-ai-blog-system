@@ -19,21 +19,45 @@ _MAX_POLLS = 60   # 5 min total (large reasoning models like DeepSeek R1 can tak
 
 
 class ReplicateImageProvider(ImageProvider):
+    """Replicate image generation.
+
+    Supports two modes (mirroring the text provider):
+    - Versioned:     set ``version`` in extra_json
+    - Path-based:    set ``endpoint`` to ``https://replicate.com/{owner}/{name}``
+                     (e.g. ``https://replicate.com/black-forest-labs/flux-schnell``)
+    """
 
     async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
         extra = self.model.extra
         timeout = float(extra.get("timeout", 120))
         version = extra.get("version", "")
-        if not version:
-            raise ProviderError("Replicate requires 'version' in extra_json", retryable=False)
 
-        input_params: dict = extra.get("input", {}) or {}
+        # Support path-based (official) models via endpoint URL
+        endpoint = self.model.endpoint or ""
+        _m = re.match(r"https?://replicate\.com/([^/]+/[^/?#]+)", endpoint)
+        model_path = _m.group(1) if _m else ""
+
+        if not version and not model_path:
+            raise ProviderError(
+                "Replicate image provider requires either 'version' in extra_json "
+                "or an endpoint in the form https://replicate.com/{owner}/{name}",
+                retryable=False,
+            )
+
+        input_params: dict = dict(extra.get("input", {}) or {})
         input_params["prompt"] = image_prompt
-        payload: dict = {"version": version, "input": input_params}
+
+        if version:
+            predictions_url = _PREDICTIONS_URL
+            payload: dict = {"version": version, "input": input_params}
+        else:
+            predictions_url = f"https://api.replicate.com/v1/models/{model_path}/predictions"
+            payload = {"input": input_params}
 
         headers = {
-            "Authorization": f"Token {self.model.api_key}",
+            "Authorization": f"Bearer {self.model.api_key}",
             "Content-Type": "application/json",
+            "Prefer": "wait",
         }
 
         try:
@@ -43,13 +67,26 @@ class ReplicateImageProvider(ImageProvider):
                     self.model.name, count, image_prompt,
                 )
                 log_debug_payload(logger, "Replicate image → payload", payload)
-                resp = await client.post(_PREDICTIONS_URL, headers=headers, json=payload)
+                resp = await client.post(predictions_url, headers=headers, json=payload)
                 resp.raise_for_status()
                 prediction = resp.json()
                 pred_id = prediction["id"]
                 log_debug_payload(logger, f"Replicate image ← prediction started ({pred_id})", prediction)
 
-                logger.debug("Replicate image prediction %s started", pred_id)
+                # If the model returned synchronously (Prefer: wait), extract output now
+                if prediction.get("status") == "succeeded":
+                    output = prediction.get("output", [])
+                    if isinstance(output, str):
+                        output = [output]
+                    urls = [url for url in (output or []) if url]
+                    logger.info(
+                        "Replicate image (sync) returned %d URL(s) model=%s store=%s",
+                        len(urls), self.model.name, self.model.store_id,
+                    )
+                    return urls
+
+                # Otherwise poll
+                logger.debug("Replicate image prediction %s — polling", pred_id)
                 poll_url = f"{_PREDICTIONS_URL}/{pred_id}"
 
                 for _ in range(_MAX_POLLS):
@@ -64,7 +101,10 @@ class ReplicateImageProvider(ImageProvider):
                             output = [output]
                         urls = [url for url in (output or []) if url]
                         log_debug_payload(logger, f"Replicate image ← succeeded ({pred_id})", data)
-                        logger.debug("Replicate image returned %d URL(s): %s", len(urls), urls)
+                        logger.info(
+                            "Replicate image returned %d URL(s) model=%s store=%s",
+                            len(urls), self.model.name, self.model.store_id,
+                        )
                         return urls
                     if status == "failed":
                         raise ProviderError(
