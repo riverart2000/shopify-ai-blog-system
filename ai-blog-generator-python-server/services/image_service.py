@@ -145,6 +145,35 @@ async def generate_typed_images(
     return image_urls, image_types, image_labels
 
 
+def use_product_featured_image(
+    product_image_url: str | None,
+    image_urls: list[str],
+    image_types: list[str],
+    image_labels: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Replace the generated hero image with the Shopify product image.
+
+    Product blogs should still use the Shopify product image as the featured
+    image while keeping the remaining AI-generated support images.
+    """
+    merged = [
+        (url, image_type, image_labels[index] if index < len(image_labels) else image_type)
+        for index, (url, image_type) in enumerate(zip(image_urls, image_types))
+        if image_type not in ("photo", "hero_photo")
+    ]
+
+    if product_image_url:
+        merged.insert(0, (product_image_url, "product", "Product Image"))
+
+    if not merged:
+        return [], [], []
+
+    merged_urls = [url for url, _image_type, _label in merged]
+    merged_types = [image_type for _url, image_type, _label in merged]
+    merged_labels = [label for _url, _image_type, label in merged]
+    return merged_urls, merged_types, merged_labels
+
+
 async def generate_feature_image(
     store_id: str,
     title: str,

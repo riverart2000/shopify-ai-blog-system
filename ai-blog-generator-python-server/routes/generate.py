@@ -456,20 +456,20 @@ async def generate(
     image_url_list, image_types, image_labels = await image_service.generate_typed_images(
         store_id, title, summary, prompt_text
     )
-    if resolved_product_url and not image_url_list:
+    if resolved_product_url:
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
         logger.info("Product selected | url=%s handle=%s", resolved_product_url, product_handle)
         product_image_cdn = await shopify_client.fetch_product_image_url(store_cfg, product_handle)
         if product_image_cdn:
             logger.info("Product image CDN URL: %s", product_image_cdn[:80])
-            image_url_list = [product_image_cdn]
-            image_types = ["product"]
-            image_labels = ["Product Image"]
         else:
             logger.warning("No product image found for handle=%s — no image will be used", product_handle)
-            image_url_list = []
-            image_types = []
-            image_labels = []
+        image_url_list, image_types, image_labels = image_service.use_product_featured_image(
+            product_image_cdn,
+            image_url_list,
+            image_types,
+            image_labels,
+        )
 
     # Composite images for preview display (title bar + logo). Raw URLs stay
     # in the form so we can re-composite at publish time for Shopify upload.

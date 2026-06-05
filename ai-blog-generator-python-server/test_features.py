@@ -1813,6 +1813,9 @@ class TestAuthedRoutes:
                        "description": "A handmade stone mug.",
                        "tags": "gift, kitchen",
                    }), \
+             patch("routes.generate.shopify_client.fetch_product_image_url",
+                   new_callable=AsyncMock,
+                   return_value="https://cdn.shopify.com/product-main.png") as product_image_mock, \
              patch("routes.generate.llm_service.generate_text",
                    new_callable=AsyncMock, return_value=strong_blog), \
              patch("routes.generate.image_service.generate_typed_images",
@@ -1831,9 +1834,7 @@ class TestAuthedRoutes:
                            "Step-by-Step Visual Card",
                            "Checklist/Tips Card",
                        ],
-                   )) as typed_images_mock, \
-             patch("routes.generate.shopify_client.fetch_product_image_url",
-                   new_callable=AsyncMock) as product_image_mock:
+                   )) as typed_images_mock:
             resp = await store_client.post(
                 "/generate",
                 data={
@@ -1847,10 +1848,11 @@ class TestAuthedRoutes:
             )
 
         assert resp.status_code == 200
+        assert b"product image" in resp.content.lower()
         assert b"step-by-step visual card" in resp.content.lower()
         assert b"checklist/tips card" in resp.content.lower()
         typed_images_mock.assert_awaited_once()
-        product_image_mock.assert_not_awaited()
+        product_image_mock.assert_awaited_once()
 
     async def test_api_generate_draft_returns_typed_images_and_pin_metadata(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
@@ -1944,6 +1946,9 @@ class TestAuthedRoutes:
                        "description": "A handmade stone mug.",
                        "tags": "gift, kitchen",
                    }), \
+             patch("routes.api.shopify_client.fetch_product_image_url",
+                 new_callable=AsyncMock,
+                 return_value="https://cdn.shopify.com/product-main.png") as product_image_mock, \
              patch("routes.api.llm_service.generate_text",
                    new_callable=AsyncMock, return_value=blog_data), \
              patch("routes.api.image_service.generate_typed_images",
@@ -1963,8 +1968,6 @@ class TestAuthedRoutes:
                            "Checklist/Tips Card",
                        ],
                    )) as typed_images_mock, \
-             patch("routes.api.shopify_client.fetch_product_image_url",
-                   new_callable=AsyncMock) as product_image_mock, \
              patch("routes.api.review_draft",
                    new_callable=AsyncMock, return_value=quality_report):
             resp = await http_client.post(
@@ -1983,10 +1986,11 @@ class TestAuthedRoutes:
 
         assert resp.status_code == 200
         data = resp.json()
-        assert data["image_types"] == ["hero_photo", "infographic", "step_card", "checklist_card"]
+        assert data["image_urls"][0] == "https://cdn.shopify.com/product-main.png"
+        assert data["image_types"] == ["product", "infographic", "step_card", "checklist_card"]
         assert len(data["image_urls"]) == 4
         typed_images_mock.assert_awaited_once()
-        product_image_mock.assert_not_awaited()
+        product_image_mock.assert_awaited_once()
 
     async def test_api_history_filters_by_store(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")

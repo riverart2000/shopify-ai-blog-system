@@ -681,17 +681,21 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     generated_by = blog_data.get("_model_name", "")
 
     # Images
-    image_url_list, image_types, _image_labels = await image_service.generate_typed_images(
+    image_url_list, image_types, image_labels = await image_service.generate_typed_images(
         store_id,
         title,
         summary,
         prompt_text,
     )
-    if resolved_product_url and not image_url_list:
+    if resolved_product_url:
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
         product_image_cdn = await shopify_client.fetch_product_image_url(store_cfg, product_handle)
-        image_url_list = [product_image_cdn] if product_image_cdn else []
-        image_types = ["product"] if image_url_list else []
+        image_url_list, image_types, image_labels = image_service.use_product_featured_image(
+            product_image_cdn,
+            image_url_list,
+            image_types,
+            image_labels,
+        )
 
     # Quality review
     quality_report = (await review_draft(
