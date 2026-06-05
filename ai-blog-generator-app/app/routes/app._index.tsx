@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useFetcher, useLoaderData, useNavigation } from "react-router";
+import { BACKEND_KEY, backendFetch, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
-import { loadShopifyStudioContext, requireShopifySession } from "../lib/blog-studio.server";
-
-const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
-const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
+import { loadShopifyStudioContext } from "../lib/blog-studio.server";
 
 type Prompt = { id: string; name: string };
 type Model = { id: string; name: string; provider: string };
@@ -52,31 +50,11 @@ type ActionData =
   | { step: "result"; ok: true; article_url: string; message: string }
   | { step: "error"; ok: false; error: string };
 
-async function backendFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...opts,
-    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
-  });
-  if (!res.ok) {
-    let detail = `Backend ${res.status}`;
-    try {
-      const body = await res.json() as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      const text = await res.text().catch(() => "");
-      if (text) detail = text.slice(0, 200);
-    }
-    throw new Error(detail);
-  }
-  return res.json() as Promise<Record<string, unknown>>;
-}
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const auth = await authenticate.admin(request);
-  const session = requireShopifySession((auth as { session?: unknown }).session);
+  const { session, selectedStore, storeId } = await loadBackendStoreContext(request);
   const [context, initData] = await Promise.all([
     loadShopifyStudioContext(session),
-    BACKEND_KEY ? backendFetch("/api/init").catch(() => null) : Promise.resolve(null),
+    BACKEND_KEY && storeId ? backendFetch(withStoreId("/api/init", storeId)).catch(() => null) : Promise.resolve(null),
   ]);
   const storefrontDomain = context.storefrontDomain;
   const products: Product[] = (context.products || []).map((p: { id: string; handle: string; title?: string }) => ({
@@ -86,15 +64,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }));
   return {
     backendConfigured: !!BACKEND_KEY,
+    storeId,
     storefrontDomain,
     products,
     prompts: (initData?.prompts ?? []) as Prompt[],
     models: (initData?.models ?? []) as Model[],
     blogs: (initData?.blogs ?? []) as BlogHandle[],
     defaultPromptId: (initData?.default_prompt_id as string) || "",
-    storeName: (initData?.store as { name?: string })?.name || context.shopName,
-    defaultBlogHandle: (initData?.store as { default_blog_handle?: string })?.default_blog_handle || "news",
-    defaultAuthor: (initData?.store as { default_author?: string })?.default_author || "",
+    storeName: (initData?.store as { name?: string })?.name || selectedStore?.name || context.shopName,
+    defaultBlogHandle: (initData?.store as { default_blog_handle?: string })?.default_blog_handle || selectedStore?.default_blog_handle || "news",
+    defaultAuthor: (initData?.store as { default_author?: string })?.default_author || selectedStore?.default_author || "",
   };
 };
 
@@ -238,6 +217,7 @@ function GenerateForm({ data, prevError }: { data: ReturnType<typeof useLoaderDa
       <s-section heading="Generate a new blog post">
         <Form method="post">
           <input type="hidden" name="intent" value="generate" />
+          <input type="hidden" name="store_id" value={data.storeId} />
           <div style={{ display: "grid", gap: "16px" }}>
 
             <label style={lbl}>

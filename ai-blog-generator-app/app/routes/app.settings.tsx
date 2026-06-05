@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { BACKEND_KEY, type BackendStore, backendFetch, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
-
-const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
-const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 
 type StoreSettings = {
   store_id: string;
@@ -21,37 +19,10 @@ type StoreSettings = {
   has_exa_key: boolean;
 };
 
-type BackendStore = {
-  id: string;
-  name: string;
-  myshopify_domain: string;
-  default_blog_handle: string;
-  default_author: string;
-};
-
 type KeywordItem = { id: number; keyword: string; used: boolean };
 type TitleItem = { id: number; title: string; used: boolean };
 type Prompt = { id: string; name: string };
 type Model = { id: string; name: string };
-
-async function backendFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...opts,
-    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
-  });
-  if (!res.ok) {
-    let detail = `Backend ${res.status}`;
-    try {
-      const body = await res.json() as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      const text = await res.text().catch(() => "");
-      if (text) detail = text.slice(0, 200);
-    }
-    throw new Error(detail);
-  }
-  return res.json() as Promise<Record<string, unknown>>;
-}
 
 function withStoreId(path: string, storeId: string) {
   if (!storeId) return path;
@@ -60,13 +31,10 @@ function withStoreId(path: string, storeId: string) {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
   if (!BACKEND_KEY) return { backendConfigured: false, settings: null, keywords: [], titles: [], prompts: [], models: [], storeId: "", stores: [] };
   const url = new URL(request.url);
   const requestedStoreId = url.searchParams.get("store_id")?.trim() || "";
-  const storesData = await backendFetch("/api/stores");
-  const stores = (storesData.stores ?? []) as BackendStore[];
-  const resolvedStoreId = requestedStoreId || stores[0]?.id || "";
+  const { stores, storeId: resolvedStoreId } = await loadBackendStoreContext(request, { requestedStoreId });
   const [settingsData, keywordsData, titlesData, modelsData, promptsData] = await Promise.allSettled([
     backendFetch(withStoreId("/api/settings", resolvedStoreId)),
     backendFetch(withStoreId("/api/keywords", resolvedStoreId)),

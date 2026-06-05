@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { BACKEND_KEY, type BackendStore, backendFetch, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
-
-const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
-const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 
 type ScheduledJob = {
   id: string;
@@ -33,29 +31,15 @@ type RecentRun = {
 };
 
 type Prompt = { id: string; name: string; text: string };
-type Store = { id: string; name: string; myshopify_domain: string; default_blog_handle: string; default_author: string };
-
-async function backendFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...opts,
-    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
-  });
-  if (!res.ok) throw new Error(`Backend ${res.status}: ${await res.text()}`);
-  return res.json();
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { selectedStore, storeId, stores } = await loadBackendStoreContext(request);
   if (!BACKEND_KEY) return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: "AI_BLOG_BACKEND_API_KEY is not configured." };
   try {
-    const [jobsData, storesData] = await Promise.all([
-      backendFetch("/api/schedule/jobs"),
-      backendFetch("/api/stores"),
-    ]);
-    const storeId: string = jobsData.store_id || storesData.stores?.[0]?.id || "";
-    const jobs = jobsData.jobs as ScheduledJob[];
+    const jobsData = storeId ? await backendFetch(withStoreId("/api/schedule/jobs", storeId)) : { jobs: [], store_id: storeId };
+    const jobs = (jobsData.jobs ?? []) as ScheduledJob[];
     const [promptsData, ...runsResults] = await Promise.all([
-      storeId ? backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : Promise.resolve({ prompts: [] }),
+      storeId ? backendFetch(withStoreId("/api/prompts", storeId)) : Promise.resolve({ prompts: [] }),
       ...jobs.map((j: ScheduledJob) =>
         backendFetch(`/api/schedule/recent-runs?job_id=${encodeURIComponent(j.id)}&limit=10`).catch(() => ({ runs: [] }))
       ),
@@ -64,9 +48,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     jobs.forEach((j: ScheduledJob, i: number) => {
       recentRuns[j.id] = runsResults[i]?.runs ?? [];
     });
-    return { jobs, prompts: promptsData.prompts as Prompt[], stores: storesData.stores as Store[], storeId, recentRuns, error: null };
+    return { jobs, prompts: promptsData.prompts as Prompt[], stores: stores as BackendStore[], storeId, storeName: selectedStore?.name || "", recentRuns, error: null };
   } catch (e) {
-    return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: e instanceof Error ? e.message : "Failed to reach backend" };
+    return { jobs: [], prompts: [], stores: [] as BackendStore[], storeId: "", storeName: "", recentRuns: {} as Record<string, RecentRun[]>, error: e instanceof Error ? e.message : "Failed to reach backend" };
   }
 };
 
@@ -122,7 +106,7 @@ const labelStyle: React.CSSProperties = { display: "grid", gap: "5px", fontSize:
 function JobForm({ job, prompts, stores, storeId, onCancel }: {
   job?: ScheduledJob;
   prompts: Prompt[];
-  stores: Store[];
+  stores: BackendStore[];
   storeId: string;
   onCancel: () => void;
 }) {
@@ -133,16 +117,8 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
     <Form method="post">
       <input type="hidden" name="intent" value="save" />
       <input type="hidden" name="job_id" value={job?.id || ""} />
+      <input type="hidden" name="store_id" value={job?.store_id || storeId} />
       <div style={{ display: "grid", gap: "14px" }}>
-        {stores.length > 1 && (
-          <label style={labelStyle}>
-            <span>Store</span>
-            <select name="store_id" defaultValue={job?.store_id || storeId} style={inputStyle}>
-              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-        )}
-        {stores.length <= 1 && <input type="hidden" name="store_id" value={job?.store_id || storeId} />}
         <label style={labelStyle}>
           <span>Name <span style={{ color: "#dc2626" }}>*</span></span>
           <input name="name" defaultValue={job?.name || ""} required style={inputStyle} placeholder="Daily wellness blog" />
@@ -204,7 +180,7 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
 }
 
 export default function ScheduleRoute() {
-  const { jobs, prompts, stores, storeId, recentRuns, error } = useLoaderData<typeof loader>();
+  const { jobs, prompts, stores, storeId, storeName, recentRuns, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; message?: string | null; error?: string } | undefined;
   const [editing, setEditing] = useState<string | null>(null);
   const navigation = useNavigation();
@@ -242,7 +218,7 @@ export default function ScheduleRoute() {
         </s-section>
       )}
 
-      <s-section heading={`Schedules (${jobs.length})`}>
+      <s-section heading={storeName ? `${storeName} schedules (${jobs.length})` : `Schedules (${jobs.length})`}>
         {jobs.length === 0 && !error ? (
           <s-paragraph>No schedules yet. Create one above.</s-paragraph>
         ) : (

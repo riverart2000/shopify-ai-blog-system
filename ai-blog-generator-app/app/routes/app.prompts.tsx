@@ -1,34 +1,19 @@
 import React, { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { BACKEND_KEY, type BackendStore, backendFetch, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
 
-const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
-const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
-
 type Prompt = { id: string; store_id: string; name: string; text: string; sort_order: number };
-type Store = { id: string; name: string; myshopify_domain: string };
-
-async function backendFetch(path: string, opts: RequestInit = {}) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    ...opts,
-    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
-  });
-  if (!res.ok) throw new Error(`Backend ${res.status}: ${await res.text()}`);
-  return res.json() as Promise<Record<string, unknown>>;
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { selectedStore, storeId, stores } = await loadBackendStoreContext(request);
   if (!BACKEND_KEY) return { prompts: [] as Prompt[], stores: [] as Store[], storeId: "", error: "AI_BLOG_BACKEND_API_KEY is not configured." };
   try {
-    const storesData = await backendFetch("/api/stores");
-    const stores = (storesData.stores ?? []) as Store[];
-    const storeId = stores[0]?.id || "";
-    const promptsData = storeId ? await backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : { prompts: [] };
-    return { prompts: (promptsData.prompts ?? []) as Prompt[], stores, storeId, error: null };
+    const promptsData = storeId ? await backendFetch(withStoreId("/api/prompts", storeId)) : { prompts: [] };
+    return { prompts: (promptsData.prompts ?? []) as Prompt[], stores: stores as BackendStore[], storeId, storeName: selectedStore?.name || "", error: null };
   } catch (e) {
-    return { prompts: [] as Prompt[], stores: [] as Store[], storeId: "", error: e instanceof Error ? e.message : "Failed to reach backend" };
+    return { prompts: [] as Prompt[], stores: [] as BackendStore[], storeId: "", storeName: "", error: e instanceof Error ? e.message : "Failed to reach backend" };
   }
 };
 
@@ -64,22 +49,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 const inp: React.CSSProperties = { borderRadius: "10px", border: "1px solid #d1d5db", padding: "9px 12px", font: "inherit", width: "100%", boxSizing: "border-box" };
 const lbl: React.CSSProperties = { display: "grid", gap: "5px", fontSize: "0.875rem" };
 
-function PromptForm({ prompt, stores, storeId, onCancel }: { prompt?: Prompt; stores: Store[]; storeId: string; onCancel: () => void }) {
+function PromptForm({ prompt, storeId, onCancel }: { prompt?: Prompt; storeId: string; onCancel: () => void }) {
   const navigation = useNavigation();
   const saving = navigation.state !== "idle";
   return (
     <Form method="post">
       <input type="hidden" name="intent" value="save" />
       <input type="hidden" name="prompt_id" value={prompt?.id || ""} />
+      <input type="hidden" name="store_id" value={prompt?.store_id || storeId} />
       <div style={{ display: "grid", gap: "14px" }}>
-        {stores.length > 1 ? (
-          <label style={lbl}>
-            <span>Store</span>
-            <select name="store_id" defaultValue={prompt?.store_id || storeId} style={inp}>
-              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
-        ) : <input type="hidden" name="store_id" value={prompt?.store_id || storeId} />}
         <label style={lbl}>
           <span>Name <span style={{ color: "#dc2626" }}>*</span></span>
           <input name="name" defaultValue={prompt?.name || ""} required style={inp} placeholder="Weekly wellness blog" />
@@ -117,7 +95,7 @@ function PromptForm({ prompt, stores, storeId, onCancel }: { prompt?: Prompt; st
 }
 
 export default function PromptsRoute() {
-  const { prompts, stores, storeId, error } = useLoaderData<typeof loader>();
+  const { prompts, storeId, storeName, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; message?: string | null; error?: string } | undefined;
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -144,7 +122,7 @@ export default function PromptsRoute() {
 
       {editing === "new" ? (
         <s-section heading="New prompt">
-          <PromptForm stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+          <PromptForm storeId={storeId} onCancel={() => setEditing(null)} />
         </s-section>
       ) : (
         <s-section>
@@ -154,7 +132,7 @@ export default function PromptsRoute() {
         </s-section>
       )}
 
-      <s-section heading={`Prompts (${prompts.length})`}>
+      <s-section heading={storeName ? `${storeName} prompts (${prompts.length})` : `Prompts (${prompts.length})`}>
         {prompts.length === 0 && !error ? (
           <s-paragraph>No prompts yet. Click &ldquo;+ New prompt&rdquo; above to create one.</s-paragraph>
         ) : (
@@ -162,7 +140,7 @@ export default function PromptsRoute() {
             {prompts.map(prompt => (
               <div key={prompt.id} style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "16px", background: "white" }}>
                 {editing === prompt.id ? (
-                  <PromptForm prompt={prompt} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+                  <PromptForm prompt={prompt} storeId={storeId} onCancel={() => setEditing(null)} />
                 ) : (
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
