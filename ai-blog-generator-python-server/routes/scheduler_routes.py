@@ -53,6 +53,39 @@ def _get_store_id(request: Request) -> Optional[str]:
     return None if not sid or sid == "__admin__" else sid
 
 
+def _build_blog_handle_options(
+    store_cfg: StoreConfig | None,
+    cached_blogs: list[dict],
+) -> list[dict[str, str]]:
+    options = [
+        {
+            "value": blog_scope.AUTO_BLOG_HANDLE,
+            "label": "Auto (best matching blog handle)",
+        }
+    ]
+
+    seen_values = {blog_scope.AUTO_BLOG_HANDLE}
+    default_handle = (getattr(store_cfg, "default_blog_handle", "") or "").strip()
+    if default_handle:
+        options.append(
+            {
+                "value": default_handle,
+                "label": f"Store default ({default_handle})",
+            }
+        )
+        seen_values.add(default_handle)
+
+    for blog in cached_blogs:
+        handle = str(blog.get("handle", "")).strip()
+        if not handle or handle in seen_values:
+            continue
+        title = str(blog.get("title", "")).strip() or handle
+        options.append({"value": handle, "label": f"{title} ({handle})"})
+        seen_values.add(handle)
+
+    return options
+
+
 @router.get("", response_class=HTMLResponse)
 async def schedule_page(request: Request, saved: str = "", error: str = ""):
     store_id = _get_store_id(request)
@@ -74,11 +107,14 @@ async def schedule_page(request: Request, saved: str = "", error: str = ""):
             default_author=store_row.get("default_author", "Store Team"),
         )
         cached_blogs = await blog_scope.get_blog_options(store_id, store_cfg)
+        default_blog_handle = store_cfg.default_blog_handle
     else:
+        store_cfg = None
         try:
             cached_blogs = _json.loads(await db.get_store_setting(store_id, "cached_blogs", "[]"))
         except Exception:
             cached_blogs = []
+        default_blog_handle = await db.get_store_setting(store_id, "default_blog_handle", "news")
     try:
         cached_products = _json.loads(await db.get_store_setting(store_id, "cached_products", "[]"))
     except Exception:
@@ -91,12 +127,27 @@ async def schedule_page(request: Request, saved: str = "", error: str = ""):
         latest = runs[0] if runs else None
         enriched_jobs.append({
             **job,
+            "blog_handle": blog_scope.normalize_scheduled_blog_handle(job.get("blog_handle", "")),
+            "uses_auto_blog_handle": blog_scope.is_auto_blog_handle(job.get("blog_handle", "")) or (not job.get("blog_handle") and not job.get("is_product_blog")),
             "last_resolved_blog_handle": latest.get("blog_handle", "") if latest else "",
         })
     return state.templates.TemplateResponse(request, "schedule.html", {
         "jobs": enriched_jobs,
         "prompts": prompts,
         "cached_blogs": cached_blogs,
+        "blog_handle_options": _build_blog_handle_options(
+            store_cfg if store_cfg else StoreConfig(
+                id=store_id,
+                name="",
+                myshopify_domain="",
+                custom_domain="",
+                client_id="",
+                client_secret="",
+                default_blog_handle=default_blog_handle or "news",
+                default_author="",
+            ),
+            cached_blogs,
+        ),
         "cached_products": cached_products,
         "saved": saved,
         "error": error,
@@ -150,7 +201,7 @@ async def save_job(
         "store_id": store_id,
         "name": name.strip(),
         "prompt_id": prompt_id.strip(),
-        "blog_handle": blog_handle.strip(),
+        "blog_handle": blog_scope.normalize_scheduled_blog_handle(blog_handle),
         "author": author.strip(),
         "cron_expr": cron_expr_value,
         "timezone": timezone_value,

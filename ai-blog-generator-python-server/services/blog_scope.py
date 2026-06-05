@@ -13,6 +13,7 @@ from config import StoreConfig
 logger = logging.getLogger("ai_blog_server")
 
 AUTO_BLOG_HANDLE = "__auto__"
+_AUTO_BLOG_HANDLE_ALIASES = {AUTO_BLOG_HANDLE, "auto"}
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SCOPE_STOPWORDS = {
@@ -32,7 +33,14 @@ class BlogScope:
 
 
 def is_auto_blog_handle(blog_handle: str) -> bool:
-    return (blog_handle or "").strip() == AUTO_BLOG_HANDLE
+    return (blog_handle or "").strip().lower() in _AUTO_BLOG_HANDLE_ALIASES
+
+
+def normalize_scheduled_blog_handle(blog_handle: str) -> str:
+    normalized = (blog_handle or "").strip()
+    if is_auto_blog_handle(normalized):
+        return AUTO_BLOG_HANDLE
+    return normalized
 
 
 def _humanize_handle(handle: str) -> str:

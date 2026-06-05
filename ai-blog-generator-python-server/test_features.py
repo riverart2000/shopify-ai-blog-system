@@ -965,6 +965,12 @@ class TestImageService:
 
 
 class TestBlogScope:
+    async def test_normalize_scheduled_blog_handle_accepts_legacy_auto_alias(self, tmp_db):
+        from services import blog_scope
+
+        assert blog_scope.is_auto_blog_handle("auto") is True
+        assert blog_scope.normalize_scheduled_blog_handle("auto") == blog_scope.AUTO_BLOG_HANDLE
+
     async def test_scope_compatible_title_selection_skips_mismatch(self, tmp_db):
         from services import blog_scope, title_service
 
@@ -1531,6 +1537,33 @@ class TestAuthedRoutes:
         saved_job = next(j for j in jobs if j["name"] == "HTTP Job")
         assert saved_job["timezone"] == "Europe/London"
 
+    async def test_store_add_schedule_job_normalizes_auto_blog_handle(self, store_client, tmp_db):
+        await db.upsert_prompt({
+            "id": "sched-test-auto-prompt",
+            "store_id": "s1",
+            "name": "Sched Auto Prompt",
+            "text": "Write about {topic}",
+            "sort_order": 0,
+        })
+
+        resp = await store_client.post(
+            "/schedule/save",
+            data={
+                "job_id": "",
+                "name": "HTTP Auto Job",
+                "cron_expr": "0 9 * * 1-5",
+                "prompt_id": "sched-test-auto-prompt",
+                "blog_handle": "auto",
+                "author": "",
+                "timezone": "Europe/London",
+            },
+        )
+
+        assert resp.status_code == 200
+        jobs = await db.get_scheduled_jobs("s1")
+        saved_job = next(j for j in jobs if j["name"] == "HTTP Auto Job")
+        assert saved_job["blog_handle"] == "__auto__"
+
     async def test_schedule_page_renders_blog_handle_dropdown(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))
 
@@ -1546,7 +1579,8 @@ class TestAuthedRoutes:
 
         assert resp.status_code == 200
         assert b'<select name="blog_handle">' in resp.content
-        assert b"(auto from title pool)" in resp.content
+        assert b"Auto (best matching blog handle)" in resp.content
+        assert b"Store default (news)" in resp.content
         assert b"Wellness Tips (wellness)" in resp.content
         assert b"Buying Guides (buying-guides)" in resp.content
 
