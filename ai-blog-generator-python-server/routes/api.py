@@ -22,7 +22,7 @@ import shopify_client
 import state
 from config import StoreConfig
 from providers import AllModelsFailedError
-from services import image_service, internal_links, llm_service, logo_service, title_service
+from services import blog_scope, image_service, internal_links, llm_service, logo_service, title_service
 from services.quality_service import html_to_review_text, review_draft
 from utils import text_to_html
 
@@ -34,6 +34,7 @@ class GenerateApiRequest(BaseModel):
     prompt: str
     store_id: str = ""
     model_id: str = ""
+    blog_handle: str = ""
 
 
 def _store_config_from_row(store_row: dict) -> StoreConfig:
@@ -92,6 +93,8 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
 
     store = await _resolve_generation_store(payload.store_id)
     store_id = store["id"]
+    store_cfg = _store_config_from_row(store)
+    resolved_blog_handle = payload.blog_handle.strip() or store_cfg.default_blog_handle
 
     title_row = await title_service.pop_blog_title(store_id)
     if title_row:
@@ -115,6 +118,13 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
                     f"(use as context, do not quote directly):\n{keyword_context[:600]}"
                 )
             logger.info("API generation using pooled keyword %r for store %s", keyword_row["keyword"], store_id)
+
+    prompt_text = await blog_scope.apply_blog_scope(
+        prompt_text,
+        store_id=store_id,
+        store=store_cfg,
+        blog_handle=resolved_blog_handle,
+    )
 
     try:
         blog_data = await llm_service.generate_text(store_id, prompt_text, model_id=payload.model_id or None)
@@ -642,6 +652,13 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
                 if kw_content:
                     kw_block += f"\n\nContext (do not quote directly):\n{kw_content[:600]}"
                 prompt_text = f"{prompt_text}{kw_block}"
+
+    prompt_text = await blog_scope.apply_blog_scope(
+        prompt_text,
+        store_id=store_id,
+        store=store_cfg,
+        blog_handle=resolved_blog_handle,
+    )
 
     # LLM generation
     try:

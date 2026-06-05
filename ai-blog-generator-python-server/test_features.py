@@ -1307,6 +1307,60 @@ class TestAuthedRoutes:
         names = [j["name"] for j in jobs]
         assert "HTTP Job" in names
 
+    async def test_schedule_page_renders_blog_handle_dropdown(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        with patch(
+            "routes.scheduler_routes.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {"handle": "wellness", "title": "Wellness Tips"},
+                {"handle": "buying-guides", "title": "Buying Guides"},
+            ],
+        ):
+            resp = await store_client.get("/schedule")
+
+        assert resp.status_code == 200
+        assert b'<select name="blog_handle">' in resp.content
+        assert b"Wellness Tips (wellness)" in resp.content
+        assert b"Buying Guides (buying-guides)" in resp.content
+
+    async def test_generate_preview_includes_blog_handle_scope(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        strong_blog = {
+            "title": "How To Build Better Sleep Habits",
+            "summary": "A practical guide to better rest.",
+            "content": ("Useful sleep guidance " * 160),
+            "keywords": ["sleep habits"],
+            "hashtags": ["#sleep"],
+        }
+
+        with patch(
+            "routes.generate.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[{"handle": "news", "title": "Sleep Advice"}],
+        ), \
+             patch("routes.generate.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=strong_blog) as generate_mock, \
+             patch("routes.generate.image_service.generate_typed_images",
+                   new_callable=AsyncMock, return_value=([], [], [])):
+            resp = await store_client.post(
+                "/generate",
+                data={
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful store blog post.",
+                    "blog_handle": "news",
+                    "author_name": "Store Team",
+                    "model_id": "",
+                    "product_url": "",
+                },
+            )
+
+        assert resp.status_code == 200
+        prompt_arg = generate_mock.await_args.args[1]
+        assert "Shopify blog handle 'news'" in prompt_arg
+        assert "Sleep Advice" in prompt_arg
+
     async def test_generate_preview_shows_quality_checks(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))
         strong_blog = {

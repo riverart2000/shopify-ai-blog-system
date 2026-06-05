@@ -15,7 +15,10 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 import db
+import shopify_client
 import state
+from config import StoreConfig
+from services import blog_scope
 from providers import AllModelsFailedError
 
 try:
@@ -53,14 +56,27 @@ async def schedule_page(request: Request, saved: str = "", error: str = ""):
     store_id = _get_store_id(request)
     if not store_id:
         return RedirectResponse("/setup", status_code=303)
+    store_row = await db.get_store(store_id)
     jobs = await db.get_scheduled_jobs(store_id)
     prompts = await db.get_prompts(store_id)
     import json as _json
-    cached_blogs_raw = await db.get_store_setting(store_id, "cached_blogs", "[]")
-    try:
-        cached_blogs = _json.loads(cached_blogs_raw)
-    except Exception:
-        cached_blogs = []
+    if store_row:
+        store_cfg = StoreConfig(
+            id=store_row["id"],
+            name=store_row["name"],
+            myshopify_domain=store_row["myshopify_domain"],
+            custom_domain=store_row.get("custom_domain", ""),
+            client_id=store_row["client_id"],
+            client_secret=store_row["client_secret"],
+            default_blog_handle=store_row.get("default_blog_handle", "news"),
+            default_author=store_row.get("default_author", "Store Team"),
+        )
+        cached_blogs = await blog_scope.get_blog_options(store_id, store_cfg)
+    else:
+        try:
+            cached_blogs = _json.loads(await db.get_store_setting(store_id, "cached_blogs", "[]"))
+        except Exception:
+            cached_blogs = []
     try:
         cached_products = _json.loads(await db.get_store_setting(store_id, "cached_products", "[]"))
     except Exception:

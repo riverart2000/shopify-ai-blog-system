@@ -13,7 +13,7 @@ import shopify_client
 from config import StoreConfig
 from utils import text_to_html
 
-from . import image_service, llm_service, logo_service, title_service
+from . import blog_scope, image_service, llm_service, logo_service, title_service
 from . import internal_links
 from .quality_service import QualityGateError, review_draft
 
@@ -108,6 +108,13 @@ async def run(
                 )
             prompt_text = f"{prompt_text}{title_inject}"
             logger.info("Using pooled blog title %r for store %s", title_row["title"], store_id)
+
+    prompt_text = await blog_scope.apply_blog_scope(
+        prompt_text,
+        store_id=store_id,
+        store=store,
+        blog_handle=blog_handle or store.default_blog_handle,
+    )
 
     # --- Text generation (raises AllModelsFailedError on total failure) ---
     blog_data = await llm_service.generate_text(store_id, prompt_text, system_prompt)

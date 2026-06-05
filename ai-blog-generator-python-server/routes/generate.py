@@ -20,7 +20,7 @@ import state
 from config import StoreConfig
 from security import limiter
 from utils import text_to_html
-from services import image_service, llm_service, logo_service
+from services import blog_scope, image_service, llm_service, logo_service
 from services import internal_links
 from services import social_captions
 from services.quality_service import review_draft
@@ -342,19 +342,19 @@ async def generate(
     resolved_author = author_name.strip() or store["default_author"]
     resolved_product_url = product_url.strip()
     product_title = ""
+    store_cfg = StoreConfig(
+        id=store["id"], name=store["name"],
+        myshopify_domain=store["myshopify_domain"],
+        custom_domain=store.get("custom_domain", ""),
+        client_id=store["client_id"], client_secret=store["client_secret"],
+        default_blog_handle=store.get("default_blog_handle", "news"),
+        default_author=store.get("default_author", "Store Team"),
+    )
 
     # If a product was selected, build StoreConfig once and fetch product details
     # so the LLM gets accurate context (title, description, tags) rather than just a URL.
     if resolved_product_url:
         product_handle_pre = resolved_product_url.rstrip("/").split("/")[-1]
-        store_cfg = StoreConfig(
-            id=store["id"], name=store["name"],
-            myshopify_domain=store["myshopify_domain"],
-            custom_domain=store.get("custom_domain", ""),
-            client_id=store["client_id"], client_secret=store["client_secret"],
-            default_blog_handle=store.get("default_blog_handle", "news"),
-            default_author=store.get("default_author", "Store Team"),
-        )
         product_details = await shopify_client.fetch_product_details(store_cfg, product_handle_pre)
         if product_details:
             import re as _re_html
@@ -415,6 +415,13 @@ async def generate(
                     )
                 prompt_text = f"{prompt_text}{kw_block}"
                 logger.info("Using pooled keyword %r for store %s", kw, store_id)
+
+    prompt_text = await blog_scope.apply_blog_scope(
+        prompt_text,
+        store_id=store_id,
+        store=store_cfg,
+        blog_handle=resolved_blog_handle,
+    )
 
     try:
         blog_data = await llm_service.generate_text(store_id, prompt_text, model_id=model_id or None)
