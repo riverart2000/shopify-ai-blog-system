@@ -95,8 +95,9 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
     store_id = store["id"]
     store_cfg = _store_config_from_row(store)
     resolved_blog_handle = payload.blog_handle.strip() or store_cfg.default_blog_handle
+    scope = await blog_scope.resolve_blog_scope(store_id, store_cfg, resolved_blog_handle)
 
-    title_row = await title_service.pop_blog_title(store_id)
+    title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
     if title_row:
         prompt_text += f"\n\nIMPORTANT — You MUST use exactly this title for the blog post: {title_row['title']}"
         if title_row.get("keyword"):
@@ -108,7 +109,7 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
             )
         logger.info("API generation using pooled blog title %r for store %s", title_row["title"], store_id)
     else:
-        keyword_row = await db.pop_keyword(store_id)
+        keyword_row = await blog_scope.pop_scoped_keyword(store_id, scope)
         if keyword_row:
             prompt_text += f"\n\nFocus keyword for this article: {keyword_row['keyword']}"
             keyword_context = keyword_row.get("content", "").strip()
@@ -121,9 +122,7 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
 
     prompt_text = await blog_scope.apply_blog_scope(
         prompt_text,
-        store_id=store_id,
-        store=store_cfg,
-        blog_handle=resolved_blog_handle,
+        scope=scope,
     )
 
     try:
@@ -610,6 +609,7 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     resolved_author = payload.author.strip() or store["default_author"]
     resolved_product_url = payload.product_url.strip()
     product_title = ""
+    scope = await blog_scope.resolve_blog_scope(store_id, store_cfg, resolved_blog_handle)
 
     # Product URL enrichment
     if resolved_product_url:
@@ -635,7 +635,7 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     # Title pool / keyword pool injection
     title_pool_id = 0
     if not resolved_product_url:
-        title_row = await title_service.pop_blog_title(store_id)
+        title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
         if title_row:
             title_pool_id = title_row["id"]
             title_inject = f"\n\nIMPORTANT — You MUST use exactly this title: {title_row['title']}"
@@ -645,7 +645,7 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
                 title_inject += f"\nUse this as the summary/meta description: {title_row['meta_description']}"
             prompt_text = f"{prompt_text}{title_inject}"
         else:
-            kw_row = await db.pop_keyword(store_id)
+            kw_row = await blog_scope.pop_scoped_keyword(store_id, scope)
             if kw_row:
                 kw_block = f"\n\nFocus keyword for this article: {kw_row['keyword']}"
                 kw_content = kw_row.get("content", "").strip()
@@ -655,9 +655,7 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
 
     prompt_text = await blog_scope.apply_blog_scope(
         prompt_text,
-        store_id=store_id,
-        store=store_cfg,
-        blog_handle=resolved_blog_handle,
+        scope=scope,
     )
 
     # LLM generation

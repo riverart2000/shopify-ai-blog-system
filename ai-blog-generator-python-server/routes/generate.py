@@ -350,6 +350,7 @@ async def generate(
         default_blog_handle=store.get("default_blog_handle", "news"),
         default_author=store.get("default_author", "Store Team"),
     )
+    scope = await blog_scope.resolve_blog_scope(store_id, store_cfg, resolved_blog_handle)
 
     # If a product was selected, build StoreConfig once and fetch product details
     # so the LLM gets accurate context (title, description, tags) rather than just a URL.
@@ -386,7 +387,7 @@ async def generate(
     # --- Title pool injection (non-product blogs only) ---
     title_pool_id = 0
     if not resolved_product_url:
-        title_row = await title_service.pop_blog_title(store_id)
+        title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
         if title_row:
             title_pool_id = title_row["id"]
             title_inject = (
@@ -403,7 +404,7 @@ async def generate(
             logger.info("Using pooled blog title %r for store %s", title_row["title"], store_id)
         else:
             # No title pool entry — try the dedicated keyword pool for a focus keyword
-            kw_row = await db.pop_keyword(store_id)
+            kw_row = await blog_scope.pop_scoped_keyword(store_id, scope)
             if kw_row:
                 kw = kw_row["keyword"]
                 kw_block = f"\n\nFocus keyword for this article: {kw}"
@@ -418,9 +419,7 @@ async def generate(
 
     prompt_text = await blog_scope.apply_blog_scope(
         prompt_text,
-        store_id=store_id,
-        store=store_cfg,
-        blog_handle=resolved_blog_handle,
+        scope=scope,
     )
 
     try:

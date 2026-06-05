@@ -62,6 +62,7 @@ async def run(
         default_blog_handle=store_row.get("default_blog_handle", "news"),
         default_author=store_row.get("default_author", "Store Team"),
     )
+    scope = await blog_scope.resolve_blog_scope(store_id, store, blog_handle or store.default_blog_handle)
 
     # --- Enrich prompt with product details if a product was selected ---
     resolved_product_url = product_url.strip()
@@ -94,7 +95,7 @@ async def run(
     # --- Pop a pre-generated blog title (non-product posts only) ---
     title_row = None
     if not resolved_product_url:
-        title_row = await title_service.pop_blog_title(store_id)
+        title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
         if title_row:
             title_inject = (
                 f"\n\nIMPORTANT — You MUST use exactly this title for the blog post: {title_row['title']}"
@@ -111,9 +112,7 @@ async def run(
 
     prompt_text = await blog_scope.apply_blog_scope(
         prompt_text,
-        store_id=store_id,
-        store=store,
-        blog_handle=blog_handle or store.default_blog_handle,
+        scope=scope,
     )
 
     # --- Text generation (raises AllModelsFailedError on total failure) ---

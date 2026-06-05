@@ -84,6 +84,16 @@ async def delete_title(title_id: int) -> None:
         await db.commit()
 
 
+async def reserve_title(title_id: int) -> None:
+    """Mark a title as used/reserved before final publish."""
+    async with aiosqlite.connect(get_db_path()) as db:
+        await db.execute(
+            "UPDATE blog_title_pool SET used=1 WHERE id=?",
+            (title_id,),
+        )
+        await db.commit()
+
+
 async def mark_title_published(title_id: int) -> None:
     """Stamp a title pool entry with the current UTC time it was actually published."""
     async with aiosqlite.connect(get_db_path()) as db:

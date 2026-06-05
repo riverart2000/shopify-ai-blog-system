@@ -58,6 +58,7 @@ logger = logging.getLogger("ai_blog_server.scheduler")
 
 import db
 from providers import AllModelsFailedError
+from services import blog_scope
 from services import publish_service
 from services.keyword_service import fetch_keywords
 import shopify_client
@@ -96,6 +97,26 @@ async def _process_job(job: dict) -> None:
 
     logger.info("Running job '%s' (store=%s)", name, store_id)
 
+    store_row = await db.get_store(store_id)
+    if not store_row:
+        logger.error("Job '%s': store '%s' not found — skipping", name, store_id)
+        return
+    store_cfg = StoreConfig(
+        id=store_row["id"],
+        name=store_row["name"],
+        myshopify_domain=store_row["myshopify_domain"],
+        custom_domain=store_row.get("custom_domain", ""),
+        client_id=store_row["client_id"],
+        client_secret=store_row["client_secret"],
+        default_blog_handle=store_row.get("default_blog_handle", "news"),
+        default_author=store_row.get("default_author", "Store Team"),
+    )
+    scope = await blog_scope.resolve_blog_scope(
+        store_id,
+        store_cfg,
+        job.get("blog_handle", "") or store_cfg.default_blog_handle,
+    )
+
     # Look up the prompt text
     prompts = await db.get_prompts(store_id)
     prompt = next((p for p in prompts if p["id"] == job["prompt_id"]), None)
@@ -107,7 +128,7 @@ async def _process_job(job: dict) -> None:
 
     # If job has use_keyword_pool set, pop a keyword and inject it into the prompt
     if job.get("use_keyword_pool"):
-        keyword_row = await db.pop_keyword(store_id)
+        keyword_row = await blog_scope.pop_scoped_keyword(store_id, scope)
         if keyword_row:
             kw = keyword_row["keyword"]
             kw_content = keyword_row.get("content", "")
@@ -119,6 +140,15 @@ async def _process_job(job: dict) -> None:
             kw_result = await fetch_keywords(store_id, niche, max_pool=max_pool)
             kw = kw_result.get("immediate") or ""
             kw_content = kw_result.get("immediate_content", "")
+            if kw and not blog_scope.is_candidate_compatible(f"{kw} {kw_content}", scope):
+                logger.info(
+                    "Job '%s': fetched keyword %r does not match blog scope handle=%s — ignoring",
+                    name,
+                    kw,
+                    getattr(scope, "handle", ""),
+                )
+                kw = ""
+                kw_content = ""
             if kw:
                 logger.info("Job '%s': fetched fresh keyword %r (source=%s)", name, kw, kw_result.get("source"))
             else:
@@ -137,33 +167,21 @@ async def _process_job(job: dict) -> None:
     product_url = ""
     product_title = ""
     if job.get("is_product_blog"):
-        store_row = await db.get_store(store_id)
-        if store_row:
-            store_cfg = StoreConfig(
-                id=store_row["id"],
-                name=store_row["name"],
-                myshopify_domain=store_row["myshopify_domain"],
-                custom_domain=store_row.get("custom_domain", ""),
-                client_id=store_row["client_id"],
-                client_secret=store_row["client_secret"],
-                default_blog_handle=store_row.get("default_blog_handle", "news"),
-                default_author=store_row.get("default_author", "Store Team"),
-            )
-            try:
-                products = await shopify_client.fetch_products(store_cfg)
-                if products:
-                    import random
-                    picked = random.choice(products)
-                    product_url = picked.url
-                    product_title = picked.title
-                    logger.info(
-                        "Job '%s': random product selected | %s (%s)",
-                        name, product_title, product_url,
-                    )
-                else:
-                    logger.warning("Job '%s': is_product_blog=1 but no products found — running as normal blog", name)
-            except Exception as exc:
-                logger.warning("Job '%s': failed to fetch products (%s) — running as normal blog", name, exc)
+        try:
+            products = await shopify_client.fetch_products(store_cfg)
+            if products:
+                import random
+                picked = random.choice(products)
+                product_url = picked.url
+                product_title = picked.title
+                logger.info(
+                    "Job '%s': random product selected | %s (%s)",
+                    name, product_title, product_url,
+                )
+            else:
+                logger.warning("Job '%s': is_product_blog=1 but no products found — running as normal blog", name)
+        except Exception as exc:
+            logger.warning("Job '%s': failed to fetch products (%s) — running as normal blog", name, exc)
 
     try:
         result = await publish_service.run(

@@ -26,7 +26,7 @@ from .keyword_pool import (
 )
 from .title_pool import (
     add_titles, get_title_pool, count_title_pool,
-    pop_title, delete_title, clear_title_pool, mark_title_published,
+    pop_title, delete_title, clear_title_pool, mark_title_published, reserve_title,
 )
 
 __all__ = [
@@ -54,5 +54,5 @@ __all__ = [
     "peek_keyword", "pop_keyword", "delete_keyword", "clear_keyword_pool",
     # title pool
     "add_titles", "get_title_pool", "count_title_pool",
-    "pop_title", "delete_title", "clear_title_pool", "mark_title_published",
+    "pop_title", "delete_title", "clear_title_pool", "mark_title_published", "reserve_title",
 ]

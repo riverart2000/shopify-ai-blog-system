@@ -963,6 +963,64 @@ class TestImageService:
         assert captured_prompts[1].startswith("Editorial wellness lifestyle photograph illustrating: My Blog Title.")
 
 
+class TestBlogScope:
+    async def test_scope_compatible_title_selection_skips_mismatch(self, tmp_db):
+        from services import blog_scope, title_service
+
+        sid = "scope-title"
+        await db.upsert_store(_make_store(sid, "Store One"))
+        await db.add_titles(sid, [
+            {
+                "title": "Best Sleep Routine For Deep Rest",
+                "keyword": "sleep routine",
+                "search_intent": "Improve sleep quality",
+                "meta_description": "Sleep guide",
+            },
+            {
+                "title": "Best Mobility Routine For Tight Hips At Home",
+                "keyword": "mobility routine",
+                "search_intent": "Improve mobility at home",
+                "meta_description": "Mobility guide",
+            },
+        ])
+
+        scope = blog_scope.BlogScope(
+            handle="home-fitness-mobility",
+            section_name="Home Fitness Mobility",
+            focus_terms=("fitness", "mobility"),
+        )
+
+        row = await title_service.pop_blog_title_for_scope(sid, scope)
+
+        assert row is not None
+        assert row["title"] == "Best Mobility Routine For Tight Hips At Home"
+        remaining = await db.get_title_pool(sid)
+        assert any(t["title"] == "Best Sleep Routine For Deep Rest" for t in remaining)
+
+    async def test_scope_compatible_keyword_selection_skips_mismatch(self, tmp_db):
+        from services import blog_scope
+
+        sid = "scope-keyword"
+        await db.upsert_store(_make_store(sid, "Store One"))
+        await db.add_keywords(sid, [
+            {"keyword": "sleep routine for beginners", "content": "sleep content"},
+            {"keyword": "mobility exercises at home", "content": "mobility content"},
+        ])
+
+        scope = blog_scope.BlogScope(
+            handle="home-fitness-mobility",
+            section_name="Home Fitness Mobility",
+            focus_terms=("fitness", "mobility"),
+        )
+
+        row = await blog_scope.pop_scoped_keyword(sid, scope)
+
+        assert row is not None
+        assert row["keyword"] == "mobility exercises at home"
+        remaining = await db.get_keyword_pool(sid)
+        assert any(k["keyword"] == "sleep routine for beginners" for k in remaining)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ⑮ HTTP Routes (via httpx + FastAPI TestClient)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1358,8 +1416,107 @@ class TestAuthedRoutes:
 
         assert resp.status_code == 200
         prompt_arg = generate_mock.await_args.args[1]
+        assert "SECTION SCOPE — HIGHEST PRIORITY:" in prompt_arg
         assert "Shopify blog handle 'news'" in prompt_arg
         assert "Sleep Advice" in prompt_arg
+
+    async def test_generate_preview_uses_title_pool_entry_matching_blog_scope(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        await db.add_titles(
+            "s1",
+            [
+                {
+                    "title": "Best Biohacking Sleep Routine at Home for Beginners",
+                    "keyword": "sleep routine at home",
+                    "search_intent": "Sleep improvement",
+                    "meta_description": "Sleep article.",
+                },
+                {
+                    "title": "Best Home Mobility Routine for Beginners",
+                    "keyword": "home mobility routine",
+                    "search_intent": "Mobility improvement",
+                    "meta_description": "Mobility article.",
+                },
+            ],
+        )
+
+        strong_blog = {
+            "title": "Best Home Mobility Routine for Beginners",
+            "summary": "A practical guide to mobility.",
+            "content": ("Useful mobility guidance " * 160),
+            "keywords": ["mobility"],
+            "hashtags": ["#mobility"],
+        }
+
+        with patch(
+            "routes.generate.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[{"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"}],
+        ), \
+             patch("routes.generate.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=strong_blog) as generate_mock, \
+             patch("routes.generate.image_service.generate_typed_images",
+                   new_callable=AsyncMock, return_value=([], [], [])):
+            resp = await store_client.post(
+                "/generate",
+                data={
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful store blog post.",
+                    "blog_handle": "home-fitness-mobility",
+                    "author_name": "Store Team",
+                    "model_id": "",
+                    "product_url": "",
+                },
+            )
+
+        assert resp.status_code == 200
+        prompt_arg = generate_mock.await_args.args[1]
+        assert "Best Home Mobility Routine for Beginners" in prompt_arg
+        assert "Best Biohacking Sleep Routine at Home for Beginners" not in prompt_arg
+
+    async def test_generate_preview_uses_keyword_pool_entry_matching_blog_scope(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        await db.add_keywords(
+            "s1",
+            [
+                {"keyword": "best sleep routine at home", "content": "Sleep optimisation tips."},
+                {"keyword": "home mobility exercises for beginners", "content": "Mobility and flexibility ideas."},
+            ],
+        )
+
+        strong_blog = {
+            "title": "How To Improve Home Mobility",
+            "summary": "A practical guide to mobility.",
+            "content": ("Useful mobility guidance " * 160),
+            "keywords": ["mobility"],
+            "hashtags": ["#mobility"],
+        }
+
+        with patch(
+            "routes.generate.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[{"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"}],
+        ), \
+             patch("routes.generate.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=strong_blog) as generate_mock, \
+             patch("routes.generate.image_service.generate_typed_images",
+                   new_callable=AsyncMock, return_value=([], [], [])):
+            resp = await store_client.post(
+                "/generate",
+                data={
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful store blog post.",
+                    "blog_handle": "home-fitness-mobility",
+                    "author_name": "Store Team",
+                    "model_id": "",
+                    "product_url": "",
+                },
+            )
+
+        assert resp.status_code == 200
+        prompt_arg = generate_mock.await_args.args[1]
+        assert "Focus keyword for this article: home mobility exercises for beginners" in prompt_arg
+        assert "Focus keyword for this article: best sleep routine at home" not in prompt_arg
 
     async def test_generate_preview_shows_quality_checks(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))

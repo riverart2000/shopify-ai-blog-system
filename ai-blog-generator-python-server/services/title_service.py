@@ -7,6 +7,7 @@ import re
 
 import db
 import providers
+from . import blog_scope
 from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
@@ -121,7 +122,7 @@ async def pop_blog_title(store_id: str) -> dict | None:
     Auto-fetches a new batch if the pool is empty.
     Returns None if fetching also yields nothing (model not configured, etc.).
     """
-    row = await db.pop_title(store_id)
+    row = await _pop_compatible_title(store_id, None)
     if row:
         return row
 
@@ -134,4 +135,61 @@ async def pop_blog_title(store_id: str) -> dict | None:
         )
         return None
 
-    return await db.pop_title(store_id)
+    return await _pop_compatible_title(store_id, None)
+
+
+async def pop_blog_title_for_scope(
+    store_id: str,
+    scope: blog_scope.BlogScope | None,
+) -> dict | None:
+    """Return the oldest title compatible with the selected blog section."""
+    row = await _pop_compatible_title(store_id, scope)
+    if row:
+        return row
+
+    result = await fetch_titles(store_id)
+    if result["error"] or result["added"] == 0:
+        logger.info(
+            "Scoped title selection found nothing for store %s handle=%s: %s",
+            store_id,
+            getattr(scope, "handle", ""),
+            result.get("error") or "0 titles generated",
+        )
+        return None
+
+    row = await _pop_compatible_title(store_id, scope)
+    if row:
+        return row
+
+    logger.info(
+        "Title pool has no entries compatible with blog scope | store=%s handle=%s",
+        store_id,
+        getattr(scope, "handle", ""),
+    )
+    return None
+
+
+async def _pop_compatible_title(
+    store_id: str,
+    scope: blog_scope.BlogScope | None,
+) -> dict | None:
+    if scope is None:
+        return await db.pop_title(store_id)
+
+    rows = await db.get_title_pool(store_id, limit=200)
+    for row in rows:
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    row.get("title", ""),
+                    row.get("keyword", ""),
+                    row.get("search_intent", ""),
+                    row.get("meta_description", ""),
+                ],
+            )
+        )
+        if blog_scope.is_candidate_compatible(haystack, scope):
+            await db.reserve_title(int(row["id"]))
+            return row
+    return None
