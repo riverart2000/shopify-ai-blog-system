@@ -21,14 +21,6 @@ type StoreSettings = {
   has_exa_key: boolean;
 };
 
-type BackendStore = {
-  id: string;
-  name: string;
-  myshopify_domain: string;
-  default_blog_handle: string;
-  default_author: string;
-};
-
 type KeywordItem = { id: number; keyword: string; used: boolean };
 type TitleItem = { id: number; title: string; used: boolean };
 type Prompt = { id: string; name: string };
@@ -53,34 +45,23 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
   return res.json() as Promise<Record<string, unknown>>;
 }
 
-function withStoreId(path: string, storeId: string) {
-  if (!storeId) return path;
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}store_id=${encodeURIComponent(storeId)}`;
-}
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  if (!BACKEND_KEY) return { backendConfigured: false, settings: null, keywords: [], titles: [], prompts: [], models: [], storeId: "", stores: [] };
-  const url = new URL(request.url);
-  const requestedStoreId = url.searchParams.get("store_id")?.trim() || "";
-  const storesData = await backendFetch("/api/stores");
-  const stores = (storesData.stores ?? []) as BackendStore[];
-  const resolvedStoreId = requestedStoreId || stores[0]?.id || "";
+  if (!BACKEND_KEY) return { backendConfigured: false, settings: null, keywords: [], titles: [], prompts: [], models: [], storeId: "" };
   const [settingsData, keywordsData, titlesData, modelsData, promptsData] = await Promise.allSettled([
-    backendFetch(withStoreId("/api/settings", resolvedStoreId)),
-    backendFetch(withStoreId("/api/keywords", resolvedStoreId)),
-    backendFetch(withStoreId("/api/titles", resolvedStoreId)),
-    backendFetch(withStoreId("/api/models", resolvedStoreId)),
-    backendFetch(withStoreId("/api/init", resolvedStoreId)),
+    backendFetch("/api/settings"),
+    backendFetch("/api/keywords"),
+    backendFetch("/api/titles"),
+    backendFetch("/api/models"),
+    backendFetch("/api/init"),
   ]);
   const settings = settingsData.status === "fulfilled" ? settingsData.value as unknown as StoreSettings : null;
   const keywords = keywordsData.status === "fulfilled" ? (keywordsData.value.keywords ?? []) as KeywordItem[] : [];
   const titles = titlesData.status === "fulfilled" ? (titlesData.value.titles ?? []) as TitleItem[] : [];
   const models = modelsData.status === "fulfilled" ? (modelsData.value.models ?? []) as Model[] : [];
   const prompts = promptsData.status === "fulfilled" ? (promptsData.value.prompts ?? []) as Prompt[] : [];
-  const storeId = settings?.store_id || resolvedStoreId;
-  return { backendConfigured: true, settings, keywords, titles, prompts, models, storeId, stores };
+  const storeId = settings?.store_id || "";
+  return { backendConfigured: true, settings, keywords, titles, prompts, models, storeId };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -146,7 +127,7 @@ function Alert({ message, tone }: { message: string; tone: "success" | "error" |
 }
 
 export default function SettingsRoute() {
-  const { backendConfigured, settings, keywords, titles, prompts, models, storeId, stores } = useLoaderData<typeof loader>();
+  const { backendConfigured, settings, keywords, titles, prompts, models, storeId } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; error?: string; intent?: string; message?: string } | undefined;
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
@@ -169,33 +150,6 @@ export default function SettingsRoute() {
       {lastErr ? <s-section><Alert message={lastErr} tone="error" /></s-section> : null}
       {lastSaved ? <s-section><Alert message="Settings saved." tone="success" /></s-section> : null}
       {lastMsg ? <s-section><Alert message={lastMsg} tone="info" /></s-section> : null}
-
-      {stores.length > 1 ? (
-        <s-section heading="Backend store">
-          <Form method="get">
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 420px)", gap: "12px", alignItems: "end" }}>
-              <label style={lbl}>
-                <span>Select backend store</span>
-                <select name="store_id" defaultValue={storeId} style={inp}>
-                  {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
-                      {store.name} ({store.id})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
-                Switch which backend store record you are editing in this settings page.
-              </div>
-            </div>
-            <div style={{ marginTop: "12px" }}>
-              <button type="submit" style={{ borderRadius: "999px", border: 0, background: "#111827", color: "white", padding: "10px 22px", fontWeight: 700, cursor: "pointer" }}>
-                Load store settings
-              </button>
-            </div>
-          </Form>
-        </s-section>
-      ) : null}
 
       {/* --- Store defaults --- */}
       <s-section heading="Store defaults">
