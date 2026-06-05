@@ -120,10 +120,15 @@
         </div>
         <div class="item-meta">
           {{ job.cron_expr }} &nbsp;·&nbsp;
-          Blog: {{ job.blog_handle or '(store default)' }} &nbsp;·&nbsp;
+          Blog: {% if job.blog_handle == '__auto__' or (not job.blog_handle and not job.is_product_blog) %}(auto from title pool){% else %}{{ job.blog_handle or '(store default)' }}{% endif %} &nbsp;·&nbsp;
           {% if job.last_run_at %}Last run: {{ job.last_run_at }}{% else %}Never run{% endif %}
           {% if job.next_run_at %} &nbsp;·&nbsp; Next: {{ job.next_run_at }}{% endif %}
         </div>
+        {% if job.last_resolved_blog_handle %}
+        <div class="item-meta" style="margin-top:4px;">
+          Last published to: {{ job.last_resolved_blog_handle }}
+        </div>
+        {% endif %}
         <!-- Edit form -->
         <div id="edit-job-{{ job.id }}" class="edit-form">
           <form method="POST" action="/schedule/save" style="margin-top:12px;">
@@ -146,6 +151,7 @@
                 {% if cached_blogs %}
                 <select name="blog_handle">
                   <option value="">(store default)</option>
+                  <option value="__auto__" {% if job.blog_handle == '__auto__' %}selected{% endif %}>(auto from title pool)</option>
                   {% for b in cached_blogs %}
                   <option value="{{ b.handle }}" {% if b.handle == job.blog_handle %}selected{% endif %}>{{ b.title }} ({{ b.handle }})</option>
                   {% endfor %}
@@ -153,7 +159,7 @@
                 {% else %}
                 <input type="text" name="blog_handle" value="{{ job.blog_handle }}" placeholder="news" />
                 {% endif %}
-                <div class="hint">Leave blank to use store default.</div>
+                <div class="hint">Leave blank to auto-route each pooled title to the best matching Shopify blog handle. Pick a specific handle only when you want to force the destination.</div>
               </div>
               <div class="field"><label>Author</label>
                 <input type="text" name="author" value="{{ job.author }}" placeholder="(store default)" />
@@ -229,6 +235,7 @@
           {% if cached_blogs %}
           <select name="blog_handle">
             <option value="">(store default)</option>
+            <option value="__auto__">(auto from title pool)</option>
             {% for b in cached_blogs %}
             <option value="{{ b.handle }}">{{ b.title }} ({{ b.handle }})</option>
             {% endfor %}
@@ -236,7 +243,7 @@
           {% else %}
           <input type="text" name="blog_handle" placeholder="news" />
           {% endif %}
-          <div class="hint">Leave blank to use store default.</div>
+          <div class="hint">Leave blank to auto-route each pooled title to the best matching Shopify blog handle. Pick a specific handle only when you want to force the destination.</div>
         </div>
         <div class="field"><label>Author</label>
           <input type="text" name="author" placeholder="(store default)" />

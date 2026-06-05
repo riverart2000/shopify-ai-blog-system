@@ -8,6 +8,7 @@ routes/scheduler_routes.py — CRUD for scheduled blog generation jobs.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated, Optional
 
@@ -81,8 +82,18 @@ async def schedule_page(request: Request, saved: str = "", error: str = ""):
         cached_products = _json.loads(await db.get_store_setting(store_id, "cached_products", "[]"))
     except Exception:
         cached_products = []
+    recent_runs = await asyncio.gather(
+        *(db.get_recent_runs_for_job(job["id"], limit=1) for job in jobs)
+    ) if jobs else []
+    enriched_jobs = []
+    for job, runs in zip(jobs, recent_runs):
+        latest = runs[0] if runs else None
+        enriched_jobs.append({
+            **job,
+            "last_resolved_blog_handle": latest.get("blog_handle", "") if latest else "",
+        })
     return state.templates.TemplateResponse(request, "schedule.html", {
-        "jobs": jobs,
+        "jobs": enriched_jobs,
         "prompts": prompts,
         "cached_blogs": cached_blogs,
         "cached_products": cached_products,

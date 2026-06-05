@@ -1020,6 +1020,146 @@ class TestBlogScope:
         remaining = await db.get_keyword_pool(sid)
         assert any(k["keyword"] == "sleep routine for beginners" for k in remaining)
 
+    async def test_best_matching_scope_prefers_matching_blog_handle(self, tmp_db):
+        from services import blog_scope
+
+        scopes = [
+            blog_scope.BlogScope(
+                handle="sleep-advice",
+                section_name="Sleep Advice",
+                focus_terms=("sleep", "routine"),
+            ),
+            blog_scope.BlogScope(
+                handle="home-fitness-mobility",
+                section_name="Home Fitness Mobility",
+                focus_terms=("fitness", "mobility"),
+            ),
+        ]
+
+        match = blog_scope.best_matching_scope(
+            "Best home mobility routine for beginners",
+            scopes,
+        )
+
+        assert match is not None
+        assert match.handle == "home-fitness-mobility"
+
+
+class TestSchedulerRouting:
+    async def test_process_job_blank_blog_handle_auto_routes_title_pool(self, tmp_db):
+        import scheduler
+
+        sid = "sched-blank-auto-store"
+
+        await db.upsert_store(_make_store(sid, "Store One Updated"))
+        await db.upsert_prompt({
+            "id": "sched-blank-auto",
+            "store_id": sid,
+            "name": "Scheduler Prompt",
+            "text": "Write a useful store blog post.",
+            "sort_order": 0,
+        })
+        await db.add_titles(
+            sid,
+            [
+                {
+                    "title": "Best Home Mobility Routine for Beginners",
+                    "keyword": "home mobility routine",
+                    "search_intent": "Mobility improvement",
+                    "meta_description": "Mobility article.",
+                }
+            ],
+        )
+
+        job = {
+            "id": "job-blank-auto-1",
+            "store_id": sid,
+            "name": "Blank Handle Auto Route Job",
+            "prompt_id": "sched-blank-auto",
+            "blog_handle": "",
+            "author": "",
+            "cron_expr": "0 9 * * *",
+            "use_keyword_pool": 0,
+            "is_product_blog": 0,
+        }
+
+        with patch(
+            "scheduler.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {"handle": "sleep-advice", "title": "Sleep Advice"},
+                {"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"},
+            ],
+        ), \
+             patch(
+                 "scheduler.publish_service.run",
+                 new_callable=AsyncMock,
+                 return_value=SimpleNamespace(title="Done", article_id="1"),
+             ) as publish_mock, \
+             patch("scheduler._get_next_run", return_value=1234567890):
+            await scheduler._process_job(job)
+
+        assert publish_mock.await_count == 1
+        assert publish_mock.await_args.kwargs["blog_handle"] == "home-fitness-mobility"
+        assert publish_mock.await_args.kwargs["preselected_title_row"]["title"] == "Best Home Mobility Routine for Beginners"
+
+    async def test_process_job_auto_routes_title_pool_to_matching_blog_handle(self, tmp_db):
+        import scheduler
+
+        sid = "sched-auto-store"
+
+        await db.upsert_store(_make_store(sid, "Store One Updated"))
+        await db.upsert_prompt({
+            "id": "sched-auto",
+            "store_id": sid,
+            "name": "Scheduler Prompt",
+            "text": "Write a useful store blog post.",
+            "sort_order": 0,
+        })
+        await db.add_titles(
+            sid,
+            [
+                {
+                    "title": "Best Home Mobility Routine for Beginners",
+                    "keyword": "home mobility routine",
+                    "search_intent": "Mobility improvement",
+                    "meta_description": "Mobility article.",
+                }
+            ],
+        )
+
+        job = {
+            "id": "job-auto-1",
+            "store_id": sid,
+            "name": "Auto Route Job",
+            "prompt_id": "sched-auto",
+            "blog_handle": "__auto__",
+            "author": "",
+            "cron_expr": "0 9 * * *",
+            "use_keyword_pool": 0,
+            "is_product_blog": 0,
+        }
+
+        with patch(
+            "scheduler.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {"handle": "sleep-advice", "title": "Sleep Advice"},
+                {"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"},
+            ],
+        ), \
+             patch(
+                 "scheduler.publish_service.run",
+                 new_callable=AsyncMock,
+                 return_value=SimpleNamespace(title="Done", article_id="1"),
+             ) as publish_mock, \
+             patch("scheduler._get_next_run", return_value=1234567890):
+            await scheduler._process_job(job)
+
+        assert publish_mock.await_count == 1
+        assert publish_mock.await_args.kwargs["blog_handle"] == "home-fitness-mobility"
+        assert publish_mock.await_args.kwargs["preselected_title_row"]["title"] == "Best Home Mobility Routine for Beginners"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ⑮ HTTP Routes (via httpx + FastAPI TestClient)
@@ -1380,8 +1520,47 @@ class TestAuthedRoutes:
 
         assert resp.status_code == 200
         assert b'<select name="blog_handle">' in resp.content
+        assert b"(auto from title pool)" in resp.content
         assert b"Wellness Tips (wellness)" in resp.content
         assert b"Buying Guides (buying-guides)" in resp.content
+
+    async def test_schedule_page_shows_last_routed_blog_handle(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        job_id = await db.upsert_job({
+            "id": "",
+            "store_id": "s1",
+            "name": "Auto Route Job",
+            "prompt_id": "pid1",
+            "blog_handle": "",
+            "author": "",
+            "cron_expr": "0 9 * * *",
+            "timezone": "UTC",
+            "is_active": 1,
+            "next_run_at": None,
+            "is_product_blog": 0,
+            "use_keyword_pool": 0,
+        })
+        await db.log_generation(
+            store_id="s1",
+            store_name="Store One Updated",
+            blog_handle="home-fitness-mobility",
+            prompt_id="pid1",
+            prompt_text="Write a useful store blog post.",
+            title="Best Home Mobility Routine for Beginners",
+            summary="A practical guide to mobility.",
+            content_text="Mobility guidance.",
+            keywords=["mobility"],
+            hashtags=["#mobility"],
+            image_count=0,
+            status="published",
+            scheduled_job_id=job_id,
+        )
+
+        resp = await store_client.get("/schedule")
+
+        assert resp.status_code == 200
+        assert b"Last published to: home-fitness-mobility" in resp.content
+        assert b"Blog: (auto from title pool)" in resp.content
 
     async def test_generate_preview_includes_blog_handle_scope(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))

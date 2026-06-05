@@ -60,6 +60,7 @@ import db
 from providers import AllModelsFailedError
 from services import blog_scope
 from services import publish_service
+from services import title_service
 from services.keyword_service import fetch_keywords
 import shopify_client
 from config import StoreConfig
@@ -111,11 +112,46 @@ async def _process_job(job: dict) -> None:
         default_blog_handle=store_row.get("default_blog_handle", "news"),
         default_author=store_row.get("default_author", "Store Team"),
     )
-    scope = await blog_scope.resolve_blog_scope(
-        store_id,
-        store_cfg,
-        job.get("blog_handle", "") or store_cfg.default_blog_handle,
+    configured_blog_handle = (job.get("blog_handle", "") or "").strip()
+    preselected_title_row = None
+
+    auto_route_from_title_pool = (
+        not job.get("is_product_blog")
+        and (not configured_blog_handle or blog_scope.is_auto_blog_handle(configured_blog_handle))
     )
+
+    if auto_route_from_title_pool:
+        fallback_scope = await blog_scope.resolve_blog_scope(
+            store_id,
+            store_cfg,
+            store_cfg.default_blog_handle,
+        )
+        preselected_title_row, scope = await title_service.pop_blog_title_for_auto_scope(
+            store_id,
+            await blog_scope.get_blog_scopes(store_id, store_cfg),
+            fallback_scope,
+        )
+        resolved_blog_handle = getattr(scope, "handle", "") or store_cfg.default_blog_handle
+        if preselected_title_row:
+            logger.info(
+                "Job '%s': auto-routed pooled title %r to blog handle '%s'",
+                name,
+                preselected_title_row["title"],
+                resolved_blog_handle,
+            )
+        else:
+            logger.info(
+                "Job '%s': auto blog-handle mode found no pooled title — using %s",
+                name,
+                resolved_blog_handle,
+            )
+    else:
+        resolved_blog_handle = configured_blog_handle or store_cfg.default_blog_handle
+        scope = await blog_scope.resolve_blog_scope(
+            store_id,
+            store_cfg,
+            resolved_blog_handle,
+        )
 
     # Look up the prompt text
     prompts = await db.get_prompts(store_id)
@@ -187,12 +223,13 @@ async def _process_job(job: dict) -> None:
         result = await publish_service.run(
             store_id=store_id,
             prompt_text=prompt_text,
-            blog_handle=job.get("blog_handle", ""),
+            blog_handle=resolved_blog_handle,
             author=job.get("author", ""),
             prompt_id=job["prompt_id"],
             product_url=product_url,
             product_title=product_title,
             scheduled_job_id=job_id,
+            preselected_title_row=preselected_title_row,
         )
         logger.info(
             "Job '%s' completed | title=%r article_id=%s",
