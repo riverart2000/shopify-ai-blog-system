@@ -10,6 +10,7 @@ const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENE
 type Prompt = { id: string; name: string };
 type Model = { id: string; name: string; provider: string };
 type BlogHandle = { handle: string; title?: string };
+type BlogHandleOption = { value: string; label: string };
 type Product = { id: string; handle: string; title: string };
 
 type QualityCheck = { name: string; label?: string; status: "pass" | "warn" | "fail"; message: string; hint?: string };
@@ -51,6 +52,31 @@ type ActionData =
   | { step: "preview"; ok: true; draft: DraftData }
   | { step: "result"; ok: true; article_url: string; message: string }
   | { step: "error"; ok: false; error: string };
+
+const AUTO_BLOG_HANDLE = "__auto__";
+
+function buildBlogHandleOptions(blogs: BlogHandle[], defaultHandle: string) {
+  const options: BlogHandleOption[] = [
+    { value: AUTO_BLOG_HANDLE, label: "Auto (best matching blog handle)" },
+  ];
+  const seen = new Set<string>([AUTO_BLOG_HANDLE]);
+  const normalizedDefaultHandle = defaultHandle.trim();
+
+  if (normalizedDefaultHandle) {
+    options.push({ value: normalizedDefaultHandle, label: `Store default (${normalizedDefaultHandle})` });
+    seen.add(normalizedDefaultHandle);
+  }
+
+  for (const blog of blogs) {
+    const handle = String(blog.handle || "").trim();
+    if (!handle || seen.has(handle)) continue;
+    const title = String(blog.title || "").trim() || handle;
+    options.push({ value: handle, label: title === handle ? handle : `${title} (${handle})` });
+    seen.add(handle);
+  }
+
+  return options;
+}
 
 async function backendFetch(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -133,7 +159,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           store_id: form.get("store_id") || "",
           prompt_id: form.get("prompt_id") || "",
           prompt_text: form.get("prompt_text") || "",
-          blog_handle: form.get("blog_handle") || "news",
+          blog_handle: form.get("blog_handle") || "",
           author: form.get("author") || "",
           title: form.get("title") || "",
           summary: form.get("summary") || "",
@@ -221,6 +247,7 @@ function GenerateForm({ data, prevError }: { data: ReturnType<typeof useLoaderDa
   const navigation = useNavigation();
   const submitting = navigation.state !== "idle";
   const [showCustom, setShowCustom] = useState(false);
+  const blogHandleOptions = buildBlogHandleOptions(data.blogs, data.defaultBlogHandle);
 
   return (
     <s-page heading="Blog Generator">
@@ -272,10 +299,9 @@ function GenerateForm({ data, prevError }: { data: ReturnType<typeof useLoaderDa
               <label style={lbl}>
                 <span>Blog handle</span>
                 <select name="blog_handle" defaultValue={data.defaultBlogHandle} style={inp}>
-                  {data.blogs.length > 0
-                    ? data.blogs.map((b: BlogHandle) => <option key={b.handle} value={b.handle}>{b.handle}{b.title ? ` (${b.title})` : ""}</option>)
-                    : <option value={data.defaultBlogHandle}>{data.defaultBlogHandle}</option>
-                  }
+                  {blogHandleOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
               </label>
               <label style={lbl}>

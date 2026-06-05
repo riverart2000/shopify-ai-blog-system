@@ -75,6 +75,28 @@ async def _resolve_generation_store(requested_store_id: str) -> dict:
     return stores[0]
 
 
+async def _resolve_auto_blog_scope(
+    store_id: str,
+    store_cfg: StoreConfig,
+    *candidate_parts: object,
+) -> tuple[list[blog_scope.BlogScope], blog_scope.BlogScope | None, str]:
+    candidate_text = "\n".join(
+        str(part).strip()
+        for part in candidate_parts
+        if str(part).strip()
+    )
+    scopes = await blog_scope.get_blog_scopes(store_id, store_cfg)
+    inferred_scope = blog_scope.best_matching_scope(candidate_text, scopes)
+    if inferred_scope is None:
+        inferred_scope = await blog_scope.resolve_blog_scope(
+            store_id,
+            store_cfg,
+            store_cfg.default_blog_handle,
+        )
+    resolved_blog_handle = getattr(inferred_scope, "handle", "") or store_cfg.default_blog_handle
+    return scopes, inferred_scope, resolved_blog_handle
+
+
 @router.get("/health")
 async def health():
     return {
@@ -591,6 +613,8 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     store = await _resolve_generation_store(payload.store_id)
     store_id = store["id"]
     store_cfg = _store_config_from_row(store)
+    requested_blog_handle = payload.blog_handle.strip()
+    uses_auto_blog_handle = blog_scope.is_auto_blog_handle(requested_blog_handle)
 
     # Resolve prompt text
     if payload.prompt_id and payload.prompt_id != "custom":
@@ -605,11 +629,9 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
         if not prompt_text:
             raise HTTPException(status_code=400, detail="prompt text is required")
 
-    resolved_blog_handle = payload.blog_handle.strip() or store["default_blog_handle"]
     resolved_author = payload.author.strip() or store["default_author"]
     resolved_product_url = payload.product_url.strip()
     product_title = ""
-    scope = await blog_scope.resolve_blog_scope(store_id, store_cfg, resolved_blog_handle)
 
     # Product URL enrichment
     if resolved_product_url:
@@ -632,10 +654,33 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
         else:
             prompt_text = f"{prompt_text}\n\nWrite this blog post about the product: {resolved_product_url}"
 
+    if uses_auto_blog_handle:
+        scopes, scope, resolved_blog_handle = await _resolve_auto_blog_scope(
+            store_id,
+            store_cfg,
+            prompt_text,
+            product_title,
+            resolved_product_url,
+        )
+    else:
+        resolved_blog_handle = requested_blog_handle or store_cfg.default_blog_handle
+        scope = await blog_scope.resolve_blog_scope(store_id, store_cfg, resolved_blog_handle)
+
     # Title pool / keyword pool injection
+    title_row = None
     title_pool_id = 0
     if not resolved_product_url:
-        title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
+        if uses_auto_blog_handle:
+            title_row, matched_scope = await title_service.pop_blog_title_for_auto_scope(
+                store_id,
+                scopes,
+                scope,
+            )
+            if matched_scope is not None:
+                scope = matched_scope
+                resolved_blog_handle = getattr(scope, "handle", "") or store_cfg.default_blog_handle
+        else:
+            title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
         if title_row:
             title_pool_id = title_row["id"]
             title_inject = f"\n\nIMPORTANT — You MUST use exactly this title: {title_row['title']}"
@@ -738,7 +783,7 @@ class PublishArticleRequest(BaseModel):
     store_id: str = ""
     prompt_id: str = ""
     prompt_text: str = ""
-    blog_handle: str = "news"
+    blog_handle: str = ""
     author: str = ""
     title: str
     summary: str = ""
@@ -762,6 +807,21 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
     store_row = await _resolve_generation_store(payload.store_id)
     store_id = store_row["id"]
     store = _store_config_from_row(store_row)
+    requested_blog_handle = payload.blog_handle.strip()
+    if blog_scope.is_auto_blog_handle(requested_blog_handle):
+        _, _, resolved_blog_handle = await _resolve_auto_blog_scope(
+            store_id,
+            store,
+            payload.prompt_text,
+            payload.title,
+            payload.summary,
+            " ".join(payload.keywords),
+            " ".join(payload.long_tail_keywords),
+            payload.product_title,
+            payload.product_url,
+        )
+    else:
+        resolved_blog_handle = requested_blog_handle or store.default_blog_handle
 
     # Quality check
     quality_report = await review_draft(
@@ -840,7 +900,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
     try:
         result = await shopify_client.publish_article(
             store=store,
-            blog_handle=payload.blog_handle,
+            blog_handle=resolved_blog_handle,
             title=payload.title,
             content_html=content_html,
             summary=payload.summary,
@@ -862,7 +922,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
     await db.log_generation(
         store_id=store_id,
         store_name=store_row["name"],
-        blog_handle=payload.blog_handle,
+        blog_handle=resolved_blog_handle,
         prompt_id=payload.prompt_id,
         prompt_text=payload.prompt_text,
         title=payload.title,

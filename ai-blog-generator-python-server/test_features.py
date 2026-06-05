@@ -1959,6 +1959,67 @@ class TestAuthedRoutes:
         assert data["long_tail_keywords"] == ["best guide for beginners"]
         assert data["pin_description"] == "A pin description"
 
+    async def test_api_generate_draft_auto_blog_handle_uses_matching_scope(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        quality_report = MagicMock()
+        quality_report.as_dict.return_value = {
+            "score": 92,
+            "publish_blocked": False,
+            "checks": [],
+        }
+
+        blog_data = {
+            "title": "Guide Title",
+            "summary": "Guide summary",
+            "content": "## Heading\n\nUseful content. " * 40,
+            "keywords": ["mobility"],
+            "hashtags": ["#mobility"],
+            "long_tail_keywords": ["best home mobility routine"],
+            "pin_description": "A pin description",
+            "_model_name": "test-model",
+        }
+
+        with patch(
+            "routes.api.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {"handle": "sleep-advice", "title": "Sleep Advice"},
+                {"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"},
+            ],
+        ), \
+             patch("routes.api.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=blog_data) as generate_mock, \
+             patch("routes.api.image_service.generate_typed_images",
+                   new_callable=AsyncMock,
+                   return_value=(
+                       ["https://img.example.com/hero.png"],
+                       ["hero_photo"],
+                       ["Hero Photo"],
+                   )), \
+             patch("routes.api.review_draft",
+                   new_callable=AsyncMock, return_value=quality_report):
+            resp = await http_client.post(
+                "/api/generate/draft",
+                headers={"x-api-key": "test-api-key"},
+                json={
+                    "store_id": "s1",
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful guide about home mobility routines for beginners.",
+                    "blog_handle": "auto",
+                    "author": "Store Team",
+                    "model_id": "",
+                    "product_url": "",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["blog_handle"] == "home-fitness-mobility"
+        prompt_arg = generate_mock.await_args.args[1]
+        assert "Shopify blog handle 'home-fitness-mobility'" in prompt_arg
+
     async def test_api_generate_draft_product_blog_uses_typed_images(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
         await db.upsert_store(_make_store("s1", "Store One Updated"))
@@ -2092,6 +2153,64 @@ class TestAuthedRoutes:
         assert publish_kwargs["pin_image_url"] == "https://img.example.com/pin.png"
         assert publish_kwargs["image_url_list"] == ["https://img.example.com/hero.png"]
         assert publish_kwargs["featured_image_url"].startswith("data:image/jpeg;base64,")
+
+    async def test_api_publish_article_auto_blog_handle_uses_matching_scope(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        quality_report = SimpleNamespace(publish_blocked=False)
+        publish_result = SimpleNamespace(
+            article_url="https://s1.com/blogs/home-fitness-mobility/guide-title",
+            article_id="987",
+        )
+
+        with patch(
+            "routes.api.blog_scope.get_blog_options",
+            new_callable=AsyncMock,
+            return_value=[
+                {"handle": "sleep-advice", "title": "Sleep Advice"},
+                {"handle": "home-fitness-mobility", "title": "Home Fitness Mobility"},
+            ],
+        ), \
+             patch("routes.api.review_draft",
+                   new_callable=AsyncMock, return_value=quality_report), \
+             patch("routes.api.internal_links.build_internal_links",
+                   new_callable=AsyncMock, return_value=[]), \
+             patch("routes.api.internal_links.render_related_block",
+                   return_value=""), \
+             patch("routes.api.logo_service.stamp_photo",
+                   new_callable=AsyncMock, return_value="data:image/jpeg;base64,ZmVhdHVyZWQ="), \
+             patch("routes.api.logo_service.stamp_pin",
+                   new_callable=AsyncMock, return_value="https://img.example.com/pin.png"), \
+             patch("routes.api.shopify_client.publish_article",
+                   new_callable=AsyncMock, return_value=publish_result) as publish_mock:
+            resp = await http_client.post(
+                "/api/publish/article",
+                headers={"x-api-key": "test-api-key"},
+                json={
+                    "store_id": "s1",
+                    "prompt_id": "custom",
+                    "prompt_text": "Write a useful guide about home mobility routines for beginners.",
+                    "blog_handle": "auto",
+                    "author": "Store Team",
+                    "title": "Best Home Mobility Routine for Beginners",
+                    "summary": "Guide summary",
+                    "content": "Useful mobility content. " * 120,
+                    "keywords": ["mobility"],
+                    "hashtags": ["#mobility"],
+                    "long_tail_keywords": ["best home mobility routine"],
+                    "pin_description": "A pin description",
+                    "image_urls": ["https://img.example.com/hero.png"],
+                    "image_types": ["hero_photo"],
+                    "selected_image_index": 0,
+                    "product_url": "",
+                    "product_title": "",
+                    "title_pool_id": 0,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert publish_mock.await_args.kwargs["blog_handle"] == "home-fitness-mobility"
 
     async def test_api_schedule_save_normalizes_auto_blog_handle(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
