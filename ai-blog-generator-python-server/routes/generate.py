@@ -600,6 +600,8 @@ async def publish(
             else:
                 composited.append(await logo_service.stamp_infographic(url, logo_b64))
 
+    ordered_image_urls = list(image_url_list)
+    featured_image_url = ""
     # Reorder so the user-selected image is first (used as Shopify featured image)
     if composited and 0 < selected_image_index < len(composited):
         composited = (
@@ -607,7 +609,13 @@ async def publish(
             + composited[:selected_image_index]
             + composited[selected_image_index + 1 :]
         )
-    image_url_list = composited
+        ordered_image_urls = (
+            [ordered_image_urls[selected_image_index]]
+            + ordered_image_urls[:selected_image_index]
+            + ordered_image_urls[selected_image_index + 1 :]
+        )
+    if composited:
+        featured_image_url = composited[0]
 
     store = StoreConfig(
         id=store_row["id"],
@@ -649,9 +657,9 @@ async def publish(
 
     # Vertical Pinterest pin image (best-effort)
     pin_image_url = ""
-    if image_url_list:
+    if featured_image_url:
         try:
-            pin_image_url = await logo_service.stamp_pin(image_url_list[0], title, logo_b64)
+            pin_image_url = await logo_service.stamp_pin(featured_image_url, title, logo_b64)
         except Exception as exc:  # noqa: BLE001 — pin is optional
             logger.warning("Pin image build failed for store %s: %s", store_id, exc)
 
@@ -665,7 +673,8 @@ async def publish(
             keywords=keywords,
             hashtags=hashtags,
             author=author,
-            image_url_list=image_url_list,
+            image_url_list=ordered_image_urls,
+            featured_image_url=featured_image_url,
             product_url=resolved_product_url,
             product_title=product_title.strip(),
             long_tail_keywords=long_tail_keywords,

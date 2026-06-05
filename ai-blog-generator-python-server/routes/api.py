@@ -765,6 +765,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
 
     # Re-stamp images with logo
     logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
+    ordered_image_urls = list(payload.image_urls)
     composited: list[str] = []
     for i, url in enumerate(payload.image_urls):
         img_type = payload.image_types[i] if i < len(payload.image_types) else "photo"
@@ -775,12 +776,20 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
         else:
             composited.append(await logo_service.stamp_infographic(url, logo_b64))
 
+    featured_image_url = ""
     if composited and 0 < payload.selected_image_index < len(composited):
         composited = (
             [composited[payload.selected_image_index]]
             + composited[: payload.selected_image_index]
             + composited[payload.selected_image_index + 1:]
         )
+        ordered_image_urls = (
+            [ordered_image_urls[payload.selected_image_index]]
+            + ordered_image_urls[: payload.selected_image_index]
+            + ordered_image_urls[payload.selected_image_index + 1:]
+        )
+    if composited:
+        featured_image_url = composited[0]
 
     content_html = text_to_html(payload.content)
     if payload.product_url.strip():
@@ -806,7 +815,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
     pin_image_url = ""
     if composited:
         try:
-            pin_image_url = await logo_service.stamp_pin(composited[0], payload.title, logo_b64)
+            pin_image_url = await logo_service.stamp_pin(featured_image_url, payload.title, logo_b64)
         except Exception as exc:  # noqa: BLE001 — pin is optional
             logger.warning("Pin image build failed for API publish store %s: %s", store_id, exc)
 
@@ -820,7 +829,8 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
             keywords=payload.keywords,
             hashtags=payload.hashtags,
             author=payload.author,
-            image_url_list=composited,
+            image_url_list=ordered_image_urls,
+            featured_image_url=featured_image_url,
             product_url=payload.product_url.strip(),
             product_title=payload.product_title.strip(),
             long_tail_keywords=payload.long_tail_keywords,

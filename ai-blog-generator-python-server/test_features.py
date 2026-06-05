@@ -1427,9 +1427,9 @@ class TestAuthedRoutes:
              patch("routes.api.internal_links.render_related_block",
                    return_value="<div>Related reading &amp; products</div>"), \
              patch("routes.api.logo_service.stamp_photo",
-                   new_callable=AsyncMock, side_effect=lambda url, title, logo_b64="": url), \
+                 new_callable=AsyncMock, return_value="data:image/jpeg;base64,ZmVhdHVyZWQ="), \
              patch("routes.api.logo_service.stamp_infographic",
-                   new_callable=AsyncMock, side_effect=lambda url, logo_b64="": url), \
+                 new_callable=AsyncMock, return_value="data:image/jpeg;base64,ZmVhdHVyZWQ="), \
              patch("routes.api.logo_service.stamp_pin",
                    new_callable=AsyncMock, return_value="https://img.example.com/pin.png"), \
              patch("routes.api.shopify_client.publish_article",
@@ -1465,6 +1465,56 @@ class TestAuthedRoutes:
         assert publish_kwargs["long_tail_keywords"] == ["best guide for beginners"]
         assert publish_kwargs["pin_description"] == "A pin description"
         assert publish_kwargs["pin_image_url"] == "https://img.example.com/pin.png"
+        assert publish_kwargs["image_url_list"] == ["https://img.example.com/hero.png"]
+        assert publish_kwargs["featured_image_url"].startswith("data:image/jpeg;base64,")
+
+    async def test_publish_article_keeps_all_body_images_when_featured_is_data_uri(self, tmp_db):
+        import shopify_client
+
+        store = StoreConfig(
+            id="s1",
+            name="Store One",
+            myshopify_domain="s1.myshopify.com",
+            client_id="cid",
+            client_secret="csec",
+            default_blog_handle="news",
+            default_author="Test Author",
+        )
+
+        body_images = [
+            "https://img.example.com/hero.png",
+            "https://img.example.com/info.png",
+            "https://img.example.com/steps.png",
+            "https://img.example.com/checklist.png",
+        ]
+
+        with patch("shopify_client.resolve_blog_id", new_callable=AsyncMock, return_value=321), \
+             patch("shopify_client._get_token", new_callable=AsyncMock, return_value="token"), \
+             patch("shopify_client.upload_image_to_shopify", new_callable=AsyncMock, side_effect=lambda store, image_url, filename: image_url), \
+             patch("shopify_client._post", new_callable=AsyncMock, return_value={
+                 "article": {"id": 987, "handle": "guide-post"}
+             }) as post_mock:
+            await shopify_client.publish_article(
+                store=store,
+                blog_handle="news",
+                title="Guide Title",
+                content_html="<p>Intro</p><p>Body</p>",
+                summary="Guide summary",
+                keywords=["guide"],
+                hashtags=["#guide"],
+                author="Store Team",
+                image_url_list=body_images,
+                featured_image_url="data:image/jpeg;base64,ZmVhdHVyZWQ=",
+            )
+
+        payload = post_mock.await_args.args[3]
+        body_html = payload["article"]["body_html"]
+        for url in body_images:
+            assert url in body_html
+        assert payload["article"]["image"] == {
+            "attachment": "ZmVhdHVyZWQ=",
+            "filename": "featured_image.jpg",
+        }
 
     async def test_publish_blocks_low_quality_draft(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))

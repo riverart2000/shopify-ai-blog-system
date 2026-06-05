@@ -712,6 +712,7 @@ async def publish_article(
     hashtags: list[str],
     author: str,
     image_url_list: list[str],
+    featured_image_url: str = "",
     product_url: str = "",
     product_title: str = "",
     long_tail_keywords: list[str] | None = None,
@@ -728,7 +729,7 @@ async def publish_article(
     if not pin_description.strip():
         ht = " ".join(hashtags) if hashtags else ""
         pin_description = (summary + (" " + ht if ht else "")).strip()
-    # Upload images to Shopify CDN
+    # Upload body images to Shopify CDN.
     # Shopify CDN URLs (cdn.shopify.com) are already hosted — use directly, no re-upload needed.
     image_cdn_urls: list[str] = []
     for i, img_url in enumerate(image_url_list):
@@ -747,6 +748,24 @@ async def publish_article(
     # Embed all CDN images in the body (skip data URIs — Shopify may strip them).
     # The first image is ALSO set as the article's featured image below.
     cdn_urls_for_body = [u for u in image_cdn_urls if not u.startswith("data:")]
+
+    featured_prepared_url = ""
+    featured_candidate = featured_image_url.strip()
+    if featured_candidate:
+        if featured_candidate.startswith("data:"):
+            featured_prepared_url = featured_candidate
+        elif "cdn.shopify.com" in featured_candidate:
+            featured_prepared_url = featured_candidate
+        else:
+            safe_title = "".join(c if c.isalnum() else "_" for c in title[:40]).lower()
+            uploaded_featured = await upload_image_to_shopify(
+                store,
+                featured_candidate,
+                f"{safe_title}_featured_image.png",
+            )
+            featured_prepared_url = uploaded_featured or featured_candidate
+    elif image_cdn_urls:
+        featured_prepared_url = image_cdn_urls[0]
 
     # Upload the vertical Pinterest pin image (if provided) to the CDN.
     pin_cdn_url = ""
@@ -810,17 +829,17 @@ async def publish_article(
         ],
     }
 
-    # Featured image — use the first uploaded CDN image if available
-    if image_cdn_urls:
-        first = image_cdn_urls[0]
-        if first.startswith("data:"):
+    # Featured image — use the dedicated featured image when provided, otherwise
+    # fall back to the first prepared body image.
+    if featured_prepared_url:
+        if featured_prepared_url.startswith("data:"):
             try:
-                _, b64data = first.split(",", 1)
+                _, b64data = featured_prepared_url.split(",", 1)
                 article["image"] = {"attachment": b64data, "filename": "featured_image.jpg"}
             except Exception:
                 pass  # skip featured image if data URI is malformed
         else:
-            article["image"] = {"src": first}
+            article["image"] = {"src": featured_prepared_url}
 
     payload = {"article": article}
 
