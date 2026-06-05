@@ -225,7 +225,10 @@ _probe() {  # name port [expected_code]
   local name="$1" port="$2" expect="${3:-}"
   local code attempt=0
   while (( attempt < 12 )); do
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}/" || echo 000)"
+    # curl's -w always prints a 3-digit status (000 on connection failure),
+    # so capture it directly — do NOT append a fallback or the codes concatenate.
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}/" 2>/dev/null || true)"
+    [[ -z "$code" ]] && code="000"
     if [[ "$code" != "000" ]]; then
       if [[ -z "$expect" || "$code" == "$expect" ]]; then
         rok "${name} healthy on :${port} (HTTP ${code})"
