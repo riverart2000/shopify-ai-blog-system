@@ -16,7 +16,7 @@ import httpx
 
 import db
 from config import StoreConfig
-from utils import log_debug_payload
+from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -157,6 +157,18 @@ async def _post(client: httpx.AsyncClient, url: str, token: str, payload: dict) 
         )
     body = response.json()
     log_debug_payload(logger, f"Shopify POST ← {url}", body)
+    return body
+
+
+async def _put(client: httpx.AsyncClient, url: str, token: str, payload: dict) -> dict:
+    log_debug_payload(logger, f"Shopify PUT → {url}", payload)
+    response = await client.put(url, headers=_headers(token), json=payload)
+    if response.status_code != 200:
+        raise ShopifyError(
+            f"Shopify PUT {url} returned {response.status_code}: {response.text[:300]}"
+        )
+    body = response.json()
+    log_debug_payload(logger, f"Shopify PUT ← {url}", body)
     return body
 
 
@@ -539,22 +551,91 @@ async def upload_image_to_shopify(
         return image_url
 
 
+async def update_article_image(
+    store: StoreConfig,
+    blog_id: int,
+    article_id: int,
+    title: str,
+    image_url: str,
+) -> str:
+    """Upload an image if needed, then attach it as the article featured image."""
+    safe_title = "".join(c if c.isalnum() else "_" for c in title[:40]).lower() or "article"
+    filename = f"{safe_title}_featured_image.png"
+    cdn_url = await upload_image_to_shopify(store, image_url, filename)
+    if not cdn_url:
+        raise ShopifyError("Failed to prepare a featured image for Shopify article update.")
+
+    payload = {
+        "article": {
+            "id": article_id,
+            "image": {"src": cdn_url},
+        }
+    }
+    url = f"{_base_url(store)}/blogs/{blog_id}/articles/{article_id}.json"
+    token = await _get_token(store)
+    async with httpx.AsyncClient(timeout=60) as client:
+        data = await _put(client, url, token, payload)
+
+    image = (data.get("article") or {}).get("image") or {}
+    return image.get("src") or cdn_url
+
+
+async def update_article_title(
+    store: StoreConfig,
+    blog_id: int,
+    article_id: int,
+    title: str,
+) -> str:
+    """Update a Shopify article's title. Returns the new title Shopify stored."""
+    payload = {
+        "article": {
+            "id": article_id,
+            "title": title,
+        }
+    }
+    url = f"{_base_url(store)}/blogs/{blog_id}/articles/{article_id}.json"
+    token = await _get_token(store)
+    async with httpx.AsyncClient(timeout=60) as client:
+        data = await _put(client, url, token, payload)
+    return (data.get("article") or {}).get("title") or title
+
+
 def _build_article_html(
     content: str,
     image_urls: list[str],
     keywords: list[str],
     hashtags: list[str],
+    long_tail_keywords: list[str] | None = None,
+    pin_description: str = "",
+    title: str = "",
+    pin_image_url: str = "",
 ) -> str:
     """
     Insert images into the HTML content, then append a visible tags section
     and a hidden SEO keyword div at the bottom.
+
+    Images carry Pinterest `data-pin-description` + descriptive `alt` text so they
+    are optimised when saved to Pinterest. When ``pin_image_url`` is provided, a
+    vertical pin image is embedded at the end with ``data-pin-media`` so Pinterest
+    prefers it for the saved pin.
     """
+    long_tail_keywords = long_tail_keywords or []
+    from html import escape as _esc
+
+    pin_desc_attr = _esc(pin_description, quote=True) if pin_description else ""
+    alt_attr = _esc(title, quote=True) if title else ""
+
+    def img_tag(url: str) -> str:
+        attrs = f'src="{url}" style="max-width:100%;height:auto;margin:24px 0;"'
+        if alt_attr:
+            attrs += f' alt="{alt_attr}"'
+        if pin_desc_attr:
+            attrs += f' data-pin-description="{pin_desc_attr}"'
+        return f"<img {attrs} />\n"
+
     if not image_urls:
         result = content
     else:
-        def img_tag(url: str) -> str:
-            return f'<img src="{url}" style="max-width:100%;height:auto;margin:24px 0;" />\n'
-
         parts = content.split("</p>")
         result_parts = []
         image_index = 0
@@ -572,9 +653,33 @@ def _build_article_html(
 
         result = "".join(result_parts)
 
+    # Vertical Pinterest pin image (preferred when users Save to Pinterest)
+    if pin_image_url:
+        pin_attrs = (
+            f'src="{pin_image_url}" '
+            'style="display:block;max-width:360px;width:100%;height:auto;margin:28px auto;'
+            'border-radius:8px;" data-pin-media="' + pin_image_url + '"'
+        )
+        if alt_attr:
+            pin_attrs += f' alt="{alt_attr}"'
+        if pin_desc_attr:
+            pin_attrs += f' data-pin-description="{pin_desc_attr}"'
+        result += f"<img {pin_attrs} />\n"
+
     # Visible tags section
-    if keywords or hashtags:
+    if keywords or hashtags or long_tail_keywords:
         tags_html = '<div style="margin-top:40px;padding-top:24px;border-top:1px solid #e5e7eb;">'
+        if long_tail_keywords:
+            lt_items = "".join(
+                f'<li style="margin:2px 0;color:#374151;font-size:14px;">{k}</li>'
+                for k in long_tail_keywords
+            )
+            tags_html += (
+                '<p style="margin:0 0 6px;font-size:13px;font-weight:600;'
+                'text-transform:uppercase;letter-spacing:0.04em;color:#6b7280;">'
+                'You might also search for</p>'
+                f'<ul style="margin:0 0 14px;padding-left:18px;">{lt_items}</ul>'
+            )
         if keywords:
             kw_pills = "".join(
                 f'<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;'
@@ -609,10 +714,20 @@ async def publish_article(
     image_url_list: list[str],
     product_url: str = "",
     product_title: str = "",
+    long_tail_keywords: list[str] | None = None,
+    pin_description: str = "",
+    pin_image_url: str = "",
 ) -> PublishResult:
     """
     Upload images, insert them into HTML, then publish the article to Shopify.
     """
+    # Defensive: strip any heading-marker noise ("H2:", "## ", quotes) the model leaked.
+    title = clean_title(title)
+    long_tail_keywords = long_tail_keywords or []
+    # Pinterest pin description: fall back to summary + hashtags when the model omits it.
+    if not pin_description.strip():
+        ht = " ".join(hashtags) if hashtags else ""
+        pin_description = (summary + (" " + ht if ht else "")).strip()
     # Upload images to Shopify CDN
     # Shopify CDN URLs (cdn.shopify.com) are already hosted — use directly, no re-upload needed.
     image_cdn_urls: list[str] = []
@@ -632,14 +747,40 @@ async def publish_article(
     # Embed all CDN images in the body (skip data URIs — Shopify may strip them).
     # The first image is ALSO set as the article's featured image below.
     cdn_urls_for_body = [u for u in image_cdn_urls if not u.startswith("data:")]
-    body_html = _build_article_html(content_html, cdn_urls_for_body, keywords, hashtags)
+
+    # Upload the vertical Pinterest pin image (if provided) to the CDN.
+    pin_cdn_url = ""
+    if pin_image_url:
+        if "cdn.shopify.com" in pin_image_url:
+            pin_cdn_url = pin_image_url
+        else:
+            safe_title = "".join(c if c.isalnum() else "_" for c in title[:40]).lower()
+            uploaded = await upload_image_to_shopify(
+                store, pin_image_url, f"{safe_title}_pin.png"
+            )
+            if uploaded and not uploaded.startswith("data:"):
+                pin_cdn_url = uploaded
+
+    body_html = _build_article_html(
+        content_html,
+        cdn_urls_for_body,
+        keywords,
+        hashtags,
+        long_tail_keywords,
+        pin_description=pin_description,
+        title=title,
+        pin_image_url=pin_cdn_url,
+    )
 
     # Append keywords and hashtags as hidden text for SEO — no visible headings
-    if keywords or hashtags:
+    if keywords or hashtags or long_tail_keywords:
         kw_html = ""
         if keywords:
             kw_items = " ".join(f"<span>{k}</span>" for k in keywords)
             kw_html += kw_items
+        if long_tail_keywords:
+            lt_items = " ".join(f"<span>{k}</span>" for k in long_tail_keywords)
+            kw_html += " " + lt_items
         if hashtags:
             ht_items = " ".join(f"<span>{t}</span>" for t in hashtags)
             kw_html += " " + ht_items

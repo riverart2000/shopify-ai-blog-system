@@ -208,6 +208,7 @@
     .btn-x        { background: #000; color: #fff; }
     .btn-facebook { background: #1877f2; color: #fff; }
     .btn-linkedin { background: #0a66c2; color: #fff; }
+    .btn-pinterest { background: #e60023; color: #fff; }
     .btn-copy     { background: #334155; color: #cbd5e1; border: 1px solid #475569; }
   </style>
 </head>
@@ -273,6 +274,7 @@
         {% if 'x' in social_share_buttons %}<a id="share-x" class="btn-share btn-x" target="_blank" rel="noopener noreferrer">Post on X</a>{% endif %}
         {% if 'facebook' in social_share_buttons %}<a id="share-facebook" class="btn-share btn-facebook" target="_blank" rel="noopener noreferrer">Share on Facebook</a>{% endif %}
         {% if 'linkedin' in social_share_buttons %}<a id="share-linkedin" class="btn-share btn-linkedin" target="_blank" rel="noopener noreferrer">Share on LinkedIn</a>{% endif %}
+        <a id="share-pinterest" class="btn-share btn-pinterest" target="_blank" rel="noopener noreferrer">Save to Pinterest</a>
         {% if hashtags and social_share_buttons %}
         <button class="btn-share btn-copy" id="copy-hashtags-btn" onclick="copyHashtags()">Copy Hashtags</button>
         {% endif %}
@@ -338,6 +340,14 @@
       }
       const elLi = document.getElementById('share-linkedin');
       if (elLi) elLi.href = 'https://www.linkedin.com/sharing/share-offsite/?url=' + articleUrl;
+
+      const elPin = document.getElementById('share-pinterest');
+      if (elPin) {
+        const pinDesc = encodeURIComponent({{ pin_description | default('') | tojson }} || {{ summary | tojson }});
+        // No media param: Pinterest scrapes the page and prefers our 2:3 image
+        // tagged with data-pin-media / data-pin-description.
+        elPin.href = 'https://www.pinterest.com/pin/create/button/?url=' + articleUrl + '&description=' + pinDesc;
+      }
     })();
 
     function copyHashtags() {

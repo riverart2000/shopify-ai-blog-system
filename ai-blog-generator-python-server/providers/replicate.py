@@ -8,8 +8,8 @@ import re
 import httpx
 
 from .base import ImageProvider, ProviderError, TextProvider
-from .deepseek import _build_user_prompt, _parse_json, _validate, _norm_hashtags
-from utils import log_debug_payload
+from .deepseek import _build_user_prompt, _parse_json, _validate, _norm_hashtags, _norm_long_tail
+from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -28,6 +28,10 @@ class ReplicateImageProvider(ImageProvider):
     """
 
     async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("Replicate API token is not configured", retryable=False)
+
         extra = self.model.extra
         timeout = float(extra.get("timeout", 120))
         version = extra.get("version", "")
@@ -55,7 +59,7 @@ class ReplicateImageProvider(ImageProvider):
             payload = {"input": input_params}
 
         headers = {
-            "Authorization": f"Bearer {self.model.api_key}",
+            "Authorization": f"Token {api_key}",
             "Content-Type": "application/json",
             "Prefer": "wait",
         }
@@ -144,6 +148,10 @@ class ReplicateTextProvider(TextProvider):
     """
 
     async def generate_text(self, prompt: str, system_prompt: str = "", prompt_ending: str = "") -> dict:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("Replicate API token is not configured", retryable=False)
+
         extra = self.model.extra
         version = extra.get("version", "")
 
@@ -187,7 +195,7 @@ class ReplicateTextProvider(TextProvider):
         )
 
         headers = {
-            "Authorization": f"Token {self.model.api_key}",
+            "Authorization": f"Token {api_key}",
             "Content-Type": "application/json",
         }
 
@@ -199,8 +207,11 @@ class ReplicateTextProvider(TextProvider):
                 raw = await self._run_prediction(predictions_url, payload, headers, timeout)
                 data = _parse_json(raw)
                 _validate(data)
+                data["title"] = clean_title(data.get("title", ""))
                 data["keywords"] = [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
                 data["hashtags"] = _norm_hashtags(data.get("hashtags", []))
+                data["long_tail_keywords"] = _norm_long_tail(data.get("long_tail_keywords", []))
+                data["pin_description"] = str(data.get("pin_description", "") or "").strip()
                 return data
             except (ValueError, KeyError) as exc:
                 last_error = exc
@@ -216,6 +227,10 @@ class ReplicateTextProvider(TextProvider):
         )
 
     async def generate_raw(self, prompt: str, system_prompt: str = "") -> str:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("Replicate API token is not configured", retryable=False)
+
         extra = self.model.extra
         version = extra.get("version", "")
         endpoint = self.model.endpoint or ""
@@ -247,7 +262,7 @@ class ReplicateTextProvider(TextProvider):
             payload = {"input": input_params}
 
         headers = {
-            "Authorization": f"Token {self.model.api_key}",
+            "Authorization": f"Token {api_key}",
             "Content-Type": "application/json",
         }
         return await self._run_prediction(predictions_url, payload, headers, timeout)

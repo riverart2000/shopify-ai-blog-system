@@ -25,7 +25,7 @@ async def get_active_text_models(store_id: str) -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM models WHERE store_id=? AND model_type='text' AND is_active=1 "
-            "ORDER BY priority, name",
+            "ORDER BY (provider='openai'), priority, name",
             (store_id,),
         ) as cur:
             rows = await cur.fetchall()
@@ -37,7 +37,7 @@ async def get_active_image_models(store_id: str) -> list[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM models WHERE store_id=? AND model_type='image' AND is_active=1 "
-            "ORDER BY priority, name",
+            "ORDER BY (provider='openai'), priority, name",
             (store_id,),
         ) as cur:
             rows = await cur.fetchall()

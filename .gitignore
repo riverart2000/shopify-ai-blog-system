@@ -3,6 +3,12 @@
 .env.local
 .env.*.local
 
+# ── SSH / private keys (never commit) ────────────────────────────────────────
+*.priv
+*.pem
+revenuemindproai/
+ai-blog-generator-python-server/revenuemindproai.priv
+
 # ── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]

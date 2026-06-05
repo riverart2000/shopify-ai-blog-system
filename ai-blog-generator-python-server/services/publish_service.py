@@ -14,6 +14,7 @@ from config import StoreConfig
 from utils import text_to_html
 
 from . import image_service, llm_service, logo_service, title_service
+from . import internal_links
 from .quality_service import QualityGateError, review_draft
 
 logger = logging.getLogger("ai_blog_server")
@@ -115,6 +116,8 @@ async def run(
     content = blog_data["content"]
     keywords = blog_data.get("keywords", [])
     hashtags = blog_data.get("hashtags", [])
+    long_tail_keywords = blog_data.get("long_tail_keywords", [])
+    pin_description = blog_data.get("pin_description", "")
 
     # --- Image generation ---
     if resolved_product_url:
@@ -177,6 +180,32 @@ async def run(
             f"{cta_label}</a></p>"
         )
 
+    # --- Internal links (other blog posts + store products) ---
+    try:
+        related_links = await internal_links.build_internal_links(
+            store,
+            store_id,
+            title=title,
+            keywords=keywords,
+            long_tail_keywords=long_tail_keywords,
+            current_url="",
+            max_links=4,
+        )
+        related_block = internal_links.render_related_block(related_links)
+        if related_block:
+            content_html += "\n" + related_block
+    except Exception as exc:  # noqa: BLE001 — links are best-effort, never block publish
+        logger.warning("Internal link build failed for store %s: %s", store_id, exc)
+
+    # --- Vertical Pinterest pin image (best-effort) ---
+    pin_image_url = ""
+    if image_urls:
+        try:
+            pin_logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
+            pin_image_url = await logo_service.stamp_pin(image_urls[0], title, pin_logo_b64)
+        except Exception as exc:  # noqa: BLE001 — pin is optional
+            logger.warning("Pin image build failed for store %s: %s", store_id, exc)
+
     # --- Publish to Shopify ---
     result = await shopify_client.publish_article(
         store=store,
@@ -190,6 +219,9 @@ async def run(
         image_url_list=image_urls,
         product_url=resolved_product_url,
         product_title=resolved_product_title,
+        long_tail_keywords=long_tail_keywords,
+        pin_description=pin_description,
+        pin_image_url=pin_image_url,
     )
 
     # --- Log to DB ---

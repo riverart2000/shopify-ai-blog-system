@@ -12,6 +12,7 @@ from typing import Optional
 import httpx
 
 from config import DeepSeekConfig, GrokConfig
+from utils import clean_title
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -50,7 +51,11 @@ _JSON_CONTRACT = [
     '"title": string — compelling SEO blog title',
     '"summary": string — 2-3 sentence meta description',
     '"keywords": array of strings — 5-8 SEO keywords',
+    ('"long_tail_keywords": array of strings — 3-5 specific long-tail keyword '
+     'phrases (4+ words each) a reader would type into Google or Pinterest search'),
     '"hashtags": array of strings — 5 hashtags with # prefix',
+    ('"pin_description": string — a keyword-rich Pinterest pin description '
+     '(under 500 chars), ending with 2-3 relevant hashtags'),
     '"content": string — full blog body as plain text. Use ## for section headings and - for bullet points. No HTML tags.',
 ]
 
@@ -120,6 +125,26 @@ def _normalize_hashtags(tags: list) -> list[str]:
         if not t.startswith("#"):
             t = "#" + t.replace(" ", "")
         result.append(t)
+    return result
+
+
+def _normalize_long_tail(phrases) -> list[str]:
+    """Normalise long-tail keyword phrases: trim, drop empties/dupes, cap at 5."""
+    result: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(phrases, list):
+        return result
+    for phrase in phrases:
+        p = str(phrase).strip().lstrip("#").strip()
+        if not p:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(p)
+        if len(result) >= 5:
+            break
     return result
 
 
@@ -214,8 +239,11 @@ async def generate_text(config: DeepSeekConfig, prompt: str) -> dict:
                 data = _parse_blog_json(raw_content)
                 _validate_blog_dict(data)
 
+                data["title"] = clean_title(data.get("title", ""))
                 data["keywords"] = [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
                 data["hashtags"] = _normalize_hashtags(data.get("hashtags", []))
+                data["long_tail_keywords"] = _normalize_long_tail(data.get("long_tail_keywords", []))
+                data["pin_description"] = str(data.get("pin_description", "") or "").strip()
                 return data
 
             except BlogGenerationError as exc:

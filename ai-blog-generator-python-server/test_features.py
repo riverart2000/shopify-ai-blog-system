@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault("SESSION_SECRET", "test-secret-key-for-pytest")
 os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
 os.environ.setdefault("GROK_API_KEY", "test-key")
+os.environ.setdefault("REPLICATE_API_TOKEN", "test-key")
 
 import db
 import state
@@ -635,6 +636,24 @@ class TestProviderTypes:
         assert m.extra == {}
         assert m.is_active is False
 
+    def test_model_record_resolves_provider_api_key_from_env(self, monkeypatch):
+        monkeypatch.setenv("REPLICATE_API_TOKEN", "replicate-test-key")
+        m = ModelRecord.from_dict({
+            "id": "x", "store_id": "s", "name": "n", "provider": "replicate",
+            "model_type": "image", "model_name": "", "api_key": "",
+            "endpoint": "", "extra_json": "{}", "priority": 0, "is_active": 1,
+        })
+        assert m.resolved_api_key == "replicate-test-key"
+
+    def test_model_record_resolves_explicit_env_reference(self, monkeypatch):
+        monkeypatch.setenv("CUSTOM_PROVIDER_KEY", "custom-test-key")
+        m = ModelRecord.from_dict({
+            "id": "x", "store_id": "s", "name": "n", "provider": "replicate",
+            "model_type": "image", "model_name": "", "api_key": "env:CUSTOM_PROVIDER_KEY",
+            "endpoint": "", "extra_json": "{}", "priority": 0, "is_active": 1,
+        })
+        assert m.resolved_api_key == "custom-test-key"
+
     def test_provider_error_retryable_default(self):
         err = ProviderError("Something went wrong")
         assert err.retryable is True
@@ -844,7 +863,8 @@ class TestImageService:
         with patch("providers.get_image_provider", return_value=mock_provider):
             urls = await image_service.generate_images(sid, "Title", "Summary", "Prompt")
 
-        assert len(urls) == 2
+        # New behaviour: 3-4 typed images (hero, infographic, secondary, detail)
+        assert len(urls) == 4
         assert all(u.startswith("https://") for u in urls)
 
     async def test_returns_empty_list_when_no_models(self, tmp_db):
@@ -892,6 +912,28 @@ class TestImageService:
             await image_service.generate_images(sid, "My Blog Title", "Summary", "Prompt")
 
         assert "My Blog Title" in captured["prompt"]
+
+    async def test_generate_feature_image_falls_back_to_simpler_prompt(self, tmp_db):
+        from services import image_service
+
+        sid = "img-feature-fallback"
+        await db.upsert_store(_make_store(sid))
+
+        captured_prompts = []
+
+        async def fake_generate_one(store_id, image_prompt, label):
+            captured_prompts.append(image_prompt)
+            if len(captured_prompts) == 1:
+                return None
+            return "https://img.example.com/featured.jpg"
+
+        with patch("services.image_service._generate_one", side_effect=fake_generate_one):
+            url = await image_service.generate_feature_image(sid, "My Blog Title", "Summary", "Prompt")
+
+        assert url == "https://img.example.com/featured.jpg"
+        assert len(captured_prompts) == 2
+        assert captured_prompts[0].startswith("Professional high-quality photograph for blog article: My Blog Title.")
+        assert captured_prompts[1].startswith("Editorial wellness lifestyle photograph illustrating: My Blog Title.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1492,6 +1534,46 @@ class TestShopifyClient:
             guide_url="https://s1.com/blogs/news/guide-post",
             guide_excerpt="Guide summary",
         )
+
+    async def test_update_article_image_uploads_and_puts_article_image(self, tmp_db):
+        import shopify_client
+
+        store = StoreConfig(
+            id="s1",
+            name="Store One",
+            myshopify_domain="s1.myshopify.com",
+            client_id="cid",
+            client_secret="csec",
+            default_blog_handle="news",
+            default_author="Test Author",
+        )
+
+        with patch("shopify_client.upload_image_to_shopify", new_callable=AsyncMock, return_value="https://cdn.shopify.com/image.png") as upload_mock, \
+             patch("shopify_client._get_token", new_callable=AsyncMock, return_value="token"), \
+             patch("shopify_client._put", new_callable=AsyncMock, return_value={
+                 "article": {"id": 222, "image": {"src": "https://cdn.shopify.com/image.png"}}
+             }) as put_mock:
+            image_src = await shopify_client.update_article_image(
+                store=store,
+                blog_id=111,
+                article_id=222,
+                title="Guide Title",
+                image_url="https://example.com/generated.png",
+            )
+
+        assert image_src == "https://cdn.shopify.com/image.png"
+        upload_mock.assert_awaited_once_with(
+            store,
+            "https://example.com/generated.png",
+            "guide_title_featured_image.png",
+        )
+        put_payload = put_mock.await_args.args[3]
+        assert put_payload == {
+            "article": {
+                "id": 222,
+                "image": {"src": "https://cdn.shopify.com/image.png"},
+            }
+        }
 
     async def test_delete_article_retries_with_resolved_blog_id(self, tmp_db):
         import shopify_client

@@ -421,14 +421,27 @@ def evaluate_draft(
             hint=_PARA_HINT,
         )
 
-    _IMAGE_HINT = "Target: at least 1 image attached"
-    if image_count >= 1:
+    _IMAGE_HINT = "Target: 3-4 images of different types attached"
+    if image_count >= 3:
         _add_check(
             checks,
             key="images",
             label="Images",
             status="pass",
-            message=f"{image_count} image{'s' if image_count != 1 else ''} ready for publish.",
+            message=f"{image_count} images ready for publish.",
+            hint=_IMAGE_HINT,
+        )
+    elif image_count >= 1:
+        score -= _add_check(
+            checks,
+            key="images",
+            label="Images",
+            status="warn",
+            message=(
+                f"Only {image_count} image{'s' if image_count != 1 else ''} attached. "
+                "Aim for 3-4 of different types for stronger sharing and CTR."
+            ),
+            impact=3,
             hint=_IMAGE_HINT,
         )
     else:

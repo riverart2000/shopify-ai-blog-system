@@ -3,6 +3,7 @@ Images are always optional — failures return [] so blogs still publish.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import db
@@ -25,6 +26,36 @@ def _build_infographic_prompt(title: str, summary: str, prompt: str) -> str:
         f"Data visualisation, icons, bold typography, white background, "
         f"professional business style. Topic: {summary[:200]}"
     )
+
+
+def _build_secondary_photo_prompt(title: str, summary: str, prompt: str) -> str:
+    return (
+        f"Lifestyle editorial photograph related to the blog article: {title}. "
+        f"Show a different scene or angle than a hero shot — people, hands, or "
+        f"environment in natural use. {summary[:160]} "
+        "Bright natural light, premium magazine style. "
+        "No text overlays, no titles, no captions, no watermarks."
+    )
+
+
+def _build_detail_photo_prompt(title: str, summary: str, prompt: str) -> str:
+    return (
+        f"Close-up detail photograph supporting the blog article: {title}. "
+        f"Macro or product-detail framing highlighting texture and quality. "
+        f"Topic: {summary[:160]}. Soft shallow depth of field, clean background. "
+        "No text overlays, no titles, no captions, no watermarks."
+    )
+
+
+# Ordered plan for a multi-image blog: hero first (used as featured image),
+# then an infographic and two supporting photos. Each entry is
+# (type, human label, prompt builder).
+_IMAGE_PLAN = [
+    ("hero_photo", "Hero Photo", _build_photo_prompt),
+    ("infographic", "Infographic", _build_infographic_prompt),
+    ("secondary_photo", "Lifestyle Photo", _build_secondary_photo_prompt),
+    ("detail_photo", "Detail Photo", _build_detail_photo_prompt),
+]
 
 
 async def _generate_one(
@@ -66,17 +97,72 @@ async def _generate_one(
     return None
 
 
+async def generate_typed_images(
+    store_id: str,
+    title: str,
+    summary: str,
+    prompt: str,
+    max_images: int = 4,
+) -> tuple[list[str], list[str], list[str]]:
+    """Generate up to ``max_images`` typed images (hero photo, infographic,
+    lifestyle photo, detail photo) concurrently.
+
+    Returns ``(urls, types, labels)`` parallel lists containing only the images
+    that were generated successfully. The hero photo is always first when present
+    so callers can use it as the Shopify featured image.
+    """
+    plan = _IMAGE_PLAN[: max(1, min(max_images, len(_IMAGE_PLAN)))]
+
+    tasks = [
+        _generate_one(store_id, builder(title, summary, prompt), label)
+        for (_type, label, builder) in plan
+    ]
+    results = await asyncio.gather(*tasks)
+
+    urls: list[str] = []
+    types: list[str] = []
+    labels: list[str] = []
+    for (img_type, label, _builder), url in zip(plan, results):
+        if url is not None:
+            urls.append(url)
+            types.append(img_type)
+            labels.append(label)
+    return urls, types, labels
+
+
 async def generate_images(
     store_id: str,
     title: str,
     summary: str,
     prompt: str,
 ) -> list[str]:
-    """Generate one photo and one infographic. Returns list of up to 2 URLs (may be empty)."""
-    photo_url = await _generate_one(
-        store_id, _build_photo_prompt(title, summary, prompt), "photo"
-    )
-    infographic_url = await _generate_one(
-        store_id, _build_infographic_prompt(title, summary, prompt), "infographic"
-    )
-    return [u for u in [photo_url, infographic_url] if u is not None]
+    """Backward-compatible wrapper: return only the image URLs (3-4 typed images)."""
+    urls, _types, _labels = await generate_typed_images(store_id, title, summary, prompt)
+    return urls
+
+
+async def generate_feature_image(
+    store_id: str,
+    title: str,
+    summary: str,
+    prompt: str,
+) -> str | None:
+    """Generate one featured image, falling back to simpler prompts if needed."""
+    prompts = [
+        _build_photo_prompt(title, summary, prompt),
+        (
+            f"Editorial wellness lifestyle photograph illustrating: {title}. "
+            "Bright home interior, natural light, premium brand photography."
+        ),
+        (
+            f"Professional blog hero image for an article titled '{title}'. "
+            "Clean composition, realistic people or props when appropriate, "
+            "premium wellness editorial style."
+        ),
+    ]
+
+    for image_prompt in prompts:
+        image_url = await _generate_one(store_id, image_prompt, "photo")
+        if image_url:
+            return image_url
+    return None

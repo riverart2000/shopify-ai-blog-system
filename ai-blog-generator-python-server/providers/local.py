@@ -7,8 +7,8 @@ from typing import Optional
 import httpx
 
 from .base import ModelRecord, ProviderError, TextProvider
-from .deepseek import _build_user_prompt, _norm_hashtags, _parse_json, _validate
-from utils import log_debug_payload
+from .deepseek import _build_user_prompt, _norm_hashtags, _norm_long_tail, _parse_json, _validate
+from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -66,8 +66,11 @@ class OllamaProvider(TextProvider):
                     logger.debug("Ollama response received ←\n%s", raw)
                     data = _parse_json(raw)
                     _validate(data)
+                    data["title"] = clean_title(data.get("title", ""))
                     data["keywords"] = [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
                     data["hashtags"] = _norm_hashtags(data.get("hashtags", []))
+                    data["long_tail_keywords"] = _norm_long_tail(data.get("long_tail_keywords", []))
+                    data["pin_description"] = str(data.get("pin_description", "") or "").strip()
                     return data
                 except (ValueError, KeyError) as exc:
                     last_error = exc

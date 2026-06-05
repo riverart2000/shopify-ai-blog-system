@@ -16,6 +16,10 @@ _DEFAULT_ENDPOINT = "https://api.x.ai/v1/images/generations"
 class GrokProvider(ImageProvider):
 
     async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("Grok API key is not configured", retryable=False)
+
         extra = self.model.extra
         endpoint = self.model.endpoint or _DEFAULT_ENDPOINT
         timeout = float(extra.get("timeout", 60))
@@ -37,7 +41,7 @@ class GrokProvider(ImageProvider):
                 resp = await client.post(
                     endpoint,
                     headers={
-                        "Authorization": f"Bearer {self.model.api_key}",
+                        "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json",
                     },
                     json=payload,

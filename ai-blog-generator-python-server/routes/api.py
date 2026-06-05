@@ -138,6 +138,8 @@ async def api_generate(request: Request, payload: GenerateApiRequest):
             "content": blog_data["content"],
             "keywords": blog_data.get("keywords", []),
             "hashtags": blog_data.get("hashtags", []),
+            "long_tail_keywords": blog_data.get("long_tail_keywords", []),
+            "pin_description": blog_data.get("pin_description", ""),
             "images": image_urls,
             "store_id": store_id,
             "model": blog_data.get("_model_name", ""),

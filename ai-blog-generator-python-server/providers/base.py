@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -44,6 +45,31 @@ class ModelRecord:
             return json.loads(self.extra_json or "{}")
         except (json.JSONDecodeError, TypeError):
             return {}
+
+    @property
+    def resolved_api_key(self) -> str:
+        api_key = (self.api_key or "").strip()
+        if api_key:
+            if api_key.lower().startswith("env:"):
+                env_names = [name.strip() for name in api_key[4:].split(",") if name.strip()]
+                for env_name in env_names:
+                    value = os.environ.get(env_name, "").strip()
+                    if value:
+                        return value
+                return ""
+            return api_key
+
+        provider_env_names = {
+            "deepseek": ("DEEPSEEK_API_KEY",),
+            "grok": ("GROK_API_KEY", "XAI_API_KEY"),
+            "openai": ("OPENAI_API_KEY",),
+            "replicate": ("REPLICATE_API_TOKEN", "REPLICATE_API_KEY"),
+        }
+        for env_name in provider_env_names.get(self.provider.strip().lower(), ()):
+            value = os.environ.get(env_name, "").strip()
+            if value:
+                return value
+        return ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelRecord":

@@ -9,7 +9,7 @@ from typing import Optional
 import httpx
 
 from .base import ModelRecord, ProviderError, TextProvider
-from utils import log_debug_payload
+from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -23,8 +23,11 @@ _JSON_CONTRACT = [
     '"title": string — compelling SEO blog title',
     '"summary": string — 2-3 sentence meta description',
     '"keywords": array of strings — 5-8 SEO keywords',
-    '"hashtags": array of strings — 5 hashtags with # prefix',
-    ('"content": string — full blog body as plain text. '
+    ('"long_tail_keywords": array of strings — 3-5 specific long-tail keyword '
+     'phrases (4+ words each) a reader would type into Google or Pinterest search'),
+    '"hashtags": array of strings — 5 hashtags with # prefix',    ('"pin_description": string — a keyword-rich Pinterest pin description '
+     '(under 500 chars) describing the article to maximise discovery on Pinterest. '
+     'End with 2-3 relevant hashtags.'),    ('"content": string — full blog body as plain text. '
      'Use ## for section headings and - for bullet points. No HTML tags. '
      'Do NOT repeat the title at the start of the content.'),
 ]
@@ -39,6 +42,10 @@ _DEFAULT_PROMPT_ENDING = (
 class DeepSeekProvider(TextProvider):
 
     async def generate_text(self, prompt: str, system_prompt: str = "", prompt_ending: str = "") -> dict:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("DeepSeek API key is not configured", retryable=False)
+
         extra = self.model.extra
         endpoint = self.model.endpoint or _DEFAULT_ENDPOINT
         sys = system_prompt or extra.get("system_prompt") or _DEFAULT_SYSTEM
@@ -74,7 +81,7 @@ class DeepSeekProvider(TextProvider):
                     resp = await client.post(
                         endpoint,
                         headers={
-                            "Authorization": f"Bearer {self.model.api_key}",
+                            "Authorization": f"Bearer {api_key}",
                             "Content-Type": "application/json",
                         },
                         json=payload,
@@ -84,8 +91,11 @@ class DeepSeekProvider(TextProvider):
                     raw = resp.json()["choices"][0]["message"]["content"]
                     data = _parse_json(raw)
                     _validate(data)
+                    data["title"] = clean_title(data.get("title", ""))
                     data["keywords"] = [str(k).strip() for k in data.get("keywords", []) if str(k).strip()]
                     data["hashtags"] = _norm_hashtags(data.get("hashtags", []))
+                    data["long_tail_keywords"] = _norm_long_tail(data.get("long_tail_keywords", []))
+                    data["pin_description"] = str(data.get("pin_description", "") or "").strip()
                     return data
                 except (ValueError, KeyError) as exc:
                     last_error = exc
@@ -105,6 +115,10 @@ class DeepSeekProvider(TextProvider):
         raise ProviderError(f"DeepSeek failed after {attempts} attempts: {last_error}")
 
     async def generate_raw(self, prompt: str, system_prompt: str = "") -> str:
+        api_key = self.model.resolved_api_key
+        if not api_key:
+            raise ProviderError("DeepSeek API key is not configured", retryable=False)
+
         extra = self.model.extra
         endpoint = self.model.endpoint or _DEFAULT_ENDPOINT
         sys = system_prompt or extra.get("system_prompt") or _DEFAULT_SYSTEM
@@ -124,7 +138,7 @@ class DeepSeekProvider(TextProvider):
             resp = await client.post(
                 endpoint,
                 headers={
-                    "Authorization": f"Bearer {self.model.api_key}",
+                    "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
@@ -180,4 +194,24 @@ def _norm_hashtags(tags: list) -> list[str]:
             t = "#" + t.replace(" ", "")
         if t:
             result.append(t)
+    return result
+
+
+def _norm_long_tail(phrases) -> list[str]:
+    """Normalise long-tail keyword phrases: trim, drop empties/dupes, cap at 5."""
+    result: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(phrases, list):
+        return result
+    for phrase in phrases:
+        p = str(phrase).strip().lstrip("#").strip()
+        if not p:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(p)
+        if len(result) >= 5:
+            break
     return result

@@ -7,7 +7,7 @@ import re
 
 import db
 import providers
-from utils import log_debug_payload
+from utils import clean_title, log_debug_payload
 
 logger = logging.getLogger("ai_blog_server")
 
@@ -39,6 +39,9 @@ def _parse_title_array(raw: str) -> list[dict]:
         raise ValueError(f"JSON parse failed: {exc}") from exc
     if not isinstance(data, list):
         raise ValueError(f"Expected JSON array, got {type(data).__name__}")
+    for item in data:
+        if isinstance(item, dict) and item.get("title"):
+            item["title"] = clean_title(item["title"])
     return data
 
 

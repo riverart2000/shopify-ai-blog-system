@@ -443,6 +443,10 @@ do_stop() {
     _stop_pid "React app"    "$FRONTEND_PID"
     _stop_pid "scheduler.py" "$SCHED_PID"
     _stop_pid "main.py"      "$MAIN_PID"
+    # Kill any orphaned scheduler.py or main.py processes not tracked by PID files
+    # (can happen if the service was restarted without a clean stop)
+    pkill -f "python.*scheduler\.py" 2>/dev/null || true
+    pkill -f "python.*main\.py" 2>/dev/null || true
     _kill_stale_ports
     echo "Done."
 }

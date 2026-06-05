@@ -21,6 +21,7 @@ from config import StoreConfig
 from security import limiter
 from utils import text_to_html
 from services import image_service, llm_service, logo_service
+from services import internal_links
 from services.quality_service import review_draft
 from services import title_service
 from providers import AllModelsFailedError
@@ -118,7 +119,11 @@ async def _render_preview(
     preview_error: Optional[str] = None,
     quality_report: Optional[dict] = None,
     title_pool_id: int = 0,
+    long_tail_keywords: Optional[list[str]] = None,
+    pin_description: str = "",
 ) -> HTMLResponse:
+    if long_tail_keywords is None:
+        long_tail_keywords = []
     if image_labels is None:
         image_labels = _default_image_labels(image_types, len(image_url_list))
 
@@ -132,7 +137,7 @@ async def _render_preview(
             image_display_urls = []
             for i, url in enumerate(image_url_list):
                 img_type = image_types[i] if i < len(image_types) else "photo"
-                if img_type == "photo":
+                if img_type in ("photo", "hero_photo"):
                     image_display_urls.append(await logo_service.stamp_photo(url, title, logo_b64))
                 else:
                     image_display_urls.append(await logo_service.stamp_infographic(url, logo_b64))
@@ -167,6 +172,8 @@ async def _render_preview(
             "content": content,
             "keywords": json.dumps(keywords),
             "hashtags": json.dumps(hashtags),
+            "long_tail_keywords": json.dumps(long_tail_keywords),
+            "pin_description": pin_description,
             "image_urls": json.dumps(image_url_list),
             "image_display_urls": image_display_urls,
             "image_types": json.dumps(image_types),
@@ -429,6 +436,8 @@ async def generate(
     ).lstrip()
     keywords = blog_data.get("keywords", [])
     hashtags = blog_data.get("hashtags", [])
+    long_tail_keywords = blog_data.get("long_tail_keywords", [])
+    pin_description = blog_data.get("pin_description", "")
     generated_by = blog_data.get("_model_name", "")
 
     logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
@@ -455,14 +464,14 @@ async def generate(
             image_labels = []
             display_urls = []
     else:
-        image_url_list = await image_service.generate_images(store_id, title, summary, prompt_text)
-        image_types = ["photo", "infographic"][: len(image_url_list)]
-        image_labels = ["Photo", "Infographic"][: len(image_url_list)]
+        image_url_list, image_types, image_labels = await image_service.generate_typed_images(
+            store_id, title, summary, prompt_text
+        )
         # Composite images for preview display (title bar + logo). Raw URLs stay
         # in the form so we can re-composite at publish time for Shopify upload.
         display_urls = []
         for i, url in enumerate(image_url_list):
-            if image_types[i] == "photo":
+            if image_types[i] in ("photo", "hero_photo"):
                 display_urls.append(await logo_service.stamp_photo(url, title, logo_b64))
             else:
                 display_urls.append(await logo_service.stamp_infographic(url, logo_b64))
@@ -488,6 +497,8 @@ async def generate(
         product_url=resolved_product_url,
         product_title=product_title,
         title_pool_id=title_pool_id,
+        long_tail_keywords=long_tail_keywords,
+        pin_description=pin_description,
     )
 
 
@@ -503,6 +514,8 @@ async def publish(
     content: Annotated[str, Form()],
     keywords_json: Annotated[str, Form()] = "[]",
     hashtags_json: Annotated[str, Form()] = "[]",
+    long_tail_keywords_json: Annotated[str, Form()] = "[]",
+    pin_description: Annotated[str, Form()] = "",
     image_urls_json: Annotated[str, Form()] = "[]",
     image_types_json: Annotated[str, Form()] = "[]",
     selected_image_index: Annotated[int, Form()] = 0,
@@ -518,10 +531,12 @@ async def publish(
     try:
         keywords: list[str] = json.loads(keywords_json)
         hashtags: list[str] = json.loads(hashtags_json)
+        long_tail_keywords: list[str] = json.loads(long_tail_keywords_json)
         image_url_list: list[str] = json.loads(image_urls_json)
         image_types: list[str] = json.loads(image_types_json)
     except json.JSONDecodeError:
         keywords, hashtags, image_url_list, image_types = [], [], [], []
+        long_tail_keywords = []
 
     quality_report = await review_draft(
         store_id=store_id,
@@ -557,6 +572,8 @@ async def publish(
             selected_image_index=selected_image_index,
             preview_error="Quality checks blocked publishing. Improve the failed items below and try again.",
             quality_report=quality_report.as_dict(),
+            long_tail_keywords=long_tail_keywords,
+            pin_description=pin_description,
         )
 
     # Re-composite images for Shopify upload (skip for product images — use raw URL as-is)
@@ -573,7 +590,7 @@ async def publish(
         composited = []
         for i, url in enumerate(image_url_list):
             img_type = image_types[i] if i < len(image_types) else "photo"
-            if img_type == "photo":
+            if img_type in ("photo", "hero_photo"):
                 composited.append(await logo_service.stamp_photo(url, title, logo_b64))
             else:
                 composited.append(await logo_service.stamp_infographic(url, logo_b64))
@@ -608,6 +625,31 @@ async def publish(
             f"{cta_label}</a></p>"
         )
 
+    # Internal links (other blog posts + store products)
+    try:
+        related_links = await internal_links.build_internal_links(
+            store,
+            store_id,
+            title=title,
+            keywords=keywords,
+            long_tail_keywords=long_tail_keywords,
+            current_url="",
+            max_links=4,
+        )
+        related_block = internal_links.render_related_block(related_links)
+        if related_block:
+            content_html += "\n" + related_block
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block publish
+        logger.warning("Internal link build failed for store %s: %s", store_id, exc)
+
+    # Vertical Pinterest pin image (best-effort)
+    pin_image_url = ""
+    if image_url_list:
+        try:
+            pin_image_url = await logo_service.stamp_pin(image_url_list[0], title, logo_b64)
+        except Exception as exc:  # noqa: BLE001 — pin is optional
+            logger.warning("Pin image build failed for store %s: %s", store_id, exc)
+
     try:
         result = await shopify_client.publish_article(
             store=store,
@@ -621,6 +663,9 @@ async def publish(
             image_url_list=image_url_list,
             product_url=resolved_product_url,
             product_title=product_title.strip(),
+            long_tail_keywords=long_tail_keywords,
+            pin_description=pin_description,
+            pin_image_url=pin_image_url,
         )
     except shopify_client.ShopifyError as exc:
         logger.error("Shopify publish failed: %s", exc)
@@ -674,6 +719,7 @@ async def publish(
             "product_url": resolved_product_url,
             "product_title": product_title.strip(),
             "social_share_buttons": social_share_buttons,
+            "pin_description": pin_description,
             "social_x_handle": social_x_handle,
             "social_facebook_url": social_facebook_url,
             "social_linkedin_url": social_linkedin_url,

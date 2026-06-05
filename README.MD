@@ -96,6 +96,20 @@ Responsibilities:
 - Generates photo and infographic assets.
 - Soft-fails to `[]` so publishing can continue without images.
 
+### Reusable Backfill Command
+
+Use the checked-in command when existing Shopify articles need featured images backfilled:
+
+`cd ai-blog-generator-python-server && set -a && source ../.env && set +a && ../.venv/bin/python backfill_article_images.py --store-id store_1 --dry-run`
+
+Common options:
+
+- `--limit 10` to process only the first 10 missing articles.
+- `--article-id 123456789` to target a specific missing article.
+- `--verbose` to print each candidate or update as it runs.
+
+The command reads active image model config from the SQLite DB and can use provider tokens from environment variables such as `REPLICATE_API_TOKEN`.
+
 `services/logo_service.py`
 - Composites logos and overlays onto generated or product images.
 - Used heavily in preview/publish image handling.

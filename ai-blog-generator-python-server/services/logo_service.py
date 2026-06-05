@@ -279,3 +279,66 @@ async def stamp_infographic(image_url: str, logo_b64: str = "") -> str:
     except Exception as exc:
         logger.warning("logo_service: stamp_infographic failed — %s", exc)
         return image_url
+
+
+def _crop_to_ratio(img, target_w: int, target_h: int):
+    """Centre-crop ``img`` to the target aspect ratio, then resize to target size."""
+    from PIL import Image
+
+    src_w, src_h = img.size
+    target_ratio = target_w / target_h
+    src_ratio = src_w / src_h
+    if src_ratio > target_ratio:
+        # Source is wider — crop the sides.
+        new_w = int(src_h * target_ratio)
+        left = (src_w - new_w) // 2
+        box = (left, 0, left + new_w, src_h)
+    else:
+        # Source is taller — crop top/bottom.
+        new_h = int(src_w / target_ratio)
+        top = (src_h - new_h) // 2
+        box = (0, top, src_w, top + new_h)
+    return img.crop(box).resize((target_w, target_h), Image.LANCZOS)
+
+
+async def stamp_pin(
+    image_url: str,
+    title: str,
+    logo_b64: str = "",
+    pin_width: int = 1000,
+    pin_height: int = 1500,
+) -> str:
+    """Build a vertical 2:3 Pinterest pin (default 1000x1500) from an image:
+    centre-cropped to ratio, with a title bar + optional logo badge.
+
+    Returns a JPEG data URI on success, or the original URL on any failure.
+    """
+    try:
+        from PIL import Image
+
+        raw = await _fetch_bytes(image_url)
+        if not raw:
+            return image_url
+
+        img = Image.open(io.BytesIO(raw)).convert("RGBA")
+        img = _crop_to_ratio(img, pin_width, pin_height)
+
+        if not _top_has_text_overlay(img):
+            _add_title_bar(img, title)
+
+        if logo_b64:
+            logo_bytes = _logo_bytes_from_b64(logo_b64)
+            if logo_bytes:
+                _add_logo_badge(img, logo_bytes)
+
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=90)
+        logger.info("logo_service: built %dx%d Pinterest pin", pin_width, pin_height)
+        return _to_data_uri(out.getvalue())
+    except ImportError:
+        logger.debug("logo_service: Pillow not installed, skipping pin compositing")
+        return image_url
+    except Exception as exc:
+        logger.warning("logo_service: stamp_pin failed — %s", exc)
+        return image_url
+

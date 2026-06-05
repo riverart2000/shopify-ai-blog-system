@@ -3,6 +3,35 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+
+
+def clean_title(title: str) -> str:
+    """Strip heading-marker noise the LLM sometimes leaks into blog titles.
+
+    Removes leading markdown headings (``#``…``######``), literal ``H1``–``H6``
+    prefixes (e.g. ``"H2: ..."``, ``"H3 - ..."``), ``Title:``/``Heading:`` labels,
+    surrounding quotes, and markdown bold/italic markers. Conservative — only
+    known formatting noise is removed, real words are preserved (``"H2O ..."`` and
+    ``"Habits to build"`` are left untouched). Returns the original stripped title
+    if cleaning would empty it.
+    """
+    if not title:
+        return ""
+    original = str(title).strip()
+    t = original
+    prev = None
+    while t and t != prev:
+        prev = t
+        t = re.sub(r"^#{1,6}\s*", "", t)                       # markdown headings
+        t = re.sub(r"^[Hh][1-6]\b[\s:.)\-]+", "", t)           # H1–H6 labels w/ separator
+        t = re.sub(
+            r"^(?:title|heading)\s*\d*\s*[:.\-]\s*", "", t, flags=re.IGNORECASE
+        )                                                       # "Title:" / "Heading 2:"
+        t = t.strip().strip('"\u201c\u201d\u2018\u2019\'').strip("*_").strip()
+    t = re.sub(r"\s{2,}", " ", t).strip()
+    return t or original
+
 
 
 def log_debug_payload(log: logging.Logger, label: str, data: object) -> None:
