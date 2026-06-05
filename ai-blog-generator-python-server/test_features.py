@@ -1796,6 +1796,62 @@ class TestAuthedRoutes:
         assert b"quality checks" in resp.content.lower()
         assert b"local draft score" in resp.content.lower()
 
+    async def test_generate_preview_product_blog_uses_typed_images(self, store_client):
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        strong_blog = {
+            "title": "Stone Mug Gift Guide",
+            "summary": "A practical guide to the product.",
+            "content": ("Useful product guidance " * 120),
+            "keywords": ["stone mug"],
+            "hashtags": ["#mug"],
+        }
+
+        with patch("routes.generate.shopify_client.fetch_product_details",
+                   new_callable=AsyncMock,
+                   return_value={
+                       "title": "Stone Mug",
+                       "description": "A handmade stone mug.",
+                       "tags": "gift, kitchen",
+                   }), \
+             patch("routes.generate.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=strong_blog), \
+             patch("routes.generate.image_service.generate_typed_images",
+                   new_callable=AsyncMock,
+                   return_value=(
+                       [
+                           "https://img.example.com/hero.png",
+                           "https://img.example.com/info.png",
+                           "https://img.example.com/steps.png",
+                           "https://img.example.com/checklist.png",
+                       ],
+                       ["hero_photo", "infographic", "step_card", "checklist_card"],
+                       [
+                           "Hero Photo",
+                           "Infographic",
+                           "Step-by-Step Visual Card",
+                           "Checklist/Tips Card",
+                       ],
+                   )) as typed_images_mock, \
+             patch("routes.generate.shopify_client.fetch_product_image_url",
+                   new_callable=AsyncMock) as product_image_mock:
+            resp = await store_client.post(
+                "/generate",
+                data={
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful product blog post.",
+                    "blog_handle": "news",
+                    "author_name": "Store Team",
+                    "model_id": "",
+                    "product_url": "https://s1.myshopify.com/products/stone-mug",
+                },
+            )
+
+        assert resp.status_code == 200
+        assert b"step-by-step visual card" in resp.content.lower()
+        assert b"checklist/tips card" in resp.content.lower()
+        typed_images_mock.assert_awaited_once()
+        product_image_mock.assert_not_awaited()
+
     async def test_api_generate_draft_returns_typed_images_and_pin_metadata(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
         await db.upsert_store(_make_store("s1", "Store One Updated"))
@@ -1858,6 +1914,79 @@ class TestAuthedRoutes:
         assert data["image_types"] == ["hero_photo", "infographic", "step_card", "checklist_card"]
         assert data["long_tail_keywords"] == ["best guide for beginners"]
         assert data["pin_description"] == "A pin description"
+
+    async def test_api_generate_draft_product_blog_uses_typed_images(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        quality_report = MagicMock()
+        quality_report.as_dict.return_value = {
+            "score": 92,
+            "publish_blocked": False,
+            "checks": [],
+        }
+
+        blog_data = {
+            "title": "Stone Mug Gift Guide",
+            "summary": "A practical guide to the product.",
+            "content": "## Heading\n\nUseful content. " * 40,
+            "keywords": ["stone mug"],
+            "hashtags": ["#mug"],
+            "long_tail_keywords": ["best stone mug for gifting"],
+            "pin_description": "A product pin description",
+            "_model_name": "test-model",
+        }
+
+        with patch("routes.api.shopify_client.fetch_product_details",
+                   new_callable=AsyncMock,
+                   return_value={
+                       "title": "Stone Mug",
+                       "description": "A handmade stone mug.",
+                       "tags": "gift, kitchen",
+                   }), \
+             patch("routes.api.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=blog_data), \
+             patch("routes.api.image_service.generate_typed_images",
+                   new_callable=AsyncMock,
+                   return_value=(
+                       [
+                           "https://img.example.com/hero.png",
+                           "https://img.example.com/info.png",
+                           "https://img.example.com/steps.png",
+                           "https://img.example.com/checklist.png",
+                       ],
+                       ["hero_photo", "infographic", "step_card", "checklist_card"],
+                       [
+                           "Hero Photo",
+                           "Infographic",
+                           "Step-by-Step Visual Card",
+                           "Checklist/Tips Card",
+                       ],
+                   )) as typed_images_mock, \
+             patch("routes.api.shopify_client.fetch_product_image_url",
+                   new_callable=AsyncMock) as product_image_mock, \
+             patch("routes.api.review_draft",
+                   new_callable=AsyncMock, return_value=quality_report):
+            resp = await http_client.post(
+                "/api/generate/draft",
+                headers={"x-api-key": "test-api-key"},
+                json={
+                    "store_id": "s1",
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful product blog post.",
+                    "blog_handle": "news",
+                    "author": "Store Team",
+                    "model_id": "",
+                    "product_url": "https://s1.myshopify.com/products/stone-mug",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["image_types"] == ["hero_photo", "infographic", "step_card", "checklist_card"]
+        assert len(data["image_urls"]) == 4
+        typed_images_mock.assert_awaited_once()
+        product_image_mock.assert_not_awaited()
 
     async def test_api_history_filters_by_store(self, http_client, monkeypatch):
         monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")

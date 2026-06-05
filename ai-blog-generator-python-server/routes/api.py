@@ -681,18 +681,17 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     generated_by = blog_data.get("_model_name", "")
 
     # Images
-    if resolved_product_url:
+    image_url_list, image_types, _image_labels = await image_service.generate_typed_images(
+        store_id,
+        title,
+        summary,
+        prompt_text,
+    )
+    if resolved_product_url and not image_url_list:
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
         product_image_cdn = await shopify_client.fetch_product_image_url(store_cfg, product_handle)
         image_url_list = [product_image_cdn] if product_image_cdn else []
         image_types = ["product"] if image_url_list else []
-    else:
-        image_url_list, image_types, _image_labels = await image_service.generate_typed_images(
-            store_id,
-            title,
-            summary,
-            prompt_text,
-        )
 
     # Quality review
     quality_report = (await review_draft(
@@ -784,7 +783,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
     composited: list[str] = []
     for i, url in enumerate(payload.image_urls):
         img_type = payload.image_types[i] if i < len(payload.image_types) else "photo"
-        if payload.product_url or img_type == "product":
+        if img_type == "product":
             composited.append(await logo_service.stamp_infographic(url, logo_b64))
         elif img_type in ("photo", "hero_photo"):
             composited.append(await logo_service.stamp_photo(url, payload.title, logo_b64))

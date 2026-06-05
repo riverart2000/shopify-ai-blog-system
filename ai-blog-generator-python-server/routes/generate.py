@@ -453,39 +453,34 @@ async def generate(
 
     logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
 
-    if resolved_product_url:
-        # Use the product's main image — no AI generation, no title overlay
+    image_url_list, image_types, image_labels = await image_service.generate_typed_images(
+        store_id, title, summary, prompt_text
+    )
+    if resolved_product_url and not image_url_list:
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
         logger.info("Product selected | url=%s handle=%s", resolved_product_url, product_handle)
-        # Use the CDN URL (small) in the form field so the hidden input stays manageable.
-        # The data URI path used previously caused multi-hundred-KB hidden inputs, which
-        # could break JSON parsing in JS and hit form-size limits on publish.
         product_image_cdn = await shopify_client.fetch_product_image_url(store_cfg, product_handle)
         if product_image_cdn:
             logger.info("Product image CDN URL: %s", product_image_cdn[:80])
-            image_url_list = [product_image_cdn]  # CDN URL — small, safe in form
+            image_url_list = [product_image_cdn]
             image_types = ["product"]
             image_labels = ["Product Image"]
-            # Stamp with logo badge for preview; _fetch_bytes handles public HTTPS URLs
-            display_urls = [await logo_service.stamp_infographic(product_image_cdn, logo_b64)]
         else:
             logger.warning("No product image found for handle=%s — no image will be used", product_handle)
             image_url_list = []
             image_types = []
             image_labels = []
-            display_urls = []
-    else:
-        image_url_list, image_types, image_labels = await image_service.generate_typed_images(
-            store_id, title, summary, prompt_text
-        )
-        # Composite images for preview display (title bar + logo). Raw URLs stay
-        # in the form so we can re-composite at publish time for Shopify upload.
-        display_urls = []
-        for i, url in enumerate(image_url_list):
-            if image_types[i] in ("photo", "hero_photo"):
-                display_urls.append(await logo_service.stamp_photo(url, title, logo_b64))
-            else:
-                display_urls.append(await logo_service.stamp_infographic(url, logo_b64))
+
+    # Composite images for preview display (title bar + logo). Raw URLs stay
+    # in the form so we can re-composite at publish time for Shopify upload.
+    display_urls = []
+    for i, url in enumerate(image_url_list):
+        if image_types[i] == "product":
+            display_urls.append(await logo_service.stamp_infographic(url, logo_b64))
+        elif image_types[i] in ("photo", "hero_photo"):
+            display_urls.append(await logo_service.stamp_photo(url, title, logo_b64))
+        else:
+            display_urls.append(await logo_service.stamp_infographic(url, logo_b64))
 
     return await _render_preview(
         request,
@@ -591,20 +586,15 @@ async def publish(
     logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
     resolved_product_url = product_url.strip()
 
-    if resolved_product_url:
-        # Stamp product images with logo before uploading (CDN URLs are passed
-        # through the form — stamp here so the published article gets the logo badge)
-        composited = []
-        for url in image_url_list:
+    composited = []
+    for i, url in enumerate(image_url_list):
+        img_type = image_types[i] if i < len(image_types) else "photo"
+        if img_type == "product":
             composited.append(await logo_service.stamp_infographic(url, logo_b64))
-    else:
-        composited = []
-        for i, url in enumerate(image_url_list):
-            img_type = image_types[i] if i < len(image_types) else "photo"
-            if img_type in ("photo", "hero_photo"):
-                composited.append(await logo_service.stamp_photo(url, title, logo_b64))
-            else:
-                composited.append(await logo_service.stamp_infographic(url, logo_b64))
+        elif img_type in ("photo", "hero_photo"):
+            composited.append(await logo_service.stamp_photo(url, title, logo_b64))
+        else:
+            composited.append(await logo_service.stamp_infographic(url, logo_b64))
 
     ordered_image_urls = list(image_url_list)
     featured_image_url = ""
