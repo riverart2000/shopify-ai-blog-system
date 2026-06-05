@@ -22,6 +22,7 @@ from security import limiter
 from utils import text_to_html
 from services import image_service, llm_service, logo_service
 from services import internal_links
+from services import social_captions
 from services.quality_service import review_draft
 from services import title_service
 from providers import AllModelsFailedError
@@ -705,6 +706,16 @@ async def publish(
     if title_pool_id and not resolved_product_url:
         await db.mark_title_published(title_pool_id)
 
+    share_captions = social_captions.build_captions(
+        title=title,
+        summary=summary,
+        keywords=keywords,
+        hashtags=hashtags,
+        long_tail_keywords=long_tail_keywords,
+        article_url=result.article_url,
+        pin_description=pin_description,
+    )
+
     return state.templates.TemplateResponse(
         request,
         "result.html",
@@ -720,6 +731,7 @@ async def publish(
             "product_title": product_title.strip(),
             "social_share_buttons": social_share_buttons,
             "pin_description": pin_description,
+            "share_captions": share_captions,
             "social_x_handle": social_x_handle,
             "social_facebook_url": social_facebook_url,
             "social_linkedin_url": social_linkedin_url,

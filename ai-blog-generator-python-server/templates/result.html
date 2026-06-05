@@ -299,6 +299,26 @@
     </div>
     {% endif %}
 
+    {% if share_captions %}
+    <hr class="divider" />
+    <div class="share-section">
+      <p class="share-label">Ready-to-paste captions</p>
+      <p style="font-size:12px;color:#64748b;margin:-6px 0 14px;">Tailored for each platform, with UTM-tagged links so you can track which channel drives traffic.</p>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        {% for cap in share_captions %}
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:12px;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:0.06em;">{{ cap.label }}</span>
+            <button type="button" class="btn-share btn-copy" id="caption-btn-{{ cap.key }}" onclick="copyCaption('{{ cap.key }}')" style="padding:5px 12px;font-size:12px;">Copy</button>
+          </div>
+          <textarea id="caption-{{ cap.key }}" readonly rows="4"
+            style="width:100%;box-sizing:border-box;background:#020617;color:#cbd5e1;border:1px solid #334155;border-radius:6px;padding:10px;font-size:13px;line-height:1.5;resize:vertical;font-family:inherit;">{{ cap.text }}</textarea>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <hr class="divider" />
 
     <div class="btn-row">
@@ -316,7 +336,17 @@
 
   <script>
     (function () {
-      const articleUrl = encodeURIComponent({{ result.article_url | tojson }});
+      const rawArticleUrl = {{ result.article_url | tojson }};
+      function withUtm(u, source, medium, campaign) {
+        if (!u) return u;
+        medium = medium || 'social';
+        campaign = campaign || 'blog_share';
+        const sep = u.indexOf('?') === -1 ? '?' : '&';
+        return u + sep + 'utm_source=' + encodeURIComponent(source)
+          + '&utm_medium=' + encodeURIComponent(medium)
+          + '&utm_campaign=' + encodeURIComponent(campaign);
+      }
+      const articleUrl = encodeURIComponent(rawArticleUrl);
       const text = encodeURIComponent({{ title | tojson }});
       const tags = {{ hashtags | tojson }}.map(t => t.replace(/^#/, '')).join(',');
       const xHandle = {{ social_x_handle | tojson }};
@@ -325,30 +355,42 @@
 
       const elX = document.getElementById('share-x');
       if (elX) {
-        let xUrl = 'https://twitter.com/intent/tweet?text=' + text + '&url=' + articleUrl;
+        const xShareUrl = encodeURIComponent(withUtm(rawArticleUrl, 'twitter'));
+        let xUrl = 'https://twitter.com/intent/tweet?text=' + text + '&url=' + xShareUrl;
         if (tags) xUrl += '&hashtags=' + tags;
         if (xHandle) xUrl += '&via=' + encodeURIComponent(xHandle);
         elX.href = xUrl;
       }
       const elFb = document.getElementById('share-facebook');
       if (elFb) {
-        // If a store Facebook page is set, link to it with u= so the dialog pre-selects their page
-        const fbBase = fbPageUrl
-          ? 'https://www.facebook.com/dialog/feed?app_id=&link=' + articleUrl + '&redirect_uri=' + articleUrl
-          : 'https://www.facebook.com/sharer/sharer.php?u=' + articleUrl;
-        elFb.href = 'https://www.facebook.com/sharer/sharer.php?u=' + articleUrl;
+        const fbShareUrl = encodeURIComponent(withUtm(rawArticleUrl, 'facebook'));
+        elFb.href = 'https://www.facebook.com/sharer/sharer.php?u=' + fbShareUrl;
       }
       const elLi = document.getElementById('share-linkedin');
-      if (elLi) elLi.href = 'https://www.linkedin.com/sharing/share-offsite/?url=' + articleUrl;
+      if (elLi) elLi.href = 'https://www.linkedin.com/sharing/share-offsite/?url='
+        + encodeURIComponent(withUtm(rawArticleUrl, 'linkedin'));
 
       const elPin = document.getElementById('share-pinterest');
       if (elPin) {
+        const pinShareUrl = encodeURIComponent(withUtm(rawArticleUrl, 'pinterest'));
         const pinDesc = encodeURIComponent({{ pin_description | default('') | tojson }} || {{ summary | tojson }});
         // No media param: Pinterest scrapes the page and prefers our 2:3 image
         // tagged with data-pin-media / data-pin-description.
-        elPin.href = 'https://www.pinterest.com/pin/create/button/?url=' + articleUrl + '&description=' + pinDesc;
+        elPin.href = 'https://www.pinterest.com/pin/create/button/?url=' + pinShareUrl + '&description=' + pinDesc;
       }
     })();
+
+    function copyCaption(key) {
+      var ta = document.getElementById('caption-' + key);
+      var btn = document.getElementById('caption-btn-' + key);
+      if (!ta) return;
+      navigator.clipboard.writeText(ta.value).then(function () {
+        if (!btn) return;
+        var original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function () { btn.textContent = original; }, 2000);
+      });
+    }
 
     function copyHashtags() {
       const tags = {{ hashtags | tojson }}.join(' ');

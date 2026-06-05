@@ -1706,3 +1706,51 @@ class TestQualityService:
         assert dup_check.status == "fail"
         assert report.publish_blocked is True
         assert report.duplicate_similarity >= 0.88
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ⑯ services — social_captions (per-platform captions + UTM links)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSocialCaptions:
+    def _captions(self):
+        from services import social_captions
+
+        return social_captions.build_captions(
+            title="10 Calming Bedtime Rituals for Better Sleep",
+            summary="Simple evening habits that help you wind down and sleep deeper.",
+            keywords=["sleep", "bedtime routine"],
+            hashtags=["#sleep", "#wellness", "#selfcare", "#nightroutine"],
+            long_tail_keywords=["how to fall asleep faster naturally"],
+            article_url="https://shop.example.com/blogs/news/bedtime-rituals?ref=1",
+            pin_description="Calming bedtime rituals for deeper sleep. #sleep #wellness",
+        )
+
+    def test_covers_all_platforms(self):
+        caps = {c["key"]: c for c in self._captions()}
+        assert set(caps) == {"pinterest", "linkedin", "facebook", "x", "substack", "instagram"}
+        for cap in caps.values():
+            assert cap["text"].strip()
+            assert cap["label"]
+
+    def test_links_are_utm_tagged_and_preserve_existing_params(self):
+        caps = {c["key"]: c for c in self._captions()}
+        # X maps to utm_source=twitter; existing ?ref=1 must be preserved
+        assert "utm_source=twitter" in caps["x"]["url"]
+        assert "utm_medium=social" in caps["x"]["url"]
+        assert "ref=1" in caps["x"]["url"]
+        assert "utm_source=substack" in caps["substack"]["url"]
+        assert "utm_medium=newsletter" in caps["substack"]["url"]
+
+    def test_x_caption_fits_tweet_limit(self):
+        caps = {c["key"]: c for c in self._captions()}
+        assert len(caps["x"]["text"]) <= 280
+
+    def test_pin_caption_prefers_pin_description(self):
+        caps = {c["key"]: c for c in self._captions()}
+        assert caps["pinterest"]["text"].startswith("Calming bedtime rituals")
+
+    def test_with_utm_handles_empty_url(self):
+        from services import social_captions
+
+        assert social_captions.with_utm("", "pinterest") == ""
