@@ -12,11 +12,15 @@ from config import StoreConfig
 
 logger = logging.getLogger("ai_blog_server")
 
+AUTO_BLOG_HANDLE = "__auto__"
+
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _SCOPE_STOPWORDS = {
     "a", "an", "and", "at", "blog", "blogs", "by", "for", "from", "guide",
     "guides", "handle", "home", "in", "news", "of", "on", "or", "section",
     "shop", "shopify", "store", "the", "to", "wellness", "health",
+    "best", "beginner", "beginners", "easy", "improve", "improvement",
+    "improving", "routine", "routines", "simple", "tips", "ultimate",
 }
 
 
@@ -25,6 +29,10 @@ class BlogScope:
     handle: str
     section_name: str
     focus_terms: tuple[str, ...]
+
+
+def is_auto_blog_handle(blog_handle: str) -> bool:
+    return (blog_handle or "").strip() == AUTO_BLOG_HANDLE
 
 
 def _humanize_handle(handle: str) -> str:
@@ -44,6 +52,15 @@ def _extract_focus_terms(*parts: str) -> tuple[str, ...]:
             seen.add(token)
             tokens.append(token)
     return tuple(tokens)
+
+
+def _build_scope(handle: str, title: str = "") -> BlogScope:
+    section_name = title or _humanize_handle(handle) or handle
+    return BlogScope(
+        handle=handle,
+        section_name=section_name,
+        focus_terms=_extract_focus_terms(handle, title),
+    )
 
 
 async def get_blog_options(store_id: str, store: StoreConfig) -> list[dict[str, str]]:
@@ -84,13 +101,45 @@ async def resolve_blog_scope(
 
     blog_options = await get_blog_options(store_id, store)
     blog_title = next((b["title"] for b in blog_options if b["handle"] == resolved_handle), "")
-    section_name = blog_title or _humanize_handle(resolved_handle) or resolved_handle
-    focus_terms = _extract_focus_terms(resolved_handle, blog_title)
-    return BlogScope(
-        handle=resolved_handle,
-        section_name=section_name,
-        focus_terms=focus_terms,
-    )
+    return _build_scope(resolved_handle, blog_title)
+
+
+async def get_blog_scopes(store_id: str, store: StoreConfig) -> list[BlogScope]:
+    scopes: list[BlogScope] = []
+    seen: set[str] = set()
+
+    for blog in await get_blog_options(store_id, store):
+        handle = str(blog.get("handle", "")).strip()
+        if not handle or handle in seen:
+            continue
+        scopes.append(_build_scope(handle, str(blog.get("title", "")).strip()))
+        seen.add(handle)
+
+    default_handle = (store.default_blog_handle or "").strip()
+    if default_handle and default_handle not in seen:
+        scopes.append(_build_scope(default_handle))
+
+    return scopes
+
+
+def scope_match_score(candidate_text: str, scope: BlogScope | None) -> int:
+    if scope is None or not scope.focus_terms:
+        return 0
+    candidate_terms = set(_extract_focus_terms(candidate_text))
+    return len(candidate_terms & set(scope.focus_terms))
+
+
+def best_matching_scope(candidate_text: str, scopes: list[BlogScope]) -> BlogScope | None:
+    best_scope: BlogScope | None = None
+    best_score = 0
+
+    for scope in scopes:
+        score = scope_match_score(candidate_text, scope)
+        if score > best_score:
+            best_scope = scope
+            best_score = score
+
+    return best_scope
 
 
 def is_candidate_compatible(candidate_text: str, scope: BlogScope | None) -> bool:
@@ -101,8 +150,7 @@ def is_candidate_compatible(candidate_text: str, scope: BlogScope | None) -> boo
     """
     if scope is None or not scope.focus_terms:
         return True
-    candidate_terms = set(_extract_focus_terms(candidate_text))
-    return bool(candidate_terms & set(scope.focus_terms))
+    return scope_match_score(candidate_text, scope) > 0
 
 
 async def pop_scoped_keyword(store_id: str, scope: BlogScope | None) -> dict | None:

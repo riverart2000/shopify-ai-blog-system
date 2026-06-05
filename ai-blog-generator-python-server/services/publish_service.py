@@ -41,6 +41,7 @@ async def run(
     product_url: str = "",
     product_title: str = "",
     scheduled_job_id: str = "",
+    preselected_title_row: dict | None = None,
 ) -> PipelineResult:
     """Full pipeline: generate text → generate images → publish → log.
 
@@ -62,7 +63,8 @@ async def run(
         default_blog_handle=store_row.get("default_blog_handle", "news"),
         default_author=store_row.get("default_author", "Store Team"),
     )
-    scope = await blog_scope.resolve_blog_scope(store_id, store, blog_handle or store.default_blog_handle)
+    resolved_blog_handle = (blog_handle or store.default_blog_handle).strip() or store.default_blog_handle
+    scope = await blog_scope.resolve_blog_scope(store_id, store, resolved_blog_handle)
 
     # --- Enrich prompt with product details if a product was selected ---
     resolved_product_url = product_url.strip()
@@ -93,8 +95,8 @@ async def run(
             )
 
     # --- Pop a pre-generated blog title (non-product posts only) ---
-    title_row = None
-    if not resolved_product_url:
+    title_row = preselected_title_row
+    if not resolved_product_url and title_row is None:
         title_row = await title_service.pop_blog_title_for_scope(store_id, scope)
         if title_row:
             title_inject = (
@@ -109,6 +111,19 @@ async def run(
                 )
             prompt_text = f"{prompt_text}{title_inject}"
             logger.info("Using pooled blog title %r for store %s", title_row["title"], store_id)
+    elif title_row:
+        title_inject = (
+            f"\n\nIMPORTANT — You MUST use exactly this title for the blog post: {title_row['title']}"
+        )
+        if title_row.get("keyword"):
+            title_inject += f"\nFocus keyword: {title_row['keyword']}"
+        if title_row.get("meta_description"):
+            title_inject += (
+                f"\nUse this exact text as the article summary/meta description: "
+                f"{title_row['meta_description']}"
+            )
+        prompt_text = f"{prompt_text}{title_inject}"
+        logger.info("Using preselected pooled blog title %r for store %s", title_row["title"], store_id)
 
     prompt_text = await blog_scope.apply_blog_scope(
         prompt_text,
@@ -154,7 +169,7 @@ async def run(
         await db.log_generation(
             store_id=store_id,
             store_name=store.name,
-            blog_handle=blog_handle or store.default_blog_handle,
+            blog_handle=resolved_blog_handle,
             prompt_id=prompt_id,
             prompt_text=prompt_text,
             title=title,
@@ -215,7 +230,7 @@ async def run(
     # --- Publish to Shopify ---
     result = await shopify_client.publish_article(
         store=store,
-        blog_handle=blog_handle or store.default_blog_handle,
+        blog_handle=resolved_blog_handle,
         title=title,
         content_html=content_html,
         summary=summary,

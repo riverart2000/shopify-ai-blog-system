@@ -193,3 +193,56 @@ async def _pop_compatible_title(
             await db.reserve_title(int(row["id"]))
             return row
     return None
+
+
+async def pop_blog_title_for_auto_scope(
+    store_id: str,
+    scopes: list[blog_scope.BlogScope],
+    fallback_scope: blog_scope.BlogScope | None,
+) -> tuple[dict | None, blog_scope.BlogScope | None]:
+    row, matched_scope = await _pop_title_for_auto_scope(store_id, scopes, fallback_scope)
+    if row:
+        return row, matched_scope
+
+    result = await fetch_titles(store_id)
+    if result["error"] or result["added"] == 0:
+        logger.info(
+            "Auto-scoped title selection found nothing for store %s: %s",
+            store_id,
+            result.get("error") or "0 titles generated",
+        )
+        return None, fallback_scope
+
+    return await _pop_title_for_auto_scope(store_id, scopes, fallback_scope)
+
+
+async def _pop_title_for_auto_scope(
+    store_id: str,
+    scopes: list[blog_scope.BlogScope],
+    fallback_scope: blog_scope.BlogScope | None,
+) -> tuple[dict | None, blog_scope.BlogScope | None]:
+    rows = await db.get_title_pool(store_id, limit=200)
+    for row in rows:
+        haystack = " ".join(
+            filter(
+                None,
+                [
+                    row.get("title", ""),
+                    row.get("keyword", ""),
+                    row.get("search_intent", ""),
+                    row.get("meta_description", ""),
+                ],
+            )
+        )
+        matched_scope = blog_scope.best_matching_scope(haystack, scopes)
+        if matched_scope is None:
+            continue
+        await db.reserve_title(int(row["id"]))
+        return row, matched_scope
+
+    if rows and fallback_scope is not None:
+        row = rows[0]
+        await db.reserve_title(int(row["id"]))
+        return row, fallback_scope
+
+    return None, None
