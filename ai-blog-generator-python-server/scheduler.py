@@ -139,7 +139,11 @@ async def _process_job(job: dict) -> None:
                 resolved_blog_handle,
             )
     else:
-        resolved_blog_handle = configured_blog_handle or store_cfg.default_blog_handle
+        resolved_blog_handle = (
+            store_cfg.default_blog_handle
+            if blog_scope.is_auto_blog_handle(configured_blog_handle)
+            else configured_blog_handle or store_cfg.default_blog_handle
+        )
         scope = await blog_scope.resolve_blog_scope(
             store_id,
             store_cfg,

@@ -32,8 +32,12 @@ type RecentRun = {
   created_at: number;
 };
 
+type BlogHandle = { handle: string; title?: string };
 type Prompt = { id: string; name: string; text: string };
 type Store = { id: string; name: string; myshopify_domain: string; default_blog_handle: string; default_author: string };
+type BlogHandleOption = { value: string; label: string };
+
+const AUTO_BLOG_HANDLE = "__auto__";
 
 async function backendFetch(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -44,9 +48,50 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
   return res.json();
 }
 
+function buildBlogHandleOptions(blogs: BlogHandle[], defaultHandle: string) {
+  const options: BlogHandleOption[] = [
+    { value: AUTO_BLOG_HANDLE, label: "Auto (best matching blog handle)" },
+  ];
+  const seen = new Set<string>([AUTO_BLOG_HANDLE]);
+  const normalizedDefaultHandle = defaultHandle.trim();
+
+  if (normalizedDefaultHandle) {
+    options.push({ value: normalizedDefaultHandle, label: `Store default (${normalizedDefaultHandle})` });
+    seen.add(normalizedDefaultHandle);
+  }
+
+  for (const blog of blogs) {
+    const handle = String(blog.handle || "").trim();
+    if (!handle || seen.has(handle)) continue;
+    const title = String(blog.title || "").trim() || handle;
+    options.push({ value: handle, label: title === handle ? handle : `${title} (${handle})` });
+    seen.add(handle);
+  }
+
+  return options;
+}
+
+function normalizeBlogHandleSelection(blogHandle: string) {
+  const normalized = String(blogHandle || "").trim();
+  return normalized.toLowerCase() === "auto" ? AUTO_BLOG_HANDLE : normalized;
+}
+
+function formatBlogHandleDisplay(blogHandle: string, isProductBlog: number) {
+  const normalized = normalizeBlogHandleSelection(blogHandle);
+  if (normalized === AUTO_BLOG_HANDLE || (!normalized && !isProductBlog)) return "auto";
+  return normalized || "—";
+}
+
+function getSelectedBlogHandle(job: ScheduledJob | undefined, defaultBlogHandle: string) {
+  if (!job) return AUTO_BLOG_HANDLE;
+  const normalized = normalizeBlogHandleSelection(job.blog_handle);
+  if (!normalized && !job.is_product_blog) return AUTO_BLOG_HANDLE;
+  return normalized || defaultBlogHandle || "news";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  if (!BACKEND_KEY) return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: "AI_BLOG_BACKEND_API_KEY is not configured." };
+  if (!BACKEND_KEY) return { jobs: [], prompts: [], blogs: [] as BlogHandle[], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: "AI_BLOG_BACKEND_API_KEY is not configured." };
   try {
     const [jobsData, storesData] = await Promise.all([
       backendFetch("/api/schedule/jobs"),
@@ -54,8 +99,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ]);
     const storeId: string = jobsData.store_id || storesData.stores?.[0]?.id || "";
     const jobs = jobsData.jobs as ScheduledJob[];
-    const [promptsData, ...runsResults] = await Promise.all([
+    const [promptsData, initData, ...runsResults] = await Promise.all([
       storeId ? backendFetch(`/api/prompts?store_id=${encodeURIComponent(storeId)}`) : Promise.resolve({ prompts: [] }),
+      storeId ? backendFetch(`/api/init?store_id=${encodeURIComponent(storeId)}`) : Promise.resolve({ blogs: [] }),
       ...jobs.map((j: ScheduledJob) =>
         backendFetch(`/api/schedule/recent-runs?job_id=${encodeURIComponent(j.id)}&limit=10`).catch(() => ({ runs: [] }))
       ),
@@ -64,9 +110,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     jobs.forEach((j: ScheduledJob, i: number) => {
       recentRuns[j.id] = runsResults[i]?.runs ?? [];
     });
-    return { jobs, prompts: promptsData.prompts as Prompt[], stores: storesData.stores as Store[], storeId, recentRuns, error: null };
+    return {
+      jobs,
+      prompts: promptsData.prompts as Prompt[],
+      blogs: (initData.blogs ?? []) as BlogHandle[],
+      stores: storesData.stores as Store[],
+      storeId,
+      recentRuns,
+      error: null,
+    };
   } catch (e) {
-    return { jobs: [], prompts: [], stores: [], storeId: "", recentRuns: {} as Record<string, RecentRun[]>, error: e instanceof Error ? e.message : "Failed to reach backend" };
+    return {
+      jobs: [],
+      prompts: [],
+      blogs: [] as BlogHandle[],
+      stores: [],
+      storeId: "",
+      recentRuns: {} as Record<string, RecentRun[]>,
+      error: e instanceof Error ? e.message : "Failed to reach backend",
+    };
   }
 };
 
@@ -84,7 +146,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           job_id: form.get("job_id") || "",
           name: form.get("name") || "",
           prompt_id: form.get("prompt_id") || "",
-          blog_handle: form.get("blog_handle") || "news",
+          blog_handle: form.get("blog_handle") || "",
           author: form.get("author") || "",
           cron_expr: form.get("cron_expr") || "",
           timezone: form.get("timezone") || "UTC",
@@ -119,9 +181,10 @@ const TIMEZONES = ["UTC", "Europe/London", "America/New_York", "America/Chicago"
 const inputStyle: React.CSSProperties = { borderRadius: "10px", border: "1px solid #d1d5db", padding: "9px 12px", font: "inherit", width: "100%", boxSizing: "border-box" as const };
 const labelStyle: React.CSSProperties = { display: "grid", gap: "5px", fontSize: "0.875rem" };
 
-function JobForm({ job, prompts, stores, storeId, onCancel }: {
+function JobForm({ job, prompts, blogs, stores, storeId, onCancel }: {
   job?: ScheduledJob;
   prompts: Prompt[];
+  blogs: BlogHandle[];
   stores: Store[];
   storeId: string;
   onCancel: () => void;
@@ -129,6 +192,11 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
   const navigation = useNavigation();
   const saving = navigation.state !== "idle";
   const defaultStore = stores.find(s => s.id === storeId) || stores[0];
+  const selectedBlogHandle = getSelectedBlogHandle(job, defaultStore?.default_blog_handle || "news");
+  const blogHandleOptions = buildBlogHandleOptions(blogs, defaultStore?.default_blog_handle || "news");
+  if (!blogHandleOptions.some((option) => option.value === selectedBlogHandle)) {
+    blogHandleOptions.push({ value: selectedBlogHandle, label: selectedBlogHandle });
+  }
   return (
     <Form method="post">
       <input type="hidden" name="intent" value="save" />
@@ -158,7 +226,11 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
           <label style={labelStyle}>
             <span>Blog handle</span>
-            <input name="blog_handle" defaultValue={job?.blog_handle || defaultStore?.default_blog_handle || "news"} style={inputStyle} placeholder="news" />
+            <select name="blog_handle" defaultValue={selectedBlogHandle} style={inputStyle}>
+              {blogHandleOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </label>
           <label style={labelStyle}>
             <span>Author</span>
@@ -204,7 +276,7 @@ function JobForm({ job, prompts, stores, storeId, onCancel }: {
 }
 
 export default function ScheduleRoute() {
-  const { jobs, prompts, stores, storeId, recentRuns, error } = useLoaderData<typeof loader>();
+  const { jobs, prompts, blogs, stores, storeId, recentRuns, error } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>() as { ok: boolean; message?: string | null; error?: string } | undefined;
   const [editing, setEditing] = useState<string | null>(null);
   const navigation = useNavigation();
@@ -232,7 +304,7 @@ export default function ScheduleRoute() {
 
       {editing === "new" ? (
         <s-section heading="New schedule">
-          <JobForm prompts={prompts} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+          <JobForm prompts={prompts} blogs={blogs} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
         </s-section>
       ) : (
         <s-section>
@@ -250,7 +322,7 @@ export default function ScheduleRoute() {
             {jobs.map(job => (
               <div key={job.id} style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "16px", background: job.is_active ? "white" : "#f9fafb" }}>
                 {editing === job.id ? (
-                  <JobForm job={job} prompts={prompts} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
+                  <JobForm job={job} prompts={prompts} blogs={blogs} stores={stores} storeId={storeId} onCancel={() => setEditing(null)} />
                 ) : (
                   <>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px" }}>
@@ -260,7 +332,7 @@ export default function ScheduleRoute() {
                           {!job.is_active && <span style={{ marginLeft: 8, fontSize: "0.75rem", background: "#f3f4f6", color: "#6b7280", borderRadius: "999px", padding: "2px 8px" }}>paused</span>}
                         </div>
                         <div style={{ fontSize: "0.8rem", color: "#6b7280", marginTop: 2 }}>
-                          {job.store_name || job.store_id} · {job.blog_handle} · <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 4 }}>{job.cron_expr}</code> ({job.timezone})
+                          {job.store_name || job.store_id} · {formatBlogHandleDisplay(job.blog_handle || "", job.is_product_blog)} · <code style={{ background: "#f3f4f6", padding: "1px 5px", borderRadius: 4 }}>{job.cron_expr}</code> ({job.timezone})
                         </div>
                         <div style={{ fontSize: "0.78rem", color: "#9ca3af", marginTop: 4 }}>
                           Last: {fmt(job.last_run_at)} · Next: <span style={{ color: job.next_run_at && job.next_run_at * 1000 < Date.now() ? "#dc2626" : "#059669" }}>{fmt(job.next_run_at)}</span>

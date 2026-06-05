@@ -257,7 +257,7 @@ class JobUpsertRequest(BaseModel):
     job_id: str = ""
     name: str
     prompt_id: str
-    blog_handle: str = "news"
+    blog_handle: str = ""
     author: str = ""
     cron_expr: str
     timezone: str = "UTC"
@@ -298,7 +298,7 @@ async def api_schedule_save(request: Request, payload: JobUpsertRequest):
         "store_id": sid,
         "name": payload.name.strip(),
         "prompt_id": payload.prompt_id.strip(),
-        "blog_handle": payload.blog_handle.strip() or "news",
+        "blog_handle": blog_scope.normalize_scheduled_blog_handle(payload.blog_handle),
         "author": payload.author.strip(),
         "cron_expr": payload.cron_expr.strip(),
         "timezone": payload.timezone.strip() or "UTC",

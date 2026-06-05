@@ -1189,6 +1189,48 @@ class TestSchedulerRouting:
         assert publish_mock.await_args.kwargs["blog_handle"] == "home-fitness-mobility"
         assert publish_mock.await_args.kwargs["preselected_title_row"]["title"] == "Best Home Mobility Routine for Beginners"
 
+    async def test_process_product_job_auto_blog_handle_falls_back_to_default(self, tmp_db):
+        import scheduler
+
+        sid = "sched-product-auto-store"
+
+        await db.upsert_store(_make_store(sid, "Store One Updated"))
+        await db.upsert_prompt({
+            "id": "sched-product-auto",
+            "store_id": sid,
+            "name": "Scheduler Product Prompt",
+            "text": "Write a useful product blog post.",
+            "sort_order": 0,
+        })
+
+        job = {
+            "id": "job-product-auto-1",
+            "store_id": sid,
+            "name": "Product Auto Route Job",
+            "prompt_id": "sched-product-auto",
+            "blog_handle": "__auto__",
+            "author": "",
+            "cron_expr": "0 9 * * *",
+            "use_keyword_pool": 0,
+            "is_product_blog": 1,
+        }
+
+        with patch(
+            "scheduler.shopify_client.fetch_products",
+            new_callable=AsyncMock,
+            return_value=[],
+        ), \
+             patch(
+                 "scheduler.publish_service.run",
+                 new_callable=AsyncMock,
+                 return_value=SimpleNamespace(title="Done", article_id="1"),
+             ) as publish_mock, \
+             patch("scheduler._get_next_run", return_value=1234567890):
+            await scheduler._process_job(job)
+
+        assert publish_mock.await_count == 1
+        assert publish_mock.await_args.kwargs["blog_handle"] == "news"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ⑮ HTTP Routes (via httpx + FastAPI TestClient)
@@ -2050,6 +2092,40 @@ class TestAuthedRoutes:
         assert publish_kwargs["pin_image_url"] == "https://img.example.com/pin.png"
         assert publish_kwargs["image_url_list"] == ["https://img.example.com/hero.png"]
         assert publish_kwargs["featured_image_url"].startswith("data:image/jpeg;base64,")
+
+    async def test_api_schedule_save_normalizes_auto_blog_handle(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+        await db.upsert_prompt({
+            "id": "api-sched-auto-prompt",
+            "store_id": "s1",
+            "name": "API Schedule Auto Prompt",
+            "text": "Write about {topic}",
+            "sort_order": 0,
+        })
+
+        resp = await http_client.post(
+            "/api/schedule/save",
+            headers={"x-api-key": "test-api-key"},
+            json={
+                "store_id": "s1",
+                "job_id": "",
+                "name": "API Auto Job",
+                "prompt_id": "api-sched-auto-prompt",
+                "blog_handle": "auto",
+                "author": "",
+                "cron_expr": "0 9 * * 1-5",
+                "timezone": "Europe/London",
+                "is_active": True,
+                "is_product_blog": False,
+                "use_keyword_pool": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        jobs = await db.get_scheduled_jobs("s1")
+        saved_job = next(j for j in jobs if j["name"] == "API Auto Job")
+        assert saved_job["blog_handle"] == "__auto__"
 
     async def test_publish_article_keeps_all_body_images_when_featured_is_data_uri(self, tmp_db):
         import shopify_client
