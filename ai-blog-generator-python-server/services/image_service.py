@@ -3,7 +3,6 @@ Images are always optional — failures return [] so blogs still publish.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import db
@@ -20,6 +19,10 @@ def _build_photo_prompt(title: str, summary: str, prompt: str) -> str:
     )
 
 
+def _build_hero_photo_prompt(title: str, summary: str, prompt: str) -> str:
+    return _build_photo_prompt(title, summary, prompt)
+
+
 def _build_infographic_prompt(title: str, summary: str, prompt: str) -> str:
     return (
         f"Clean modern infographic illustrating key points of: {title}. "
@@ -28,34 +31,32 @@ def _build_infographic_prompt(title: str, summary: str, prompt: str) -> str:
     )
 
 
-def _build_secondary_photo_prompt(title: str, summary: str, prompt: str) -> str:
+def _build_step_card_prompt(title: str, summary: str, prompt: str) -> str:
     return (
-        f"Lifestyle editorial photograph related to the blog article: {title}. "
-        f"Show a different scene or angle than a hero shot — people, hands, or "
-        f"environment in natural use. {summary[:160]} "
-        "Bright natural light, premium magazine style. "
-        "No text overlays, no titles, no captions, no watermarks."
+        f"Create a clean modern step-by-step visual card for the blog article '{title}'. "
+        "Show 3 to 5 numbered steps, short actionable text, clear hierarchy, bold headings, "
+        "editorial infographic layout, highly legible typography, premium ecommerce brand style. "
+        f"Topic: {summary[:200]}. Context: {prompt[:200]}. "
+        "No watermarks, no device mockups, no photo collage."
     )
 
 
-def _build_detail_photo_prompt(title: str, summary: str, prompt: str) -> str:
+def _build_checklist_card_prompt(title: str, summary: str, prompt: str) -> str:
     return (
-        f"Close-up detail photograph supporting the blog article: {title}. "
-        f"Macro or product-detail framing highlighting texture and quality. "
-        f"Topic: {summary[:160]}. Soft shallow depth of field, clean background. "
-        "No text overlays, no titles, no captions, no watermarks."
+        f"Create a clean modern checklist or tips card for the blog article '{title}'. "
+        "Show 4 to 6 concise checklist or tip items with checkmarks or bullets, clean spacing, "
+        "strong visual hierarchy, editorial infographic layout, premium ecommerce brand style. "
+        f"Topic: {summary[:200]}. Context: {prompt[:200]}. "
+        "No watermarks, no screenshots, no product grid."
     )
 
 
-# Ordered plan for a multi-image blog: hero first (used as featured image),
-# then an infographic and two supporting photos. Each entry is
-# (type, human label, prompt builder).
-_IMAGE_PLAN = [
-    ("hero_photo", "Hero Photo", _build_photo_prompt),
-    ("infographic", "Infographic", _build_infographic_prompt),
-    ("secondary_photo", "Lifestyle Photo", _build_secondary_photo_prompt),
-    ("detail_photo", "Detail Photo", _build_detail_photo_prompt),
-]
+_TYPED_IMAGE_SPECS = (
+    ("hero_photo", "Hero Photo", _build_hero_photo_prompt, "hero photo"),
+    ("infographic", "Infographic", _build_infographic_prompt, "infographic"),
+    ("step_card", "Step-by-Step Visual Card", _build_step_card_prompt, "step card"),
+    ("checklist_card", "Checklist/Tips Card", _build_checklist_card_prompt, "checklist card"),
+)
 
 
 async def _generate_one(
@@ -97,48 +98,51 @@ async def _generate_one(
     return None
 
 
-async def generate_typed_images(
-    store_id: str,
-    title: str,
-    summary: str,
-    prompt: str,
-    max_images: int = 4,
-) -> tuple[list[str], list[str], list[str]]:
-    """Generate up to ``max_images`` typed images (hero photo, infographic,
-    lifestyle photo, detail photo) concurrently.
-
-    Returns ``(urls, types, labels)`` parallel lists containing only the images
-    that were generated successfully. The hero photo is always first when present
-    so callers can use it as the Shopify featured image.
-    """
-    plan = _IMAGE_PLAN[: max(1, min(max_images, len(_IMAGE_PLAN)))]
-
-    tasks = [
-        _generate_one(store_id, builder(title, summary, prompt), label)
-        for (_type, label, builder) in plan
-    ]
-    results = await asyncio.gather(*tasks)
-
-    urls: list[str] = []
-    types: list[str] = []
-    labels: list[str] = []
-    for (img_type, label, _builder), url in zip(plan, results):
-        if url is not None:
-            urls.append(url)
-            types.append(img_type)
-            labels.append(label)
-    return urls, types, labels
-
-
 async def generate_images(
     store_id: str,
     title: str,
     summary: str,
     prompt: str,
 ) -> list[str]:
-    """Backward-compatible wrapper: return only the image URLs (3-4 typed images)."""
-    urls, _types, _labels = await generate_typed_images(store_id, title, summary, prompt)
+    """Generate the default image set for a blog post.
+
+    Returns the raw image URLs only, preserving the older public API used by the
+    scheduler and publish pipeline.
+    """
+    urls, _image_types, _labels = await generate_typed_images(store_id, title, summary, prompt)
     return urls
+
+
+async def generate_typed_images(
+    store_id: str,
+    title: str,
+    summary: str,
+    prompt: str,
+) -> tuple[list[str], list[str], list[str]]:
+    """Generate up to four typed images for a blog post.
+
+    The returned tuples stay index-aligned:
+    - image URLs
+    - image types
+    - display labels
+    """
+    image_urls: list[str] = []
+    image_types: list[str] = []
+    image_labels: list[str] = []
+
+    for image_type, image_label, prompt_builder, generation_label in _TYPED_IMAGE_SPECS:
+        url = await _generate_one(
+            store_id,
+            prompt_builder(title, summary, prompt),
+            generation_label,
+        )
+        if url is None:
+            continue
+        image_urls.append(url)
+        image_types.append(image_type)
+        image_labels.append(image_label)
+
+    return image_urls, image_types, image_labels
 
 
 async def generate_feature_image(

@@ -36,6 +36,8 @@ type DraftData = {
   content: string;
   keywords: string[];
   hashtags: string[];
+  long_tail_keywords: string[];
+  pin_description: string;
   image_urls: string[];
   image_types: string[];
   generated_by: string;
@@ -138,6 +140,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           content: form.get("content") || "",
           keywords: JSON.parse(String(form.get("keywords_json") || "[]")),
           hashtags: JSON.parse(String(form.get("hashtags_json") || "[]")),
+          long_tail_keywords: JSON.parse(String(form.get("long_tail_keywords_json") || "[]")),
+          pin_description: form.get("pin_description") || "",
           image_urls: JSON.parse(String(form.get("image_urls_json") || "[]")),
           image_types: JSON.parse(String(form.get("image_types_json") || "[]")),
           selected_image_index: parseInt(String(form.get("selected_image_index") || "0"), 10),
@@ -557,6 +561,8 @@ function PreviewStep({ draft, models, onBack }: { draft: DraftData; models: { id
           <input type="hidden" name="author" value={draft.author} />
           <input type="hidden" name="keywords_json" value={JSON.stringify(draft.keywords)} />
           <input type="hidden" name="hashtags_json" value={JSON.stringify(draft.hashtags)} />
+          <input type="hidden" name="long_tail_keywords_json" value={JSON.stringify(draft.long_tail_keywords)} />
+          <input type="hidden" name="pin_description" value={draft.pin_description} />
           <input type="hidden" name="image_urls_json" value={JSON.stringify(draft.image_urls)} />
           <input type="hidden" name="image_types_json" value={JSON.stringify(draft.image_types)} />
           <input type="hidden" name="selected_image_index" value={selectedImage} />

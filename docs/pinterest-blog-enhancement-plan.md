@@ -3,13 +3,13 @@
 ## Goal
 Three combined enhancements to the Python backend publish pipeline (authoritative; covers manual + scheduled):
 
-- **A.** Each blog gets 3-4 images of DIFFERENT types (hero photo, infographic, secondary lifestyle photo, quote/stat card, + vertical Pinterest pin).
+- **A.** Each blog gets 3-4 images of DIFFERENT types (hero photo, infographic, step-by-step visual card, checklist/tips card, + vertical Pinterest pin).
 - **B.** Each blog gets 3-4 internal links to other store blog posts AND products — relevance-ranked, shown BOTH inline (woven by LLM from a validated candidate list) AND as a "Related reading" block at the end.
 - **C.** Pinterest sharing optimisation: vertical pin image, `data-pin-*` attrs, AI pin description, Save-to-Pinterest button.
 - **D.** Every blog ends with a clearly rendered footer of 3-5 long-tail keywords + 3-5 hashtags (built from the real search-intent phrases the keyword service already discovers).
 
 ### User decisions (confirmed)
-- Image types: hero photo, infographic, secondary lifestyle photo, quote/stat callout card, vertical Pinterest pin (all five).
+- Image types: hero photo, infographic, step-by-step visual card, checklist/tips card, vertical Pinterest pin (all five).
 - Links: BOTH inline + related block; mix of blogs + products; relevance-ranked by keyword/title overlap.
 - Keep Pinterest work in this plan.
 - Blog-link candidate source: **A** (local `generations` primary, live `fetch_store_articles` fallback).
@@ -20,8 +20,8 @@ Three combined enhancements to the Python backend publish pipeline (authoritativ
 - Production access via `prod.sh` → `ssh -i ./revenuemindproai/revenuemindproai.priv ubuntu@18.134.80.37`. **SAFETY:** prod publishes write live articles to the real merchant Shopify store — any end-to-end prod test must target a draft/test blog handle or be explicitly approved first. No destructive ops without approval.
 
 ## Key files / current state
-- `services/image_service.py` — `generate_images()` returns `[photo, infographic]` (2 imgs). `_build_photo_prompt`/`_build_infographic_prompt`. NEED: 5 typed sources — hero photo, infographic, secondary lifestyle photo, quote/stat card, vertical pin.
-- `services/logo_service.py` — `stamp_photo`/`stamp_infographic` composite via Pillow → JPEG data URI, soft-fail. NEED `stamp_pin()` (1000x1500 2:3) + a `stamp_quote_card()`.
+- `services/image_service.py` — `generate_images()` returns `[photo, infographic]` (2 imgs). `_build_photo_prompt`/`_build_infographic_prompt`. NEED: 5 typed sources — hero photo, infographic, step-by-step visual card, checklist/tips card, vertical pin.
+- `services/logo_service.py` — `stamp_photo`/`stamp_infographic` composite via Pillow → JPEG data URI, soft-fail. NEED `stamp_pin()` (1000x1500 2:3) + a reusable visual-card stamper for step/checklist layouts.
 - `shopify_client.py`:
   - `_build_article_html()` (line ~589) + `publish_article()` (line ~664) — image embedding + tags. NEED: spread N images across sections, add `data-pin-*` attrs, render related-links block, accept `pin_description` + `internal_links`.
   - `fetch_store_articles(store, limit_per_blog)` (line ~225) and `fetch_products(store, limit)` (line ~351) — candidate sources for internal linking. EXCLUDE the post being written.
@@ -34,8 +34,8 @@ Three combined enhancements to the Python backend publish pipeline (authoritativ
 ## Steps
 
 ### Phase A — Multiple typed images (3-4 per blog)
-- **A1.** `image_service.py`: add `_build_secondary_photo_prompt` and `_build_quote_card_prompt`/`_build_pin_prompt`. Refactor to a typed generator returning a list of `{url, type, label}` — types: `hero_photo`, `infographic`, `secondary_photo`, `quote_card`, `pin`. Each generated independently; soft-fail per type so partial sets still publish (target 3-4 usable, pin separate).
-- **A2.** `logo_service.py`: add `stamp_pin()` (2:3 crop + title bar + logo) and `stamp_quote_card()` (overlay short pull-quote/stat on solid/brand background; reuse `_add_title_bar`). Keep soft-fail.
+- **A1.** `image_service.py`: add `_build_step_card_prompt`, `_build_checklist_card_prompt`, and `_build_pin_prompt`. Refactor to a typed generator returning a list of `{url, type, label}` — types: `hero_photo`, `infographic`, `step_card`, `checklist_card`, `pin`. Each generated independently; soft-fail per type so partial sets still publish (target 3-4 usable, pin separate).
+- **A2.** `logo_service.py`: add `stamp_pin()` (2:3 crop + title bar + logo) and a reusable visual-card stamper for numbered-step and checklist layouts on a branded background. Keep soft-fail.
 - **A3.** `shopify_client._build_article_html`: distribute body images (hero first/featured, others interleaved between `</p>` blocks; cap and label). Skip the pin from inline body if reserved for pinning. Add `alt` text per image.
 - **A4.** Thread the typed image list through `publish_service.run`, `routes/generate.py`, `routes/api.py` (replace the 2-item list). Update `quality_service` image_count expectations (3-4).
 
@@ -77,7 +77,7 @@ Every published blog ends with a clearly rendered block of **3-5 long-tail keywo
 
 ## Verification
 1. `cd ai-blog-generator-python-server && /usr/local/bin/python3 -m pytest test_features.py -q --tb=short` — existing image/publish tests pass (update count-based assertions 2→3-4).
-2. Manual generate+publish: article body has 3-4 distinct images (hero/infographic/secondary/quote) with alt text; a 2:3 pin image present.
+2. Manual generate+publish: article body has 3-4 distinct images (hero/infographic/step/checklist) with alt text; a 2:3 pin image present.
 3. Article has 3-4 internal links — ≥1 product + ≥1 blog; every `<a href>` resolves to a real store URL from the candidate list (no hallucinated links); "Related reading" block at the end.
 4. Result page shows Pin it button with prefilled url/media/description.
 5. Soft-fail paths: missing Pillow → stampers return originals; image provider failure → blog still publishes with fewer images; no candidate links → related block omitted gracefully.
@@ -88,7 +88,7 @@ Every published blog ends with a clearly rendered block of **3-5 long-tail keywo
 
 ## Decisions
 - Scope = Python backend (authoritative; manual + scheduled). React app OUT unless requested.
-- Image types: hero photo, infographic, secondary lifestyle photo, quote/stat card, vertical pin (pin reserved for pinning, may also appear at end).
+- Image types: hero photo, infographic, step-by-step visual card, checklist/tips card, vertical pin (pin reserved for pinning, may also appear at end).
 - Links: inline (LLM-woven from validated allow-list) + deterministic "Related reading" block; mix of blogs + products; relevance-ranked by keyword/title overlap; current post excluded.
 - Security: all inline `<a>` URLs validated against the fetched candidate allow-list — model cannot introduce arbitrary URLs.
 - Rich Pin `og:*` head meta still OUT (theme `<head>`); article keeps `global.description_tag`.
@@ -96,7 +96,7 @@ Every published blog ends with a clearly rendered block of **3-5 long-tail keywo
 - Blog-link candidate source: LOCKED = A (local `generations` primary + live fetch fallback). Products always live via `fetch_products`.
 
 ## Further considerations
-1. Quote/stat card: A) Pillow-composited text on solid/brand background (reliable) — recommended; B) AI-generated card (prettier, less predictable).
+1. Step/checklist cards: A) Pillow-composited numbered/checklist cards on solid or brand background (reliable) — recommended; B) AI-generated cards (prettier, less predictable).
 2. Min links guarantee: if store has <3-4 eligible posts/products, fall back to fewer links rather than padding with irrelevant ones.
 
 ---

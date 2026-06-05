@@ -22,7 +22,7 @@ import shopify_client
 import state
 from config import StoreConfig
 from providers import AllModelsFailedError
-from services import image_service, llm_service, logo_service, title_service
+from services import image_service, internal_links, llm_service, logo_service, title_service
 from services.quality_service import html_to_review_text, review_draft
 from utils import text_to_html
 
@@ -661,6 +661,8 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
     ).lstrip()
     keywords = blog_data.get("keywords", [])
     hashtags = blog_data.get("hashtags", [])
+    long_tail_keywords = blog_data.get("long_tail_keywords", [])
+    pin_description = blog_data.get("pin_description", "")
     generated_by = blog_data.get("_model_name", "")
 
     # Images
@@ -670,8 +672,12 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
         image_url_list = [product_image_cdn] if product_image_cdn else []
         image_types = ["product"] if image_url_list else []
     else:
-        image_url_list = await image_service.generate_images(store_id, title, summary, prompt_text)
-        image_types = ["photo", "infographic"][: len(image_url_list)]
+        image_url_list, image_types, _image_labels = await image_service.generate_typed_images(
+            store_id,
+            title,
+            summary,
+            prompt_text,
+        )
 
     # Quality review
     quality_report = (await review_draft(
@@ -698,6 +704,8 @@ async def api_generate_draft(request: Request, payload: GenerateDraftRequest):
         "content": content,
         "keywords": keywords,
         "hashtags": hashtags,
+        "long_tail_keywords": long_tail_keywords,
+        "pin_description": pin_description,
         "image_urls": image_url_list,
         "image_types": image_types,
         "generated_by": generated_by,
@@ -719,6 +727,8 @@ class PublishArticleRequest(BaseModel):
     content: str
     keywords: list[str] = []
     hashtags: list[str] = []
+    long_tail_keywords: list[str] = []
+    pin_description: str = ""
     image_urls: list[str] = []
     image_types: list[str] = []
     selected_image_index: int = 0
@@ -760,7 +770,7 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
         img_type = payload.image_types[i] if i < len(payload.image_types) else "photo"
         if payload.product_url or img_type == "product":
             composited.append(await logo_service.stamp_infographic(url, logo_b64))
-        elif img_type == "photo":
+        elif img_type in ("photo", "hero_photo"):
             composited.append(await logo_service.stamp_photo(url, payload.title, logo_b64))
         else:
             composited.append(await logo_service.stamp_infographic(url, logo_b64))
@@ -778,6 +788,29 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
         content_html += f'\n<p><a href="{payload.product_url}" target="_blank" rel="noopener">{cta_label}</a></p>'
 
     try:
+        related_links = await internal_links.build_internal_links(
+            store,
+            store_id,
+            title=payload.title,
+            keywords=payload.keywords,
+            long_tail_keywords=payload.long_tail_keywords,
+            current_url="",
+            max_links=4,
+        )
+        related_block = internal_links.render_related_block(related_links)
+        if related_block:
+            content_html += "\n" + related_block
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block publish
+        logger.warning("Internal link build failed for API publish store %s: %s", store_id, exc)
+
+    pin_image_url = ""
+    if composited:
+        try:
+            pin_image_url = await logo_service.stamp_pin(composited[0], payload.title, logo_b64)
+        except Exception as exc:  # noqa: BLE001 — pin is optional
+            logger.warning("Pin image build failed for API publish store %s: %s", store_id, exc)
+
+    try:
         result = await shopify_client.publish_article(
             store=store,
             blog_handle=payload.blog_handle,
@@ -790,6 +823,9 @@ async def api_publish_article(request: Request, payload: PublishArticleRequest):
             image_url_list=composited,
             product_url=payload.product_url.strip(),
             product_title=payload.product_title.strip(),
+            long_tail_keywords=payload.long_tail_keywords,
+            pin_description=payload.pin_description,
+            pin_image_url=pin_image_url,
         )
     except shopify_client.ShopifyError as exc:
         logger.error("Shopify publish failed via API: %s", exc)

@@ -76,10 +76,14 @@ def _default_image_labels(image_types: list[str], image_count: int) -> list[str]
         img_type = image_types[i] if i < len(image_types) else ""
         if img_type == "product":
             labels.append("Product Image")
-        elif img_type == "photo":
-            labels.append("Photo")
+        elif img_type in ("photo", "hero_photo"):
+            labels.append("Hero Photo")
         elif img_type == "infographic":
             labels.append("Infographic")
+        elif img_type == "step_card":
+            labels.append("Step-by-Step Visual Card")
+        elif img_type == "checklist_card":
+            labels.append("Checklist/Tips Card")
         else:
             labels.append(f"Image {i + 1}")
     return labels

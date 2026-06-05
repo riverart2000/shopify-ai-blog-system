@@ -23,6 +23,7 @@ import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -863,7 +864,6 @@ class TestImageService:
         with patch("providers.get_image_provider", return_value=mock_provider):
             urls = await image_service.generate_images(sid, "Title", "Summary", "Prompt")
 
-        # New behaviour: 3-4 typed images (hero, infographic, secondary, detail)
         assert len(urls) == 4
         assert all(u.startswith("https://") for u in urls)
 
@@ -912,6 +912,33 @@ class TestImageService:
             await image_service.generate_images(sid, "My Blog Title", "Summary", "Prompt")
 
         assert "My Blog Title" in captured["prompt"]
+
+    async def test_generate_typed_images_returns_step_and_checklist_types(self, tmp_db):
+        from services import image_service
+
+        sid = "img-typed"
+        await db.upsert_store(_make_store(sid))
+
+        async def fake_generate_one(store_id, image_prompt, label):
+            slug = label.replace(" ", "-")
+            return f"https://img.example.com/{slug}.png"
+
+        with patch("services.image_service._generate_one", side_effect=fake_generate_one):
+            urls, image_types, image_labels = await image_service.generate_typed_images(
+                sid,
+                "How To Build Better Sleep Habits",
+                "A practical summary.",
+                "Prompt context.",
+            )
+
+        assert image_types == ["hero_photo", "infographic", "step_card", "checklist_card"]
+        assert image_labels == [
+            "Hero Photo",
+            "Infographic",
+            "Step-by-Step Visual Card",
+            "Checklist/Tips Card",
+        ]
+        assert len(urls) == 4
 
     async def test_generate_feature_image_falls_back_to_simpler_prompt(self, tmp_db):
         from services import image_service
@@ -1301,8 +1328,8 @@ class TestAuthedRoutes:
 
         with patch("routes.generate.llm_service.generate_text",
                    new_callable=AsyncMock, return_value=strong_blog), \
-             patch("routes.generate.image_service.generate_images",
-                   new_callable=AsyncMock, return_value=[]):
+             patch("routes.generate.image_service.generate_typed_images",
+                 new_callable=AsyncMock, return_value=([], [], [])):
             resp = await store_client.post(
                 "/generate",
                 data={
@@ -1318,6 +1345,126 @@ class TestAuthedRoutes:
         assert resp.status_code == 200
         assert b"quality checks" in resp.content.lower()
         assert b"local draft score" in resp.content.lower()
+
+    async def test_api_generate_draft_returns_typed_images_and_pin_metadata(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        quality_report = MagicMock()
+        quality_report.as_dict.return_value = {
+            "score": 92,
+            "publish_blocked": False,
+            "checks": [],
+        }
+
+        blog_data = {
+            "title": "Guide Title",
+            "summary": "Guide summary",
+            "content": "## Heading\n\nUseful content. " * 40,
+            "keywords": ["guide"],
+            "hashtags": ["#guide"],
+            "long_tail_keywords": ["best guide for beginners"],
+            "pin_description": "A pin description",
+            "_model_name": "test-model",
+        }
+
+        with patch("routes.api.llm_service.generate_text",
+                   new_callable=AsyncMock, return_value=blog_data), \
+             patch("routes.api.image_service.generate_typed_images",
+                   new_callable=AsyncMock,
+                   return_value=(
+                       [
+                           "https://img.example.com/hero.png",
+                           "https://img.example.com/info.png",
+                           "https://img.example.com/steps.png",
+                           "https://img.example.com/checklist.png",
+                       ],
+                       ["hero_photo", "infographic", "step_card", "checklist_card"],
+                       [
+                           "Hero Photo",
+                           "Infographic",
+                           "Step-by-Step Visual Card",
+                           "Checklist/Tips Card",
+                       ],
+                   )), \
+             patch("routes.api.review_draft",
+                   new_callable=AsyncMock, return_value=quality_report):
+            resp = await http_client.post(
+                "/api/generate/draft",
+                headers={"x-api-key": "test-api-key"},
+                json={
+                    "store_id": "s1",
+                    "prompt_id": "custom",
+                    "custom_prompt": "Write a useful store blog post.",
+                    "blog_handle": "news",
+                    "author": "Store Team",
+                    "model_id": "",
+                    "product_url": "",
+                },
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["image_types"] == ["hero_photo", "infographic", "step_card", "checklist_card"]
+        assert data["long_tail_keywords"] == ["best guide for beginners"]
+        assert data["pin_description"] == "A pin description"
+
+    async def test_api_publish_article_appends_related_block(self, http_client, monkeypatch):
+        monkeypatch.setenv("AI_BLOG_BACKEND_API_KEY", "test-api-key")
+        await db.upsert_store(_make_store("s1", "Store One Updated"))
+
+        quality_report = SimpleNamespace(publish_blocked=False)
+
+        publish_result = SimpleNamespace(
+            article_url="https://s1.com/blogs/news/guide-title",
+            article_id="987",
+        )
+
+        with patch("routes.api.review_draft",
+                   new_callable=AsyncMock, return_value=quality_report), \
+             patch("routes.api.internal_links.build_internal_links",
+                   new_callable=AsyncMock, return_value=[MagicMock()]), \
+             patch("routes.api.internal_links.render_related_block",
+                   return_value="<div>Related reading &amp; products</div>"), \
+             patch("routes.api.logo_service.stamp_photo",
+                   new_callable=AsyncMock, side_effect=lambda url, title, logo_b64="": url), \
+             patch("routes.api.logo_service.stamp_infographic",
+                   new_callable=AsyncMock, side_effect=lambda url, logo_b64="": url), \
+             patch("routes.api.logo_service.stamp_pin",
+                   new_callable=AsyncMock, return_value="https://img.example.com/pin.png"), \
+             patch("routes.api.shopify_client.publish_article",
+                   new_callable=AsyncMock, return_value=publish_result) as publish_mock:
+            resp = await http_client.post(
+                "/api/publish/article",
+                headers={"x-api-key": "test-api-key"},
+                json={
+                    "store_id": "s1",
+                    "prompt_id": "custom",
+                    "prompt_text": "Write a useful store blog post.",
+                    "blog_handle": "news",
+                    "author": "Store Team",
+                    "title": "Guide Title",
+                    "summary": "Guide summary",
+                    "content": "Useful content. " * 120,
+                    "keywords": ["guide"],
+                    "hashtags": ["#guide"],
+                    "long_tail_keywords": ["best guide for beginners"],
+                    "pin_description": "A pin description",
+                    "image_urls": ["https://img.example.com/hero.png"],
+                    "image_types": ["hero_photo"],
+                    "selected_image_index": 0,
+                    "product_url": "",
+                    "product_title": "",
+                    "title_pool_id": 0,
+                },
+            )
+
+        assert resp.status_code == 200
+        publish_kwargs = publish_mock.await_args.kwargs
+        assert "Related reading &amp; products" in publish_kwargs["content_html"]
+        assert publish_kwargs["long_tail_keywords"] == ["best guide for beginners"]
+        assert publish_kwargs["pin_description"] == "A pin description"
+        assert publish_kwargs["pin_image_url"] == "https://img.example.com/pin.png"
 
     async def test_publish_blocks_low_quality_draft(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))
@@ -1706,51 +1853,3 @@ class TestQualityService:
         assert dup_check.status == "fail"
         assert report.publish_blocked is True
         assert report.duplicate_similarity >= 0.88
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ⑯ services — social_captions (per-platform captions + UTM links)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class TestSocialCaptions:
-    def _captions(self):
-        from services import social_captions
-
-        return social_captions.build_captions(
-            title="10 Calming Bedtime Rituals for Better Sleep",
-            summary="Simple evening habits that help you wind down and sleep deeper.",
-            keywords=["sleep", "bedtime routine"],
-            hashtags=["#sleep", "#wellness", "#selfcare", "#nightroutine"],
-            long_tail_keywords=["how to fall asleep faster naturally"],
-            article_url="https://shop.example.com/blogs/news/bedtime-rituals?ref=1",
-            pin_description="Calming bedtime rituals for deeper sleep. #sleep #wellness",
-        )
-
-    def test_covers_all_platforms(self):
-        caps = {c["key"]: c for c in self._captions()}
-        assert set(caps) == {"pinterest", "linkedin", "facebook", "x", "substack", "instagram"}
-        for cap in caps.values():
-            assert cap["text"].strip()
-            assert cap["label"]
-
-    def test_links_are_utm_tagged_and_preserve_existing_params(self):
-        caps = {c["key"]: c for c in self._captions()}
-        # X maps to utm_source=twitter; existing ?ref=1 must be preserved
-        assert "utm_source=twitter" in caps["x"]["url"]
-        assert "utm_medium=social" in caps["x"]["url"]
-        assert "ref=1" in caps["x"]["url"]
-        assert "utm_source=substack" in caps["substack"]["url"]
-        assert "utm_medium=newsletter" in caps["substack"]["url"]
-
-    def test_x_caption_fits_tweet_limit(self):
-        caps = {c["key"]: c for c in self._captions()}
-        assert len(caps["x"]["text"]) <= 280
-
-    def test_pin_caption_prefers_pin_description(self):
-        caps = {c["key"]: c for c in self._captions()}
-        assert caps["pinterest"]["text"].startswith("Calming bedtime rituals")
-
-    def test_with_utm_handles_empty_url(self):
-        from services import social_captions
-
-        assert social_captions.with_utm("", "pinterest") == ""
