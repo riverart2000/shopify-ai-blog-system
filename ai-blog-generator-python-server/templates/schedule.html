@@ -165,7 +165,8 @@
                 <input type="text" name="author" value="{{ job.author }}" placeholder="(store default)" />
               </div>
               <div class="field"><label>Timezone</label>
-                <input type="text" name="timezone" value="{{ job.timezone or 'UTC' }}" placeholder="UTC" />
+                <input type="text" name="timezone" value="{{ job.timezone or 'UTC' }}" placeholder="Europe/London" />
+                <div class="hint">Use an IANA timezone like <code>Europe/London</code> or <code>America/New_York</code>.</div>
               </div>
             </div>
             <div class="field" style="margin-bottom:16px;">
@@ -249,7 +250,8 @@
           <input type="text" name="author" placeholder="(store default)" />
         </div>
         <div class="field"><label>Timezone</label>
-          <input type="text" name="timezone" value="UTC" placeholder="UTC" />
+          <input type="text" id="new-job-timezone" name="timezone" value="" placeholder="Auto-detected from browser" />
+          <div class="hint">Auto-detected from your browser. You can override it with an IANA timezone like <code>Europe/London</code>.</div>
         </div>
       </div>
       <div class="field" style="margin-bottom:16px;">
@@ -274,6 +276,18 @@
 </div>
 
 <script>
+  (function setNewJobTimezone() {
+    const input = document.getElementById('new-job-timezone');
+    if (!input || input.value.trim()) return;
+    try {
+      const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (browserZone) input.value = browserZone;
+    } catch (_) {
+      input.value = 'UTC';
+    }
+    if (!input.value.trim()) input.value = 'UTC';
+  })();
+
   function toggleEdit(type, id) {
     const el = document.getElementById(`edit-${type}-${id}`);
     if (el) el.classList.toggle('open');

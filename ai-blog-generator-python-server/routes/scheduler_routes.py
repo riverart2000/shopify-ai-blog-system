@@ -20,6 +20,7 @@ import shopify_client
 import state
 from config import StoreConfig
 from services import blog_scope
+from services.schedule_time import get_next_run_at, is_valid_timezone, normalize_timezone_name
 from providers import AllModelsFailedError
 
 try:
@@ -126,14 +127,23 @@ async def save_job(
             status_code=303,
         )
 
-    if not _validate_cron(cron_expr.strip()):
+    cron_expr_value = cron_expr.strip()
+    timezone_value = normalize_timezone_name(timezone)
+
+    if not _validate_cron(cron_expr_value):
         return RedirectResponse(
             "/schedule?error=Invalid+cron+expression+%28use+5-field+format%29",
             status_code=303,
         )
 
+    if not is_valid_timezone(timezone_value):
+        return RedirectResponse(
+            "/schedule?error=Invalid+timezone.+Use+an+IANA+timezone+like+Europe%2FLondon",
+            status_code=303,
+        )
+
     # Calculate next_run_at
-    next_run_at = _next_run(cron_expr.strip())
+    next_run_at = _next_run(cron_expr_value, timezone_value)
 
     await db.upsert_job({
         "id": job_id.strip() or None,
@@ -142,8 +152,8 @@ async def save_job(
         "prompt_id": prompt_id.strip(),
         "blog_handle": blog_handle.strip(),
         "author": author.strip(),
-        "cron_expr": cron_expr.strip(),
-        "timezone": timezone.strip() or "UTC",
+        "cron_expr": cron_expr_value,
+        "timezone": timezone_value,
         "is_active": 1 if is_active in ("1", "on", "true", "yes") else 0,
         "next_run_at": next_run_at,
         "is_product_blog": 1 if is_product_blog in ("1", "on", "true", "yes") else 0,
@@ -179,17 +189,10 @@ async def toggle_job(
     jobs = await db.get_scheduled_jobs(store_id)
     job = next((j for j in jobs if j["id"] == job_id), None)
     if job:
-        next_run = _next_run(job["cron_expr"]) if active else job.get("next_run_at")
+        next_run = _next_run(job["cron_expr"], job.get("timezone", "UTC")) if active else job.get("next_run_at")
         await db.upsert_job({**job, "is_active": 1 if active else 0, "next_run_at": next_run})
     return RedirectResponse("/schedule", status_code=303)
 
 
-def _next_run(cron_expr: str) -> Optional[int]:
-    try:
-        from croniter import croniter  # type: ignore
-        import datetime
-        base = datetime.datetime.utcnow()
-        it = croniter(cron_expr, base)
-        return int(it.get_next(float))
-    except Exception:
-        return None
+def _next_run(cron_expr: str, timezone: str = "UTC") -> Optional[int]:
+    return get_next_run_at(cron_expr, timezone)

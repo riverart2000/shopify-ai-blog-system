@@ -60,6 +60,7 @@ import db
 from providers import AllModelsFailedError
 from services import blog_scope
 from services import publish_service
+from services.schedule_time import get_next_run_at
 from services import title_service
 from services.keyword_service import fetch_keywords
 import shopify_client
@@ -74,16 +75,8 @@ _DB_PATH = os.environ.get("DB_PATH", "data/ai_blog_server.db")
 # croniter helper
 # ---------------------------------------------------------------------------
 
-def _get_next_run(cron_expr: str) -> int | None:
-    try:
-        from croniter import croniter  # type: ignore
-        import datetime
-        base = datetime.datetime.utcnow()
-        it = croniter(cron_expr, base)
-        return int(it.get_next(float))
-    except Exception as exc:
-        logger.warning("Could not compute next_run for '%s': %s", cron_expr, exc)
-        return None
+def _get_next_run(cron_expr: str, timezone: str = "UTC") -> int | None:
+    return get_next_run_at(cron_expr, timezone)
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +237,7 @@ async def _process_job(job: dict) -> None:
     finally:
         import time
         now = int(time.time())
-        next_run = _get_next_run(cron_expr)
+        next_run = _get_next_run(cron_expr, job.get("timezone", "UTC"))
         await db.update_job_run_times(job_id, now, next_run)
         logger.debug("Job '%s' next_run_at=%s", name, next_run)
 
@@ -258,7 +251,7 @@ async def _initialise_next_run_times() -> None:
     updated = 0
     for job in jobs:
         if job.get("next_run_at") is None:
-            next_run = _get_next_run(job["cron_expr"])
+            next_run = _get_next_run(job["cron_expr"], job.get("timezone", "UTC"))
             if next_run:
                 await db.update_job_run_times(job["id"], job.get("last_run_at", 0), next_run)
                 updated += 1

@@ -17,6 +17,7 @@ or for quick summary:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import os
 import sys
 import tempfile
@@ -1046,6 +1047,28 @@ class TestBlogScope:
 
 
 class TestSchedulerRouting:
+    async def test_get_next_run_at_respects_timezone(self):
+        from services.schedule_time import get_next_run_at
+
+        next_run = get_next_run_at(
+            "0 16 * * *",
+            "Europe/London",
+            now_utc=dt.datetime(2026, 6, 5, 14, 30, tzinfo=dt.timezone.utc),
+        )
+
+        assert next_run == int(dt.datetime(2026, 6, 5, 15, 0, tzinfo=dt.timezone.utc).timestamp())
+
+    async def test_get_next_run_at_returns_none_for_invalid_timezone(self):
+        from services.schedule_time import get_next_run_at
+
+        next_run = get_next_run_at(
+            "0 16 * * *",
+            "Not/AZone",
+            now_utc=dt.datetime(2026, 6, 5, 14, 30, tzinfo=dt.timezone.utc),
+        )
+
+        assert next_run is None
+
     async def test_process_job_blank_blog_handle_auto_routes_title_pool(self, tmp_db):
         import scheduler
 
@@ -1497,13 +1520,16 @@ class TestAuthedRoutes:
                 "prompt_id": "sched-test-prompt",
                 "blog_handle": "news",
                 "author": "",
-                "timezone": "UTC",
+                "timezone": "Europe/London",
             },
         )
         assert resp.status_code == 200
         jobs = await db.get_scheduled_jobs("s1")
         names = [j["name"] for j in jobs]
         assert "HTTP Job" in names
+
+        saved_job = next(j for j in jobs if j["name"] == "HTTP Job")
+        assert saved_job["timezone"] == "Europe/London"
 
     async def test_schedule_page_renders_blog_handle_dropdown(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))
