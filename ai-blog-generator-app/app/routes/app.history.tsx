@@ -1,7 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
-import { BACKEND_KEY, BACKEND_URL, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
+
+const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
+const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 
 type Generation = {
   id: number;
@@ -17,7 +19,7 @@ type Generation = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { selectedStore, storeId } = await loadBackendStoreContext(request);
+  await authenticate.admin(request);
 
   let generations: Generation[] = [];
   let error: string | null = null;
@@ -26,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     error = "AI_BLOG_BACKEND_API_KEY is not configured.";
   } else {
     try {
-      const res = await fetch(`${BACKEND_URL}${withStoreId("/api/history?limit=50", storeId)}`, {
+      const res = await fetch(`${BACKEND_URL}/api/history?limit=50`, {
         headers: { "x-api-key": BACKEND_KEY },
       });
       if (!res.ok) {
@@ -40,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  return { generations, error, storeName: selectedStore?.name || "" };
+  return { generations, error };
 };
 
 function formatDate(epochSeconds: number) {
@@ -54,7 +56,7 @@ function formatDate(epochSeconds: number) {
 }
 
 export default function HistoryRoute() {
-  const { generations, error, storeName } = useLoaderData<typeof loader>();
+  const { generations, error } = useLoaderData<typeof loader>();
 
   return (
     <s-page heading="Blog Generation History">
@@ -75,7 +77,7 @@ export default function HistoryRoute() {
         </s-section>
       ) : null}
 
-      <s-section heading={storeName ? `${storeName} recent generations (${generations.length})` : `${generations.length} recent generations`}>
+      <s-section heading={`${generations.length} recent generations`}>
         {generations.length === 0 && !error ? (
           <s-paragraph>No blog generations recorded yet.</s-paragraph>
         ) : (

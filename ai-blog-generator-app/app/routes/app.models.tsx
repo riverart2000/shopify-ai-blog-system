@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
-import { BACKEND_KEY, backendFetch, loadBackendStoreContext, withStoreId } from "../lib/backend-store.server";
 import { authenticate } from "../shopify.server";
+
+const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
+const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 
 type AiModel = {
   id: string;
@@ -17,11 +19,30 @@ type AiModel = {
   is_active: boolean;
 };
 
+async function backendFetch(path: string, opts: RequestInit = {}) {
+  const res = await fetch(`${BACKEND_URL}${path}`, {
+    ...opts,
+    headers: { "x-api-key": BACKEND_KEY, "content-type": "application/json", ...(opts.headers ?? {}) },
+  });
+  if (!res.ok) {
+    let detail = `Backend ${res.status}`;
+    try {
+      const body = await res.json() as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text) detail = text.slice(0, 200);
+    }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { storeId } = await loadBackendStoreContext(request);
+  await authenticate.admin(request);
   if (!BACKEND_KEY) return { backendConfigured: false, models: [], storeId: "" };
   try {
-    const data = storeId ? await backendFetch(withStoreId("/api/models", storeId)) : { models: [], store_id: "" };
+    const data = await backendFetch("/api/models");
     return { backendConfigured: true, models: (data.models ?? []) as AiModel[], storeId: (data.store_id ?? "") as string };
   } catch {
     return { backendConfigured: true, models: [], storeId: "" };

@@ -203,10 +203,10 @@ async def api_products(store_id: str):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/history")
-async def api_history(request: Request, store_id: str = "", limit: int = 50):
+async def api_history(request: Request, limit: int = 50):
     """Return recent blog generations as JSON. Auth: x-api-key header."""
     _verify_backend_api_key(request)
-    rows = await db.get_recent_generations(store_id=store_id.strip() or None, limit=min(limit, 200))
+    rows = await db.get_recent_generations(limit=min(limit, 200))
     return {"generations": rows}
 
 
