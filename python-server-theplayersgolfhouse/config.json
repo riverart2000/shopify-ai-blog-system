@@ -1,0 +1,68 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4001,
+    "mode": "production",
+    "secret_key": "47v348t5ytv45"
+  },
+  "logging": {
+    "file_path": "logs/ai-blog-server.log",
+    "max_bytes": 5242880,
+    "backup_count": 3
+  },
+  "deepseek": {
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "model": "deepseek-chat",
+    "temperature": 0.7,
+    "timeout_seconds": 90,
+    "max_retries": 2,
+    "system_prompt": "You are a senior ecommerce content strategist and SEO writer creating long-form Shopify blog posts for a golf retailer. Write in British English. Return exactly one valid JSON object with no markdown fences, no commentary, just raw JSON."
+  },
+  "grok": {
+    "api_key_env": "GROK_API_KEY",
+    "endpoint": "https://api.x.ai/v1/images/generations",
+    "model": "grok-imagine-image",
+    "image_count": 2,
+    "timeout_seconds": 60
+  },
+  "stores": [
+    {
+      "id": "theplayersgolfhouse",
+      "name": "The Players Golf House",
+      "myshopify_domain": "theplayersgolfhouse.myshopify.com",
+      "client_id_env": "SHOPIFY_CLIENT_ID_PLAYERSGOLFHOUSE",
+      "client_secret_env": "SHOPIFY_CLIENT_SECRET_PLAYERSGOLFHOUSE",
+      "default_blog_handle": "news",
+      "default_author": "The Players Golf House Team"
+    }
+  ],
+  "prompts": [
+    {
+      "id": "golf_tips",
+      "name": "Golf Tips & Advice",
+      "text": "Write a detailed, practical golf tips blog post for a premium golf retailer. Focus on performance, technique, product fit, and buying confidence. Tone: expert, helpful, and commercially useful without being salesy."
+    },
+    {
+      "id": "product_spotlight",
+      "name": "Golf Product Spotlight",
+      "text": "Write an in-depth product spotlight blog post for a golf product. Cover who it suits, on-course benefits, performance tradeoffs, and how to choose the right specification. Tone: premium, informative, and authoritative."
+    },
+    {
+      "id": "buying_guide",
+      "name": "Golf Buying Guide",
+      "text": "Write a golf buying guide that helps players compare options, understand tradeoffs, and choose the right product for their game. Tone: clear, trustworthy, and practical."
+    },
+    {
+      "id": "instructional_guide",
+      "name": "Instructional Guide",
+      "text": "Write an instructional golf guide that teaches a specific skill, drill, or improvement area. Use practical steps, common mistakes, and product-relevant advice where helpful. Tone: coach-like, clear, and encouraging."
+    },
+    {
+      "id": "custom",
+      "name": "Custom Prompt",
+      "text": ""
+    }
+  ]
+
+}

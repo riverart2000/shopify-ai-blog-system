@@ -40,10 +40,12 @@ BRANCH="main"
 # Path to the cloned repo on the production server
 REMOTE_APP_DIR="/home/ubuntu/shopify-ai-blog-system"
 REMOTE_SERVER_DIR="${REMOTE_APP_DIR}/ai-blog-generator-python-server"
+REMOTE_SECONDARY_SERVER_DIR="${REMOTE_APP_DIR}/python-server-theplayersgolfhouse"
 REMOTE_FRONTEND_DIR="${REMOTE_APP_DIR}/ai-blog-generator-app"
 
 # Health probes (run on the server, against localhost)
 BACKEND_PORT="4000"      # FastAPI / uvicorn — any HTTP response means up (303 = redirect to /login)
+SECONDARY_BACKEND_PORT="4001"  # Secondary FastAPI backend mounted under /theplayersgolfhouse via Caddy
 FRONTEND_PORT="3001"     # React app — expects HTTP 200
 PUBLIC_URL="https://revenuemindproai.com:8443"
 
@@ -139,8 +141,9 @@ ssh \
   "${PROD_USER}@${PROD_HOST}" \
   "FORCE_FRONTEND='${FORCE_FRONTEND}' SKIP_FRONTEND='${SKIP_FRONTEND}' NO_RESTART='${NO_RESTART}' \
    BRANCH='${BRANCH}' APP_DIR='${REMOTE_APP_DIR}' SERVER_DIR='${REMOTE_SERVER_DIR}' \
+    SECONDARY_SERVER_DIR='${REMOTE_SECONDARY_SERVER_DIR}' \
    FRONTEND_DIR='${REMOTE_FRONTEND_DIR}' BACKEND_PORT='${BACKEND_PORT}' \
-   FRONTEND_PORT='${FRONTEND_PORT}' bash -s" <<'REMOTE'
+    SECONDARY_BACKEND_PORT='${SECONDARY_BACKEND_PORT}' FRONTEND_PORT='${FRONTEND_PORT}' bash -s" <<'REMOTE'
 set -euo pipefail
 
 C_GREEN='\033[0;32m'; C_RED='\033[0;31m'; C_CYAN='\033[0;36m'; C_YEL='\033[1;33m'; C_NC='\033[0m'
@@ -151,6 +154,10 @@ rwarn() { printf "${C_YEL}[prod] ⚠${C_NC}  %s\n" "$1"; }
 
 [[ -d "${APP_DIR}/.git" ]] || { rerr "Not a git repository: ${APP_DIR}"; exit 1; }
 cd "$APP_DIR"
+SECONDARY_PRESENT=0
+if [[ -d "$SECONDARY_SERVER_DIR" ]]; then
+  SECONDARY_PRESENT=1
+fi
 
 # ── Sync with GitHub ──────────────────────────────────────────────────────────
 PREV_COMMIT="$(git rev-parse HEAD)"
@@ -169,12 +176,23 @@ else
 fi
 
 # ── Resolve venv python ───────────────────────────────────────────────────────
-if [[ -x "${SERVER_DIR}/.venv/bin/python" ]]; then
-  PIP="${SERVER_DIR}/.venv/bin/pip"
-else
-  rwarn "No virtualenv found — running service.sh setup to create it"
+NEEDS_SETUP=0
+if [[ ! -x "${SERVER_DIR}/.venv/bin/python" ]]; then
+  NEEDS_SETUP=1
+fi
+if [[ "$SECONDARY_PRESENT" == "1" && ! -x "${SECONDARY_SERVER_DIR}/.venv/bin/python" ]]; then
+  NEEDS_SETUP=1
+fi
+
+if [[ "$NEEDS_SETUP" == "1" ]]; then
+  rwarn "One or more virtualenvs are missing — running service.sh setup"
   ( cd "$SERVER_DIR" && ./service.sh setup )
-  PIP="${SERVER_DIR}/.venv/bin/pip"
+fi
+
+PIP="${SERVER_DIR}/.venv/bin/pip"
+SECONDARY_PIP=""
+if [[ "$SECONDARY_PRESENT" == "1" ]]; then
+  SECONDARY_PIP="${SECONDARY_SERVER_DIR}/.venv/bin/pip"
 fi
 
 # ── Python deps: only when requirements.txt changed ──────────────────────────
@@ -184,6 +202,16 @@ if [[ -z "$PREV_COMMIT" ]] || grep -q '^ai-blog-generator-python-server/requirem
   rok "Python dependencies up to date"
 else
   rok "requirements.txt unchanged — skipping pip install"
+fi
+
+if [[ "$SECONDARY_PRESENT" == "1" ]]; then
+  if [[ -z "$PREV_COMMIT" ]] || grep -q '^python-server-theplayersgolfhouse/requirements\.txt$' <<<"$CHANGED" || [[ "$NEEDS_SETUP" == "1" ]]; then
+    rlog "Secondary backend requirements changed — installing Python dependencies..."
+    "$SECONDARY_PIP" install --quiet -r "${SECONDARY_SERVER_DIR}/requirements.txt"
+    rok "Secondary Python dependencies up to date"
+  else
+    rok "Secondary backend requirements unchanged — skipping pip install"
+  fi
 fi
 
 # ── React app: rebuild only when its files changed ───────────────────────────
@@ -221,29 +249,32 @@ fi
 # ── Health checks ─────────────────────────────────────────────────────────────
 rlog "Running health checks..."
 
-_probe() {  # name port [expected_code]
-  local name="$1" port="$2" expect="${3:-}"
+_probe() {  # name port path [expected_code]
+  local name="$1" port="$2" path="$3" expect="${4:-}"
   local code attempt=0
   while (( attempt < 12 )); do
     # curl's -w always prints a 3-digit status (000 on connection failure),
     # so capture it directly — do NOT append a fallback or the codes concatenate.
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}/" 2>/dev/null || true)"
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || true)"
     [[ -z "$code" ]] && code="000"
     if [[ "$code" != "000" ]]; then
       if [[ -z "$expect" || "$code" == "$expect" ]]; then
-        rok "${name} healthy on :${port} (HTTP ${code})"
+        rok "${name} healthy on :${port}${path} (HTTP ${code})"
         return 0
       fi
     fi
     attempt=$(( attempt + 1 )); sleep 3
   done
-  rerr "${name} unhealthy on :${port} (last HTTP ${code:-000})"
+  rerr "${name} unhealthy on :${port}${path} (last HTTP ${code:-000})"
   return 1
 }
 
 HEALTH_OK=1
-_probe "Backend (FastAPI)" "$BACKEND_PORT"          || HEALTH_OK=0
-_probe "Frontend (React)"  "$FRONTEND_PORT" "200"    || HEALTH_OK=0
+_probe "Backend (FastAPI)" "$BACKEND_PORT" "/" "303" || HEALTH_OK=0
+if [[ "$SECONDARY_PRESENT" == "1" ]]; then
+  _probe "Secondary backend" "$SECONDARY_BACKEND_PORT" "/health" "200" || HEALTH_OK=0
+fi
+_probe "Frontend (React)"  "$FRONTEND_PORT" "/" "200" || HEALTH_OK=0
 
 if [[ "$NO_RESTART" == "1" ]]; then
   rwarn "Restart was skipped — health result is informational only"

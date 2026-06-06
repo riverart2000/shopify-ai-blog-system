@@ -4,11 +4,13 @@
 #
 # Usage:  ./service.sh {start|stop|restart|status}
 #
-# Manages four processes:
-#   • React app    — Shopify/React frontend (port 3000, localhost only)
-#   • main.py      — FastAPI / uvicorn backend (port 4000, localhost only)
-#   • scheduler.py — Autonomous blog post scheduler
-#   • caddy        — TLS reverse proxy (port 8443 → React app)
+# Manages the primary Shopify frontend plus one or two backend instances:
+#   • React app              — Shopify/React frontend (port 3000/3001, localhost only)
+#   • primary main.py        — FastAPI / uvicorn backend (port 4000, localhost only)
+#   • primary scheduler.py   — Autonomous blog post scheduler
+#   • secondary main.py      — Optional FastAPI backend (port 4001, localhost only)
+#   • secondary scheduler.py — Optional scheduler for the secondary backend
+#   • caddy                  — TLS reverse proxy (port 8443 → frontend + secondary path)
 #
 # TLS mode (auto-detected from .env):
 #   CERT_FILE + KEY_FILE present  →  explicit cert mode (certbot-managed certs)
@@ -28,21 +30,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR"
 WORKSPACE_DIR="$(cd "$APP_DIR/.." && pwd)"
 FRONTEND_DIR="${FRONTEND_DIR:-$WORKSPACE_DIR/ai-blog-generator-app}"
+SECONDARY_APP_DIR="${SECONDARY_APP_DIR:-$WORKSPACE_DIR/python-server-theplayersgolfhouse}"
+SECONDARY_BACKEND_PORT="${SECONDARY_BACKEND_PORT:-4001}"
+SECONDARY_BACKEND_PREFIX="${SECONDARY_BACKEND_PREFIX:-/theplayersgolfhouse}"
+SECONDARY_BACKEND_PREFIX="/${SECONDARY_BACKEND_PREFIX#/}"
+SECONDARY_BACKEND_PREFIX="${SECONDARY_BACKEND_PREFIX%/}"
+SECONDARY_ENABLED=false
+if [[ -d "$SECONDARY_APP_DIR" ]]; then
+    SECONDARY_ENABLED=true
+fi
 
 RUN_DIR="$APP_DIR/run"
 LOG_DIR="$APP_DIR/logs"
 mkdir -p "$RUN_DIR" "$LOG_DIR"
 
+SECONDARY_RUN_DIR="$SECONDARY_APP_DIR/run"
+SECONDARY_LOG_DIR="$SECONDARY_APP_DIR/logs"
+if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+    mkdir -p "$SECONDARY_RUN_DIR" "$SECONDARY_LOG_DIR"
+fi
+
 MAIN_PID="$RUN_DIR/main.pid"
 FRONTEND_PID="$RUN_DIR/frontend.pid"
 SCHED_PID="$RUN_DIR/scheduler.pid"
 CADDY_PID="$RUN_DIR/caddy.pid"
+SECONDARY_MAIN_PID="$SECONDARY_RUN_DIR/main.pid"
+SECONDARY_SCHED_PID="$SECONDARY_RUN_DIR/scheduler.pid"
 
 MAIN_LOG="$LOG_DIR/main.log"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 SCHED_LOG="$LOG_DIR/scheduler.log"
 CADDY_LOG="$LOG_DIR/caddy.log"
 CADDY_ACCESS_LOG="$LOG_DIR/caddy-access.log"
+SECONDARY_MAIN_LOG="$SECONDARY_LOG_DIR/main.log"
+SECONDARY_SCHED_LOG="$SECONDARY_LOG_DIR/scheduler.log"
 
 GENERATED_CADDYFILE="$RUN_DIR/Caddyfile"
 
@@ -87,13 +108,21 @@ fi
 
 # ── Resolve executables ───────────────────────────────────────────────────────
 
-# Use virtualenv python if present, else system python3
-if [[ -x "$APP_DIR/.venv/bin/python" ]]; then
-    PYTHON="$APP_DIR/.venv/bin/python"
-elif [[ -x "$APP_DIR/venv/bin/python" ]]; then
-    PYTHON="$APP_DIR/venv/bin/python"
-else
-    PYTHON="${PYTHON:-python3}"
+_resolve_python() {
+    local app_dir="$1"
+    if [[ -x "$app_dir/.venv/bin/python" ]]; then
+        printf '%s\n' "$app_dir/.venv/bin/python"
+    elif [[ -x "$app_dir/venv/bin/python" ]]; then
+        printf '%s\n' "$app_dir/venv/bin/python"
+    else
+        printf '%s\n' "${PYTHON:-python3}"
+    fi
+}
+
+PYTHON="$(_resolve_python "$APP_DIR")"
+SECONDARY_PYTHON=""
+if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+    SECONDARY_PYTHON="$(_resolve_python "$SECONDARY_APP_DIR")"
 fi
 
 CADDY="${CADDY:-caddy}"
@@ -153,6 +182,34 @@ echo "        ${basic_auth_user} ${basic_auth_hash}"
 echo "    }"
 fi)
 
+$(if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+cat <<SECONDARYROUTE
+    @secondary_root {
+        path ${SECONDARY_BACKEND_PREFIX}
+    }
+    redir @secondary_root ${SECONDARY_BACKEND_PREFIX}/ 308
+
+    handle_path ${SECONDARY_BACKEND_PREFIX}/* {
+        reverse_proxy localhost:${SECONDARY_BACKEND_PORT} {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Prefix ${SECONDARY_BACKEND_PREFIX}
+        }
+    }
+
+SECONDARYROUTE
+fi)
+
+    reverse_proxy /apps/rss* localhost:18090 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    reverse_proxy /publar* localhost:18090 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
     reverse_proxy localhost:${FRONTEND_PORT} {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto https
@@ -196,6 +253,34 @@ echo "    basicauth @landing {"
 echo "        ${basic_auth_user} ${basic_auth_hash}"
 echo "    }"
 fi)
+
+$(if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+cat <<SECONDARYROUTE
+    @secondary_root {
+        path ${SECONDARY_BACKEND_PREFIX}
+    }
+    redir @secondary_root ${SECONDARY_BACKEND_PREFIX}/ 308
+
+    handle_path ${SECONDARY_BACKEND_PREFIX}/* {
+        reverse_proxy localhost:${SECONDARY_BACKEND_PORT} {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Prefix ${SECONDARY_BACKEND_PREFIX}
+        }
+    }
+
+SECONDARYROUTE
+fi)
+
+    reverse_proxy /apps/rss* localhost:18090 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    reverse_proxy /publar* localhost:18090 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+    }
 
     reverse_proxy localhost:${FRONTEND_PORT} {
         header_up X-Real-IP {remote_host}
@@ -277,6 +362,9 @@ _kill_port() {
 
 _kill_stale_ports() {
     _kill_port "$PYTHON_BACKEND_PORT"   # FastAPI / uvicorn  (4000)
+    if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+        _kill_port "$SECONDARY_BACKEND_PORT"  # Secondary FastAPI / uvicorn (4001)
+    fi
     _kill_port "$FRONTEND_PORT"          # React app          (3000)
     if [[ "$IS_DEV" != "true" ]]; then
         _kill_port 8443                  # Caddy TCP+UDP
@@ -363,6 +451,40 @@ _start_scheduler() {
     echo "  scheduler.py started (pid=$pid) → $SCHED_LOG"
 }
 
+_start_secondary_main() {
+    if [[ "$SECONDARY_ENABLED" != "true" ]]; then
+        return
+    fi
+    if _is_running "$SECONDARY_MAIN_PID"; then
+        echo "  secondary main.py already running (pid=$(cat "$SECONDARY_MAIN_PID"))"
+        return
+    fi
+    echo "  Starting secondary main.py..."
+    cd "$SECONDARY_APP_DIR"
+    nohup "$SECONDARY_PYTHON" main.py >> "$SECONDARY_MAIN_LOG" 2>&1 &
+    local pid=$!
+    disown "$pid"
+    echo "$pid" > "$SECONDARY_MAIN_PID"
+    echo "  secondary main.py started (pid=$pid) → $SECONDARY_MAIN_LOG"
+}
+
+_start_secondary_scheduler() {
+    if [[ "$SECONDARY_ENABLED" != "true" ]]; then
+        return
+    fi
+    if _is_running "$SECONDARY_SCHED_PID"; then
+        echo "  secondary scheduler.py already running (pid=$(cat "$SECONDARY_SCHED_PID"))"
+        return
+    fi
+    echo "  Starting secondary scheduler.py..."
+    cd "$SECONDARY_APP_DIR"
+    nohup "$SECONDARY_PYTHON" scheduler.py >> "$SECONDARY_SCHED_LOG" 2>&1 &
+    local pid=$!
+    disown "$pid"
+    echo "$pid" > "$SECONDARY_SCHED_PID"
+    echo "  secondary scheduler.py started (pid=$pid) → $SECONDARY_SCHED_LOG"
+}
+
 _start_caddy() {
     if _is_running "$CADDY_PID"; then
         echo "  Caddy already running (pid=$(cat "$CADDY_PID"))"
@@ -392,6 +514,17 @@ do_setup() {
     "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
     echo "  Python dependencies ready."
 
+    if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+        if [[ ! -x "$SECONDARY_APP_DIR/.venv/bin/python" ]]; then
+            echo "  Creating secondary Python virtualenv..."
+            python3 -m venv "$SECONDARY_APP_DIR/.venv"
+        fi
+        SECONDARY_PYTHON="$SECONDARY_APP_DIR/.venv/bin/python"
+        echo "  Installing secondary Python requirements..."
+        "$SECONDARY_APP_DIR/.venv/bin/pip" install --quiet -r "$SECONDARY_APP_DIR/requirements.txt"
+        echo "  Secondary Python dependencies ready."
+    fi
+
     # ── Node / React app ─────────────────────────────────────────────────────
     if [[ ! -d "$FRONTEND_DIR" ]]; then
         echo "WARNING: React app directory not found: $FRONTEND_DIR — skipping frontend setup" >&2
@@ -417,7 +550,7 @@ do_setup() {
 
 do_start() {
     # Auto-setup if venv or node_modules are missing
-    if [[ ! -x "$APP_DIR/.venv/bin/python" ]] || [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+    if [[ ! -x "$APP_DIR/.venv/bin/python" ]] || [[ ! -d "$FRONTEND_DIR/node_modules" ]] || ([[ "$SECONDARY_ENABLED" == "true" ]] && [[ ! -x "$SECONDARY_APP_DIR/.venv/bin/python" ]]); then
         echo "  Dependencies missing — running setup first..."
         do_setup
     fi
@@ -425,9 +558,14 @@ do_start() {
     if [[ -x "$APP_DIR/.venv/bin/python" ]]; then
         PYTHON="$APP_DIR/.venv/bin/python"
     fi
+    if [[ "$SECONDARY_ENABLED" == "true" ]] && [[ -x "$SECONDARY_APP_DIR/.venv/bin/python" ]]; then
+        SECONDARY_PYTHON="$SECONDARY_APP_DIR/.venv/bin/python"
+    fi
     echo "Starting services [${ENV_LABEL}]..."
     _start_main
     _start_scheduler
+    _start_secondary_main
+    _start_secondary_scheduler
     _start_frontend
     if [[ "$IS_DEV" != "true" ]]; then
         _start_caddy
@@ -441,6 +579,8 @@ do_stop() {
         _stop_pid "Caddy"    "$CADDY_PID"
     fi
     _stop_pid "React app"    "$FRONTEND_PID"
+    _stop_pid "secondary scheduler.py" "$SECONDARY_SCHED_PID"
+    _stop_pid "secondary main.py"      "$SECONDARY_MAIN_PID"
     _stop_pid "scheduler.py" "$SCHED_PID"
     _stop_pid "main.py"      "$MAIN_PID"
     # Kill any orphaned scheduler.py or main.py processes not tracked by PID files
@@ -461,6 +601,9 @@ do_status() {
     echo "Service status [${ENV_LABEL}]:"
     local all_ok=true
     local services=("main.py:$MAIN_PID" "scheduler.py:$SCHED_PID" "React app:$FRONTEND_PID")
+    if [[ "$SECONDARY_ENABLED" == "true" ]]; then
+        services+=("secondary main.py:$SECONDARY_MAIN_PID" "secondary scheduler.py:$SECONDARY_SCHED_PID")
+    fi
     if [[ "$IS_DEV" != "true" ]]; then
         services+=("Caddy:$CADDY_PID")
     fi
