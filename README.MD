@@ -80,6 +80,11 @@ Responsibilities:
 `routes/api.py`
 - Utility endpoints for blogs and products.
 - History page, live Shopify post scan, and delete-low-quality-post flow.
+- Exposes async, non-blocking background queue tasks to generate product blogs and verify corresponding description sync tags.
+
+`routes/app.product-blogs-api.tsx`
+- Dedicated Resource Route inside the Shopify App.
+- Handles App Bridge-authenticated raw JSON actions (`generate`, `status`, `ensure-description`) securely without returning HTML.
 
 `routes/scheduler_routes.py`
 - CRUD UI for scheduled publishing jobs.
@@ -286,7 +291,7 @@ If the task is about draft generation quality:
 - Python server: `services/llm_service.py`, `services/quality_service.py`, provider modules
 
 If the task is about image behavior:
-- Python server: `services/image_service.py`, `services/logo_service.py`, `shopify_client.py`
+- Python server: `services/image_service.py`, `services/logo_service.py`, `services/image_optimizer.py` (which runs real-time WebP optimization, compression, and resolution downscaling on all uploaded assets), `shopify_client.py`
 - React app: `app/lib/studio-assets.server.ts`, `app/lib/blog-studio.server.ts`
 
 If the task is about Shopify publish behavior:
