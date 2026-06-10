@@ -10,10 +10,11 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import time
 from typing import Annotated
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -1384,8 +1385,50 @@ class ProductBlogGenerateRequest(BaseModel):
     prompt_id: str = ""
 
 
+async def run_product_blog_generation_task(
+    store_id: str,
+    prompt_text: str,
+    blog_handle: str,
+    prompt_id_val: str,
+    product_url: str,
+    product_title: str,
+    product_handle: str,
+    task_key: str
+):
+    from services import publish_service
+    try:
+        state.product_blog_tasks[task_key]["status"] = "processing"
+        result = await publish_service.run(
+            store_id=store_id,
+            prompt_text=prompt_text,
+            blog_handle=blog_handle,
+            author="Store Team",
+            prompt_id=prompt_id_val,
+            product_url=product_url,
+            product_title=product_title,
+        )
+        state.product_blog_tasks[task_key].update({
+            "status": "success",
+            "article_id": str(result.article_id),
+            "article_url": result.article_url,
+            "title": result.title,
+            "updated_at": time.time()
+        })
+    except Exception as exc:
+        logger.exception("Failed to generate blog for product %s in background", product_title)
+        state.product_blog_tasks[task_key].update({
+            "status": "failed",
+            "error": f"Generation failed: {str(exc)}",
+            "updated_at": time.time()
+        })
+
+
 @router.post("/api/products/generate-blog")
-async def api_product_blog_generate(request: Request, payload: ProductBlogGenerateRequest):
+async def api_product_blog_generate(
+    request: Request,
+    payload: ProductBlogGenerateRequest,
+    background_tasks: BackgroundTasks
+):
     _verify_backend_api_key(request)
     sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
     if not sid:
@@ -1393,6 +1436,21 @@ async def api_product_blog_generate(request: Request, payload: ProductBlogGenera
         sid = stores[0]["id"] if stores else ""
     if not sid:
         raise HTTPException(status_code=400, detail="store_id is required")
+
+    phandle = payload.product_handle.strip()
+    if not phandle:
+        raise HTTPException(status_code=400, detail="product_handle is required")
+
+    task_key = f"{sid}:{phandle}"
+
+    # Check if there is already a running task
+    existing_task = state.product_blog_tasks.get(task_key)
+    if existing_task and existing_task.get("status") in ("pending", "processing"):
+        return {
+            "ok": True,
+            "status": existing_task["status"],
+            "message": f"Generation for {payload.product_title} is already in progress."
+        }
 
     prompt_id = payload.prompt_id.strip()
     if not prompt_id:
@@ -1412,24 +1470,52 @@ async def api_product_blog_generate(request: Request, payload: ProductBlogGenera
         prompt_text = prompt_cfg["text"]
         prompt_id_val = prompt_cfg["id"]
 
-    from services import publish_service
-    try:
-        result = await publish_service.run(
-            store_id=sid,
-            prompt_text=prompt_text,
-            blog_handle=payload.blog_handle.strip() or "inside-the-products",
-            author="Store Team",
-            prompt_id=prompt_id_val,
-            product_url=payload.product_url.strip(),
-            product_title=payload.product_title.strip(),
-        )
+    # Initialise state
+    state.product_blog_tasks[task_key] = {
+        "status": "pending",
+        "article_id": None,
+        "article_url": None,
+        "title": None,
+        "error": None,
+        "updated_at": time.time()
+    }
+
+    background_tasks.add_task(
+        run_product_blog_generation_task,
+        store_id=sid,
+        prompt_text=prompt_text,
+        blog_handle=payload.blog_handle.strip() or "inside-the-products",
+        prompt_id_val=prompt_id_val,
+        product_url=payload.product_url.strip(),
+        product_title=payload.product_title.strip(),
+        product_handle=phandle,
+        task_key=task_key
+    )
+
+    return {
+        "ok": True,
+        "status": "pending",
+        "message": f"Successfully queued generation for {payload.product_title}"
+    }
+
+
+@router.get("/api/products/generate-blog/status")
+async def api_product_blog_generate_status(request: Request, store_id: str, product_handle: str):
+    _verify_backend_api_key(request)
+    if not store_id or not product_handle:
+        raise HTTPException(status_code=400, detail="store_id and product_handle are required")
+
+    key = f"{store_id}:{product_handle}"
+    task = state.product_blog_tasks.get(key)
+    if not task:
         return {
-            "ok": True,
-            "article_id": str(result.article_id),
-            "article_url": result.article_url,
-            "title": result.title,
-            "message": f"Successfully generated and published blog for {payload.product_title}"
+            "status": "idle"
         }
-    except Exception as exc:
-        logger.exception("Failed to generate blog for product %s", payload.product_title)
-        raise HTTPException(status_code=500, detail=f"Generation failed: {str(exc)}")
+
+    return {
+        "status": task.get("status", "idle"),
+        "article_id": task.get("article_id"),
+        "article_url": task.get("article_url"),
+        "title": task.get("title"),
+        "error": task.get("error")
+    }

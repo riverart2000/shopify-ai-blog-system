@@ -39,6 +39,17 @@ templates.env.globals["app_root"] = _app_root
 
 _logger = logging.getLogger("ai_blog_server")
 
+# Keys: "store_id:product_handle"
+# Value: {
+#   "status": "pending" | "processing" | "success" | "failed",
+#   "article_id": str | None,
+#   "article_url": str | None,
+#   "title": str | None,
+#   "error": str | None,
+#   "updated_at": float
+# }
+product_blog_tasks: dict[str, dict] = {}
+
 
 async def reload_config() -> None:
     """No-op: all store/model/prompt config is now loaded per-request from DB."""

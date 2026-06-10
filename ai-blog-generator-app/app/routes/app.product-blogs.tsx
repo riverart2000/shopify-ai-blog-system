@@ -83,6 +83,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return {
         ok: true,
         productId: String(form.get("productId") || ""),
+        status: result.status,
         articleUrl: result.article_url,
         articleId: result.article_id,
         title: result.title,
@@ -93,6 +94,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ok: false,
         productId: String(form.get("productId") || ""),
         error: e instanceof Error ? e.message : "Generation failed"
+      };
+    }
+  }
+
+  if (intent === "status") {
+    try {
+      const storeId = String(form.get("storeId") || "");
+      const productHandle = String(form.get("productHandle") || "");
+
+      const result = await backendFetch(`/api/products/generate-blog/status?store_id=${storeId}&product_handle=${productHandle}`);
+
+      return {
+        ok: true,
+        status: result.status,
+        articleUrl: result.article_url,
+        articleId: result.article_id,
+        title: result.title,
+        error: result.error
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Status check failed"
       };
     }
   }
@@ -125,6 +149,32 @@ export default function ProductBlogsPage() {
   const [isBulkRunning, setIsBulkRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
+  const checkStatus = async (p: typeof products[0]) => {
+    const formData = new FormData();
+    formData.append("intent", "status");
+    formData.append("storeId", storeId);
+    formData.append("productHandle", p.handle);
+
+    const response = await fetch("", {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} checking status`);
+    }
+    const resData = await response.json() as {
+      ok: boolean;
+      status: string;
+      articleUrl?: string;
+      title?: string;
+      error?: string;
+    };
+    if (!resData.ok) {
+      throw new Error(resData.error || "Status check failed");
+    }
+    return resData;
+  };
+
   const generateProductBlog = async (p: typeof products[0]) => {
     setProductStatuses(prev => ({
       ...prev,
@@ -150,8 +200,20 @@ export default function ProductBlogsPage() {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const resData = await response.json() as { ok: boolean; articleUrl?: string; title?: string; error?: string };
-      if (resData.ok) {
+      const resData = await response.json() as {
+        ok: boolean;
+        status?: string;
+        articleUrl?: string;
+        title?: string;
+        error?: string;
+        message?: string;
+      };
+
+      if (!resData.ok) {
+        throw new Error(resData.error || "Failed to initiate generation");
+      }
+
+      if (resData.status === "success") {
         setProductStatuses(prev => ({
           ...prev,
           [p.id]: {
@@ -162,9 +224,41 @@ export default function ProductBlogsPage() {
         }));
         setLogs(prev => [...prev, `[Success] Published blog for "${p.title}": ${resData.articleUrl}`]);
         return true;
-      } else {
-        throw new Error(resData.error || "Failed to generate");
       }
+
+      // Start polling status
+      let attempts = 0;
+      const maxAttempts = 60; // 5 min maximum
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        attempts++;
+        try {
+          const poll = await checkStatus(p);
+          if (poll.status === "success") {
+            setProductStatuses(prev => ({
+              ...prev,
+              [p.id]: {
+                status: "success",
+                guideTitle: poll.title || p.title,
+                guideUrl: poll.articleUrl,
+              }
+            }));
+            setLogs(prev => [...prev, `[Success] Published blog for "${p.title}": ${poll.articleUrl}`]);
+            return true;
+          }
+          if (poll.status === "failed") {
+            throw new Error(poll.error || "Generation task failed");
+          }
+        } catch (pollErr: any) {
+          // Keep trying if temporary status error, unless failed status reported
+          const msg = pollErr.message || pollErr;
+          if (typeof msg === "string" && msg.includes("failed")) {
+            throw pollErr;
+          }
+        }
+      }
+
+      throw new Error("Generation timed out on the backend (took > 5 minutes)");
     } catch (err: any) {
       const errMsg = err.message || "Unknown error";
       setProductStatuses(prev => ({
