@@ -52,8 +52,6 @@ export type ShopifyProductSummary = {
   guideTitle?: string | null;
   guideUrl?: string | null;
 };
-  imageUrl: string | null;
-};
 
 export type ShopifyStudioContext = {
   shopName: string;
