@@ -155,7 +155,7 @@ rwarn() { printf "${C_YEL}[prod] ⚠${C_NC}  %s\n" "$1"; }
 [[ -d "${APP_DIR}/.git" ]] || { rerr "Not a git repository: ${APP_DIR}"; exit 1; }
 cd "$APP_DIR"
 SECONDARY_PRESENT=0
-if [[ -d "$SECONDARY_SERVER_DIR" ]]; then
+if [[ -d "$SECONDARY_SERVER_DIR" && -f "$SECONDARY_SERVER_DIR/.env" ]]; then
   SECONDARY_PRESENT=1
 fi
 
