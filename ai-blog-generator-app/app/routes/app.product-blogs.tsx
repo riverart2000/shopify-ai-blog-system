@@ -121,6 +121,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (intent === "ensure-description") {
+    try {
+      const storeId = String(form.get("storeId") || "");
+      const productTitle = String(form.get("productTitle") || "");
+      const productHandle = String(form.get("productHandle") || "");
+      const productUrl = String(form.get("productUrl") || "");
+      const guideTitle = String(form.get("guideTitle") || "");
+      const guideUrl = String(form.get("guideUrl") || "");
+
+      const result = await backendFetch("/api/products/ensure-description", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: storeId,
+          product_title: productTitle,
+          product_handle: productHandle,
+          product_url: productUrl,
+          guide_title: guideTitle,
+          guide_url: guideUrl,
+        }),
+      });
+
+      return {
+        ok: true,
+        productId: String(form.get("productId") || ""),
+        message: result.message
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        productId: String(form.get("productId") || ""),
+        error: e instanceof Error ? e.message : "Checking description failed"
+      };
+    }
+  }
+
   return { ok: false, error: "Unknown intent" };
 };
 
@@ -270,26 +305,75 @@ export default function ProductBlogsPage() {
     }
   };
 
+  const ensureProductDescription = async (p: typeof products[0]) => {
+    const local = productStatuses[p.id];
+    if (!local || !local.guideUrl) return;
+
+    setLogs(prev => [...prev, `[Started] Verifying description link for "${p.title}"...`]);
+
+    const formData = new FormData();
+    formData.append("intent", "ensure-description");
+    formData.append("storeId", storeId);
+    formData.append("productId", p.id);
+    formData.append("productTitle", p.title);
+    formData.append("productHandle", p.handle);
+    formData.append("productUrl", `https://${storefrontDomain}/products/${p.handle}`);
+    formData.append("guideTitle", local.guideTitle || p.title);
+    formData.append("guideUrl", local.guideUrl);
+
+    try {
+      const response = await fetch("", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const resData = await response.json() as { ok: boolean; message?: string; error?: string };
+      if (resData.ok) {
+        setLogs(prev => [...prev, `[Success] Checked description for "${p.title}": ${resData.message || "already set or updated successfully"}`]);
+        return true;
+      } else {
+        throw new Error(resData.error || "Failed to check description");
+      }
+    } catch (err: any) {
+      const errMsg = err.message || "Unknown error";
+      setLogs(prev => [...prev, `[Failed] Description check for "${p.title}": ${errMsg}`]);
+      return false;
+    }
+  };
+
   const handleBulkGenerate = async () => {
     const targetProducts = products.filter(p => {
       const local = productStatuses[p.id];
       return !local?.guideUrl;
     });
 
-    if (targetProducts.length === 0) {
-      alert("All products already have blogs attached!");
-      return;
-    }
+    const backfillProducts = products.filter(p => {
+      const local = productStatuses[p.id];
+      return !!local?.guideUrl;
+    });
 
     setIsBulkRunning(true);
-    setLogs(prev => [...prev, `Starting batch generation for ${targetProducts.length} product(s)...`]);
+    setLogs(prev => [
+      ...prev,
+      `Starting batch execution: generating ${targetProducts.length} missing blogs, checking ${backfillProducts.length} existing product descriptions...`
+    ]);
 
+    // 1. Generate missing blogs
     for (const p of targetProducts) {
       await generateProductBlog(p);
     }
 
+    // 2. Ensure existing descriptions are updated
+    for (const p of backfillProducts) {
+      await ensureProductDescription(p);
+    }
+
     setIsBulkRunning(false);
-    setLogs(prev => [...prev, "Batch generation finished."]);
+    setLogs(prev => [...prev, "Batch execution finished."]);
   };
 
   const totalProducts = products.length;
@@ -337,18 +421,18 @@ export default function ProductBlogsPage() {
         <div style={{ display: "flex", gap: "12px", marginTop: "12px" }}>
           <button
             onClick={handleBulkGenerate}
-            disabled={isBulkRunning || missingCount === 0 || !backendConfigured}
+            disabled={isBulkRunning || !backendConfigured}
             style={{
               padding: "10px 18px",
-              background: isBulkRunning || missingCount === 0 ? "#8c9196" : "#202223",
+              background: isBulkRunning ? "#8c9196" : "#202223",
               color: "#ffffff",
               border: "none",
               borderRadius: "8px",
               fontWeight: 600,
-              cursor: isBulkRunning || missingCount === 0 ? "not-allowed" : "pointer",
+              cursor: isBulkRunning ? "not-allowed" : "pointer",
             }}
           >
-            {isBulkRunning ? "Generating Missing Blogs..." : `Generate Missing Blogs (${missingCount})`}
+            {isBulkRunning ? "Running Batch Process..." : `Generate Missing Blogs & Check Link Meta (${missingCount} missing)`}
           </button>
         </div>
       </s-section>

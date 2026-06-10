@@ -1519,3 +1519,82 @@ async def api_product_blog_generate_status(request: Request, store_id: str, prod
         "title": task.get("title"),
         "error": task.get("error")
     }
+
+
+class ProductBlogEnsureDescriptionRequest(BaseModel):
+    store_id: str = ""
+    product_title: str = ""
+    product_handle: str = ""
+    product_url: str = ""
+    guide_title: str = ""
+    guide_url: str = ""
+
+
+@router.post("/api/products/ensure-description")
+async def api_product_ensure_description(request: Request, payload: ProductBlogEnsureDescriptionRequest):
+    _verify_backend_api_key(request)
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+
+    logger.info("Ensuring description link for product %s (%s)", payload.product_title, payload.guide_url)
+
+    # 1. Look up any cached keywords/hashtags in generations database for this guide_url
+    import json
+    import aiosqlite
+    from db.base import get_db_path
+
+    keywords = []
+    hashtags = []
+    async with aiosqlite.connect(get_db_path()) as conn:
+        conn.row_factory = aiosqlite.Row
+        async with conn.execute(
+            "SELECT keywords, hashtags FROM generations WHERE store_id=? AND article_url=? LIMIT 1",
+            (sid, payload.guide_url)
+        ) as cur:
+            row = await cur.fetchone()
+
+    if row:
+        try:
+            keywords = json.loads(row["keywords"] or "[]")
+        except Exception:
+            keywords = []
+        try:
+            hashtags = json.loads(row["hashtags"] or "[]")
+        except Exception:
+            hashtags = []
+
+    # If empty, let's generate some fallback keywords and hashtags from the product's title or guide title
+    text_source = payload.guide_title or payload.product_title or ""
+    if not keywords:
+        words = [w.strip() for w in text_source.split() if len(w.strip()) > 2]
+        keywords = words + [text_source] if len(words) > 1 else words
+    if not hashtags:
+        words = [w.strip() for w in text_source.split() if len(w.strip()) > 2]
+        hashtags = [f"#{w}" for w in words]
+
+    # Resolve store config
+    store_row = await db.get_store_row(sid)
+    if not store_row:
+        raise HTTPException(status_code=404, detail="Store not found in database")
+    store_cfg = _store_config_from_row(store_row)
+
+    try:
+        await shopify_client._update_product_description_with_guide_link(
+            store=store_cfg,
+            product_handle=payload.product_handle.strip(),
+            guide_title=payload.guide_title.strip(),
+            guide_url=payload.guide_url.strip(),
+            keywords=keywords,
+            hashtags=hashtags,
+        )
+        return {
+            "ok": True,
+            "message": f"Successfully ensured/updated description for {payload.product_title}"
+        }
+    except Exception as exc:
+        logger.exception("Failed to update product description with guide link")
+        raise HTTPException(status_code=500, detail=str(exc))
