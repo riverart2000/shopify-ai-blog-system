@@ -2485,7 +2485,8 @@ class TestShopifyClient:
              patch("shopify_client._post", new_callable=AsyncMock, return_value={
                  "article": {"id": 987, "handle": "guide-post"}
              }), \
-             patch("shopify_client._set_related_product_guide_metafields", new_callable=AsyncMock) as guide_mock:
+             patch("shopify_client._set_related_product_guide_metafields", new_callable=AsyncMock) as guide_mock, \
+             patch("shopify_client._update_product_description_with_guide_link", new_callable=AsyncMock) as desc_mock:
             result = await shopify_client.publish_article(
                 store=store,
                 blog_handle="news",
@@ -2508,6 +2509,15 @@ class TestShopifyClient:
             guide_title="Guide Title",
             guide_url="https://s1.com/blogs/news/guide-post",
             guide_excerpt="Guide summary",
+        )
+        desc_mock.assert_awaited_once_with(
+            store=store,
+            product_handle="stone-mug",
+            guide_title="Guide Title",
+            guide_url="https://s1.com/blogs/news/guide-post",
+            keywords=["guide"],
+            hashtags=["#guide"],
+            long_tail_keywords=[],
         )
 
     async def test_update_article_image_uploads_and_puts_article_image(self, tmp_db):

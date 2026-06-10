@@ -881,6 +881,25 @@ async def publish_article(
                 exc,
             )
 
+        try:
+            await _update_product_description_with_guide_link(
+                store=store,
+                product_handle=product_handle,
+                guide_title=title,
+                guide_url=article_url,
+                keywords=keywords,
+                hashtags=hashtags,
+                long_tail_keywords=long_tail_keywords,
+            )
+        except Exception as exc:
+            product_label = product_title.strip() or product_handle or resolved_product_url
+            logger.warning(
+                "Published article id=%s but could not update body_html description for product %s: %s",
+                article_id,
+                product_label,
+                exc,
+            )
+
     logger.info(
         "Published article id=%s title='%s' to store=%s blog=%s",
         article_id,
@@ -961,3 +980,63 @@ async def _set_related_product_guide_metafields(
             message = err.get("message", "Shopify rejected the related guide metafield update.")
             parts.append(f"{field}: {message}" if field else message)
         raise ShopifyError("; ".join(parts))
+
+
+async def _update_product_description_with_guide_link(
+    store: StoreConfig,
+    product_handle: str,
+    guide_title: str,
+    guide_url: str,
+    keywords: list[str],
+    hashtags: list[str],
+    long_tail_keywords: list[str] | None = None,
+) -> None:
+    product = await _fetch_product_by_handle(store, product_handle, fields="id,handle,title,body_html")
+    if not product:
+        raise ShopifyError(f"No Shopify product found for handle '{product_handle}'.")
+
+    product_id = product.get("id")
+    if not product_id:
+        raise ShopifyError(f"Shopify product '{product_handle}' did not return an id.")
+
+    current_body = product.get("body_html", "") or ""
+
+    # Ensure we don't double append
+    if guide_url in current_body:
+        logger.info("Product %s already includes guide link in description. Skipping update.", product_handle)
+        return
+
+    # Slice keywords and hashtags to be 3-5 (no above 5, so clamp/slice at 5)
+    kws = long_tail_keywords if long_tail_keywords else keywords
+    if not kws:
+        kws = []
+    # Strip # if present on tags or keywords and format nicely
+    kws_clean = [k.strip() for k in kws if k.strip()][:5]
+    tags_clean = [t.strip() for t in hashtags if t.strip()][:5]
+
+    kw_text = ", ".join(kws_clean)
+    tag_text = " ".join(tags_clean)
+
+    append_parts = []
+    append_parts.append(f'<p><strong>Related Guide:</strong> <a href="{guide_url}" target="_blank" rel="noopener">{guide_title}</a></p>')
+    if kw_text:
+        append_parts.append(f'<p><em>Topics: {kw_text}</em></p>')
+    if tag_text:
+        append_parts.append(f'<p>{tag_text}</p>')
+
+    snippet = "\n" + "\n".join(append_parts)
+    new_body = current_body + snippet
+
+    token = await _get_token(store)
+    url = f"{_base_url(store)}/products/{product_id}.json"
+    payload = {
+        "product": {
+            "id": product_id,
+            "body_html": new_body
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        await _put(client, url, token, payload)
+
+    logger.info("Updated product %s description with related guide link, keywords, and hashtags.", product_handle)

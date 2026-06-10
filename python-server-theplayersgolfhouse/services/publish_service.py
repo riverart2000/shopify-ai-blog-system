@@ -146,11 +146,22 @@ async def run(
         logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
         data_uri = await shopify_client.fetch_product_image_data_uri(store, product_handle)
+        stamped_product_image = None
         if data_uri:
-            stamped = await logo_service.stamp_infographic(data_uri, logo_b64)
-            image_urls = [stamped]
-        else:
-            image_urls = []
+            stamped_product_image = await logo_service.stamp_infographic(data_uri, logo_b64)
+
+        # Generate the other 3 typed support images
+        gen_urls, gen_types, gen_labels = await image_service.generate_typed_images(
+            store_id, title, summary, prompt_text
+        )
+
+        merged_urls, _, _ = image_service.use_product_featured_image(
+            stamped_product_image,
+            gen_urls,
+            gen_types,
+            gen_labels,
+        )
+        image_urls = merged_urls
     else:
         image_urls = await image_service.generate_images(store_id, title, summary, prompt_text)
 

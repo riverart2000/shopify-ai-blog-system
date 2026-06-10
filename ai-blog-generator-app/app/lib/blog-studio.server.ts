@@ -29,6 +29,8 @@ type ShopifyProduct = {
   featuredImage?: {
     url?: string;
   } | null;
+  guideTitle?: { value: string } | null;
+  guideUrl?: { value: string } | null;
 };
 
 type ShopifyScope = {
@@ -46,6 +48,10 @@ export type ShopifyProductSummary = {
   handle: string;
   title: string;
   status: string;
+  imageUrl: string | null;
+  guideTitle?: string | null;
+  guideUrl?: string | null;
+};
   imageUrl: string | null;
 };
 
@@ -553,6 +559,12 @@ async function loadProducts(session: ShopifySessionInfo) {
               featuredImage {
                 url
               }
+              guideTitle: metafield(namespace: "custom", key: "ai_blog_related_guide_title") {
+                value
+              }
+              guideUrl: metafield(namespace: "custom", key: "ai_blog_related_guide_url") {
+                value
+              }
             }
           }
         }
@@ -566,6 +578,8 @@ async function loadProducts(session: ShopifySessionInfo) {
       title: product.title || product.handle,
       status: product.status || "ACTIVE",
       imageUrl: product.featuredImage?.url || null,
+      guideTitle: product.guideTitle?.value || null,
+      guideUrl: product.guideUrl?.value || null,
     })) satisfies ShopifyProductSummary[];
   } catch (error) {
     const message = error instanceof Error ? error.message : "";

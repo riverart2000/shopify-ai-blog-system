@@ -1373,3 +1373,63 @@ Review for prompt relevance, search intent, SEO completeness, product fit, reada
             "provider": review.get("_model_provider", ""),
         },
     }
+
+
+class ProductBlogGenerateRequest(BaseModel):
+    store_id: str = ""
+    product_title: str = ""
+    product_handle: str = ""
+    product_url: str = ""
+    blog_handle: str = "inside-the-products"
+    prompt_id: str = ""
+
+
+@router.post("/api/products/generate-blog")
+async def api_product_blog_generate(request: Request, payload: ProductBlogGenerateRequest):
+    _verify_backend_api_key(request)
+    sid = payload.store_id.strip() or os.environ.get("AI_BLOG_BACKEND_STORE_ID", "").strip()
+    if not sid:
+        stores = await db.get_stores()
+        sid = stores[0]["id"] if stores else ""
+    if not sid:
+        raise HTTPException(status_code=400, detail="store_id is required")
+
+    prompt_id = payload.prompt_id.strip()
+    if not prompt_id:
+        prompt_id = await db.get_store_setting(sid, "default_prompt_id", "")
+
+    prompts = await db.get_prompts(sid)
+    prompt_cfg = None
+    if prompt_id:
+        prompt_cfg = next((p for p in prompts if p["id"] == prompt_id), None)
+    if not prompt_cfg and prompts:
+        prompt_cfg = prompts[0]
+
+    if not prompt_cfg:
+        prompt_text = "Write a highly engaging, helpful product guide and blog post."
+        prompt_id_val = "default"
+    else:
+        prompt_text = prompt_cfg["text"]
+        prompt_id_val = prompt_cfg["id"]
+
+    from services import publish_service
+    try:
+        result = await publish_service.run(
+            store_id=sid,
+            prompt_text=prompt_text,
+            blog_handle=payload.blog_handle.strip() or "inside-the-products",
+            author="Store Team",
+            prompt_id=prompt_id_val,
+            product_url=payload.product_url.strip(),
+            product_title=payload.product_title.strip(),
+        )
+        return {
+            "ok": True,
+            "article_id": str(result.article_id),
+            "article_url": result.article_url,
+            "title": result.title,
+            "message": f"Successfully generated and published blog for {payload.product_title}"
+        }
+    except Exception as exc:
+        logger.exception("Failed to generate blog for product %s", payload.product_title)
+        raise HTTPException(status_code=500, detail=f"Generation failed: {str(exc)}")
