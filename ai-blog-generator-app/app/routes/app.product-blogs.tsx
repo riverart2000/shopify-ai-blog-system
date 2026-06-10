@@ -56,7 +56,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   await authenticate.admin(request);
   if (!BACKEND_KEY) {
-    return { ok: false, error: "AI_BLOG_BACKEND_API_KEY is not configured." };
+    return Response.json({ ok: false, error: "AI_BLOG_BACKEND_API_KEY is not configured." });
   }
 
   const form = await request.formData();
@@ -80,7 +80,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }),
       });
 
-      return {
+      return Response.json({
         ok: true,
         productId: String(form.get("productId") || ""),
         status: result.status,
@@ -88,13 +88,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         articleId: result.article_id,
         title: result.title,
         message: result.message
-      };
+      });
     } catch (e) {
-      return {
+      return Response.json({
         ok: false,
         productId: String(form.get("productId") || ""),
         error: e instanceof Error ? e.message : "Generation failed"
-      };
+      });
     }
   }
 
@@ -105,19 +105,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const result = await backendFetch(`/api/products/generate-blog/status?store_id=${storeId}&product_handle=${productHandle}`);
 
-      return {
+      return Response.json({
         ok: true,
         status: result.status,
         articleUrl: result.article_url,
         articleId: result.article_id,
         title: result.title,
         error: result.error
-      };
+      });
     } catch (e) {
-      return {
+      return Response.json({
         ok: false,
         error: e instanceof Error ? e.message : "Status check failed"
-      };
+      });
     }
   }
 
@@ -142,21 +142,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }),
       });
 
-      return {
+      return Response.json({
         ok: true,
         productId: String(form.get("productId") || ""),
         message: result.message
-      };
+      });
     } catch (e) {
-      return {
+      return Response.json({
         ok: false,
         productId: String(form.get("productId") || ""),
         error: e instanceof Error ? e.message : "Checking description failed"
-      };
+      });
     }
   }
 
-  return { ok: false, error: "Unknown intent" };
+  return Response.json({ ok: false, error: "Unknown intent" });
 };
 
 export default function ProductBlogsPage() {
