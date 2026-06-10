@@ -496,33 +496,59 @@ async def upload_image_to_shopify(
 ) -> Optional[str]:
     """
     Upload an image (by URL or base64 data URI) to Shopify Files and return the
-    public CDN URL. Passes the image as a URL fetch (src) for regular URLs or as
-    a base64 attachment for data URIs produced by logo_service compositing.
+    public CDN URL. Optimized to WebP and resized before uploading for faster load times.
     Returns None on failure so the caller can continue without images.
     """
+    from services.image_optimizer import optimize_image
+
     url = f"{_base_url(store)}/files.json"
 
+    # Always ensure output filename ends with .webp since we compress/optimize to WebP
+    if not filename.lower().endswith(".webp"):
+        base_name = filename.rsplit(".", 1)[0]
+        filename = f"{base_name}.webp"
+
+    img_bytes = None
     if image_url.startswith("data:"):
         # Extract base64 payload from data URI (data:<mime>;base64,<b64>)
         try:
             header, b64data = image_url.split(",", 1)
-            content_type = header.split(";")[0].split(":")[1]
+            raw_data = base64.b64decode(b64data)
+            # Optimize raw bytes
+            optimized_bytes = optimize_image(raw_data)
+            img_bytes = optimized_bytes
         except Exception:
             logger.warning("Malformed data URI passed to upload_image_to_shopify, skipping")
             return None
+    else:
+        # Fetch web image and optimize
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                res = await client.get(image_url, follow_redirects=True)
+                res.raise_for_status()
+                img_bytes = optimize_image(res.content)
+        except Exception as exc:
+            logger.warning("Failed to fetch/optimize image_url %s: %s", image_url[:80], exc)
+            # If fetch fails, we'll let Shopify fetch the original URL directly as fallback
+            img_bytes = None
+
+    if img_bytes is not None:
+        # Upload as optimized webp attachment
+        b64_payload = base64.b64encode(img_bytes).decode()
         payload = {
             "file": {
-                "attachment": b64data,
+                "attachment": b64_payload,
                 "filename": filename,
-                "content_type": content_type,
+                "content_type": "image/webp",
             }
         }
     else:
+        # Fallback to src if we couldn't fetch/optimize locally
         payload = {
             "file": {
                 "src": image_url,
                 "filename": filename,
-                "content_type": "image/png",
+                "content_type": "image/webp",
             }
         }
     try:
