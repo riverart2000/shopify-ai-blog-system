@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { loadShopifyStudioContext, requireShopifySession } from "../lib/blog-studio.server";
 
@@ -161,6 +162,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 export default function ProductBlogsPage() {
   const { backendConfigured, products, storefrontDomain, storeId } = useLoaderData<typeof loader>();
+  const shopify = useAppBridge();
 
   const [productStatuses, setProductStatuses] = useState<Record<string, {
     status: "idle" | "generating" | "success" | "failed";
@@ -190,8 +192,12 @@ export default function ProductBlogsPage() {
     formData.append("storeId", storeId);
     formData.append("productHandle", p.handle);
 
+    const token = await shopify.idToken();
     const response = await fetch("", {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
       body: formData,
     });
     if (!response.ok) {
@@ -226,8 +232,12 @@ export default function ProductBlogsPage() {
     formData.append("productUrl", `https://${storefrontDomain}/products/${p.handle}`);
 
     try {
+      const token = await shopify.idToken();
       const response = await fetch("", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
       });
 
@@ -322,8 +332,12 @@ export default function ProductBlogsPage() {
     formData.append("guideUrl", local.guideUrl);
 
     try {
+      const token = await shopify.idToken();
       const response = await fetch("", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
       });
 
