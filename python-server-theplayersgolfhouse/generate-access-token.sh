@@ -1,1 +1,0 @@
-curl -X POST "https://xfxs8g-hn.myshopify.com/admin/oauth/access_token" -H "Content-Type: application/x-www-form-urlencoded" -d "grant_type=client_credentials" -d "client_id={client_id}" -d "client_secret={client_secret}"

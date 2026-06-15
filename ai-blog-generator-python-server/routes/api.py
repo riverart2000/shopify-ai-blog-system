@@ -1577,7 +1577,7 @@ async def api_product_ensure_description(request: Request, payload: ProductBlogE
         hashtags = [f"#{w}" for w in words]
 
     # Resolve store config
-    store_row = await db.get_store_row(sid)
+    store_row = await db.get_store(sid)
     if not store_row:
         raise HTTPException(status_code=404, detail="Store not found in database")
     store_cfg = _store_config_from_row(store_row)
