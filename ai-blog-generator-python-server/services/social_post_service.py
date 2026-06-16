@@ -94,12 +94,13 @@ _SOCIAL_PROMPT_ENDING = (
     '  "summary": string — one sentence post objective\n'
     '  "keywords": array of strings — 4 to 8 SEO/product terms\n'
     '  "hashtags": array of strings — 4 to 8 hashtags with # prefix\n'
-    '  "content": string — EXACTLY these five lines in this order:\n'
-    "instagram: <one short compelling post with CTA>\n"
-    "facebook: <one short compelling post with CTA>\n"
-    "x: <one short compelling post with CTA>\n"
-    "linkedin: <one short compelling post with CTA>\n"
-    "pinterest: <one short compelling post with CTA>\n"
+    '  "content": string — use this exact provider block structure and keep line breaks:\n'
+    "instagram:\n<multiline post text>\n\n"
+    "facebook:\n<multiline post text>\n\n"
+    "x:\n<multiline post text>\n\n"
+    "linkedin:\n<multiline post text>\n\n"
+    "pinterest:\n<multiline post text>\n"
+    "Each provider block must contain readable spacing (short paragraphs / line breaks).\n"
     "No markdown. No extra fields. Raw JSON only."
 )
 
@@ -169,16 +170,43 @@ def _cap_text(provider: str, text: str) -> str:
 
 
 def _extract_provider_lines(content: str) -> dict[str, str]:
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    out: dict[str, str] = {}
-    for line in lines:
-        match = re.match(r"^(instagram|facebook|x|linkedin|pinterest)\s*:\s*(.+)$", line, re.IGNORECASE)
-        if not match:
+    blocks: dict[str, list[str]] = {}
+    current_provider = ""
+
+    for raw_line in content.splitlines():
+        stripped = raw_line.strip()
+        header = re.match(
+            r"^(instagram|facebook|x|linkedin|pinterest)\s*:\s*(.*)$",
+            stripped,
+            re.IGNORECASE,
+        )
+        if header:
+            provider = header.group(1).lower().strip()
+            current_provider = provider
+            blocks.setdefault(provider, [])
+            inline_text = header.group(2).strip()
+            if inline_text:
+                blocks[provider].append(inline_text)
             continue
-        provider = match.group(1).lower().strip()
-        text = match.group(2).strip()
-        if provider and text:
-            out[provider] = _cap_text(provider, text)
+
+        if not current_provider:
+            continue
+
+        if stripped:
+            blocks[current_provider].append(stripped)
+            continue
+
+        # Preserve intentional paragraph spacing inside a provider block.
+        provider_lines = blocks[current_provider]
+        if provider_lines and provider_lines[-1] != "":
+            provider_lines.append("")
+
+    out: dict[str, str] = {}
+    for provider, parts in blocks.items():
+        text = "\n".join(parts).strip()
+        if not text:
+            continue
+        out[provider] = _cap_text(provider, text)
     return out
 
 
@@ -237,6 +265,39 @@ def _fallback_post_text(
     return _cap_text(provider, "\n".join(lines))
 
 
+def _format_offer_layout(text: str, product_url: str, discount_url: str) -> str:
+    result = _clean_text(text)
+
+    # Force readable spacing around offer and CTA sections.
+    result = re.sub(r"\s*(🎉\s*Launch Offer:\s*Save\s*20%)", r"\n\n\1", result, flags=re.IGNORECASE)
+    result = re.sub(r"\s*(🚚\s*Free UK Delivery)", r"\n\1", result, flags=re.IGNORECASE)
+    result = re.sub(r"\s*(Read more:)", r"\n\n\1", result, flags=re.IGNORECASE)
+    result = re.sub(r"\s*(Shop with 20% OFF:)", r"\n\n\1", result, flags=re.IGNORECASE)
+
+    if _clean_text(product_url):
+        result = re.sub(
+            rf"(Read more:)\s*{re.escape(product_url)}",
+            rf"\1\n{product_url}",
+            result,
+            flags=re.IGNORECASE,
+        )
+
+    result = re.sub(
+        rf"(Shop with 20% OFF:)\s*{re.escape(discount_url)}",
+        rf"\1\n{discount_url}",
+        result,
+        flags=re.IGNORECASE,
+    )
+
+    # Keep hashtags as a separate visual block.
+    result = re.sub(r"\s+(#\w)", r"\n\n\1", result, count=1)
+
+    result = re.sub(r"[ \t]+\n", "\n", result)
+    result = re.sub(r"\n[ \t]+", "\n", result)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return _clean_text(result)
+
+
 def _ensure_offer_structure(
     *,
     provider: str,
@@ -282,6 +343,7 @@ def _ensure_offer_structure(
     if hashtag_suffix and "#" not in result:
         result += f"\n\n{hashtag_suffix}"
 
+    result = _format_offer_layout(result, product_url, discount_url)
     return _cap_text(provider, result)
 
 
