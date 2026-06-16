@@ -266,11 +266,28 @@ async def api_errors(request: Request, store_id: str = "", limit: int = 30):
 
 # --- Social Posts + Publer ---
 
+SOCIAL_TEXT_PROVIDERS = {"instagram", "facebook", "x", "linkedin", "pinterest"}
+SOCIAL_DEFAULT_PROVIDERS = ["instagram", "facebook", "x"]
+
 def _safe_json_loads(raw: str, fallback):
     try:
         return json.loads(raw)
     except Exception:
         return fallback
+
+
+def _normalize_social_provider_list(values: list[str]) -> list[str]:
+    allowed: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        provider = str(value).strip().lower()
+        if provider not in SOCIAL_TEXT_PROVIDERS:
+            continue
+        if provider in seen:
+            continue
+        seen.add(provider)
+        allowed.append(provider)
+    return allowed
 
 
 class SocialGenerateRequest(BaseModel):
@@ -279,6 +296,7 @@ class SocialGenerateRequest(BaseModel):
     product_handle: str = ""
     product_url: str = ""
     brief_text: str = ""
+    offer_type: str = "direct_offer"
     model_id: str = ""
 
 
@@ -300,6 +318,7 @@ class SocialPublishRequest(BaseModel):
     brief_text: str = ""
     base_text: str = ""
     provider_texts: dict[str, str] = {}
+    image_urls: list[str] = []
     account_ids: list[str] = []
     mode: str = "draft"
     scheduled_at: str = ""
@@ -340,6 +359,7 @@ async def api_social_accounts(request: Request, workspace_id: str = ""):
     except publer_service.PublerError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
+    accounts = publer_service.filter_accounts_for_text_posts(accounts)
     return {"workspace_id": workspace_id.strip(), "accounts": accounts}
 
 
@@ -359,14 +379,17 @@ async def api_social_defaults(request: Request, store_id: str = ""):
         ["instagram", "facebook", "x"],
     )
     mode = (await db.get_store_setting(sid, "social_default_mode", "draft")).strip() or "draft"
+    normalized_providers = _normalize_social_provider_list(providers)
+    if not normalized_providers:
+        normalized_providers = SOCIAL_DEFAULT_PROVIDERS
 
     return {
         "store_id": sid,
         "defaults": {
             "workspace_id": workspace_id,
             "account_ids": [str(a).strip() for a in account_ids if str(a).strip()],
-            "providers": [str(p).strip().lower() for p in providers if str(p).strip()],
-            "mode": mode if mode in {"draft", "scheduled", "publish_now"} else "draft",
+            "providers": normalized_providers,
+            "mode": mode if mode in {"draft", "scheduled"} else "draft",
         },
     }
 
@@ -378,11 +401,13 @@ async def api_social_defaults_save(request: Request, payload: SocialDefaultsSave
     sid = store["id"]
 
     normalized_mode = payload.default_mode.strip().lower() or "draft"
-    if normalized_mode not in {"draft", "scheduled", "publish_now"}:
-        raise HTTPException(status_code=400, detail="default_mode must be draft, scheduled, or publish_now")
+    if normalized_mode not in {"draft", "scheduled"}:
+        raise HTTPException(status_code=400, detail="default_mode must be draft or scheduled")
 
     account_ids = [str(a).strip() for a in payload.default_account_ids if str(a).strip()]
-    providers = [str(p).strip().lower() for p in payload.default_providers if str(p).strip()]
+    providers = _normalize_social_provider_list(payload.default_providers)
+    if not providers:
+        providers = SOCIAL_DEFAULT_PROVIDERS
 
     await db.set_store_settings(
         sid,
@@ -420,8 +445,10 @@ async def api_social_generate(request: Request, payload: SocialGenerateRequest):
             store_id=sid,
             store_name=store_row["name"],
             product_title=product_title,
+            product_handle=payload.product_handle.strip(),
             product_url=payload.product_url.strip(),
             brief_text=payload.brief_text.strip(),
+            offer_type=payload.offer_type.strip() or "direct_offer",
             model_id=payload.model_id.strip() or None,
         )
     except AllModelsFailedError as exc:
@@ -439,8 +466,13 @@ async def api_social_generate(request: Request, payload: SocialGenerateRequest):
         "brief_text": payload.brief_text.strip(),
         "campaign_name": generated.get("campaign_name", ""),
         "summary": generated.get("summary", ""),
+        "offer_type": generated.get("offer_type", "direct_offer"),
+        "offer_type_label": generated.get("offer_type_label", "Direct Offers"),
         "keywords": generated.get("keywords", []),
         "hashtags": generated.get("hashtags", []),
+        "discount_url": generated.get("discount_url", ""),
+        "image_urls": generated.get("image_urls", []),
+        "image_ratio": generated.get("image_ratio", ""),
         "provider_texts": generated.get("provider_texts", {}),
         "generated_by": generated.get("generated_by", ""),
         "generated_provider": generated.get("generated_provider", ""),
@@ -461,8 +493,8 @@ async def api_social_publish(request: Request, payload: SocialPublishRequest):
         raise HTTPException(status_code=400, detail="workspace_id is required")
 
     mode = payload.mode.strip().lower() or "draft"
-    if mode not in {"draft", "scheduled", "publish_now"}:
-        raise HTTPException(status_code=400, detail="mode must be draft, scheduled, or publish_now")
+    if mode not in {"draft", "scheduled"}:
+        raise HTTPException(status_code=400, detail="mode must be draft or scheduled")
 
     account_ids = [str(a).strip() for a in payload.account_ids if str(a).strip()]
     if not account_ids:
@@ -471,20 +503,31 @@ async def api_social_publish(request: Request, payload: SocialPublishRequest):
     provider_texts = {
         str(provider).strip().lower(): str(text).strip()
         for provider, text in (payload.provider_texts or {}).items()
-        if str(provider).strip() and str(text).strip()
+        if (
+            str(provider).strip()
+            and str(text).strip()
+            and str(provider).strip().lower() in SOCIAL_TEXT_PROVIDERS
+        )
     }
     if not provider_texts:
-        raise HTTPException(status_code=400, detail="provider_texts is required")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "provider_texts must include at least one text/image-compatible provider "
+                "(instagram, facebook, x, linkedin, pinterest)."
+            ),
+        )
+
+    image_urls = [str(url).strip() for url in payload.image_urls if str(url).strip()]
 
     scheduled_at = payload.scheduled_at.strip()
-    if mode == "scheduled" and not scheduled_at:
-        raise HTTPException(status_code=400, detail="scheduled_at is required for scheduled mode")
 
     try:
         created = await publer_service.create_text_post(
             workspace_id=workspace_id,
             account_ids=account_ids,
             provider_texts=provider_texts,
+            image_urls=image_urls,
             mode=mode,
             scheduled_at=scheduled_at,
         )

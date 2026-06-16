@@ -8,7 +8,7 @@ import { loadShopifyStudioContext, requireShopifySession } from "../lib/blog-stu
 const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
 const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 
-const SOCIAL_PROVIDERS = ["instagram", "facebook", "x", "linkedin", "pinterest", "tiktok"] as const;
+const SOCIAL_PROVIDERS = ["instagram", "facebook", "x", "linkedin", "pinterest"] as const;
 type SocialProvider = (typeof SOCIAL_PROVIDERS)[number];
 
 type Product = {
@@ -38,7 +38,7 @@ type SocialDefaults = {
   workspaceId: string;
   accountIds: string[];
   providers: SocialProvider[];
-  mode: "draft" | "scheduled" | "publish_now";
+  mode: "draft" | "scheduled";
 };
 
 type SocialHistoryRow = {
@@ -52,6 +52,20 @@ type SocialHistoryRow = {
   scheduled_at: string | null;
   created_at: number;
 };
+
+const SOCIAL_OFFER_TYPES = [
+  "direct_offer",
+  "ingredient_spotlight",
+  "science_post",
+  "problem_solution",
+  "benefits_post",
+  "lifestyle_post",
+  "myth_busting",
+  "educational_carousel",
+  "blog_promotion",
+  "motivational",
+] as const;
+type SocialOfferType = (typeof SOCIAL_OFFER_TYPES)[number];
 
 async function backendFetch(path: string, opts: RequestInit = {}) {
   const res = await fetch(`${BACKEND_URL}${path}`, {
@@ -86,10 +100,18 @@ function asStringArray(value: unknown): string[] {
 }
 
 function toSocialProvider(value: string): SocialProvider | null {
-  const normalized = value.trim().toLowerCase();
+  const normalizedRaw = value.trim().toLowerCase();
+  const normalized = normalizedRaw === "twitter" ? "x" : normalizedRaw;
   return SOCIAL_PROVIDERS.includes(normalized as SocialProvider)
     ? (normalized as SocialProvider)
     : null;
+}
+
+function toSocialOfferType(value: string): SocialOfferType {
+  const normalized = value.trim().toLowerCase();
+  return SOCIAL_OFFER_TYPES.includes(normalized as SocialOfferType)
+    ? (normalized as SocialOfferType)
+    : "direct_offer";
 }
 
 function formatDate(epochSeconds: number): string {
@@ -183,7 +205,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         workspaceId: asString(defaultsObj.workspace_id),
         accountIds: asStringArray(defaultsObj.account_ids),
         providers: defaultProviders.length > 0 ? defaultProviders : emptyDefaults.providers,
-        mode: modeRaw === "scheduled" || modeRaw === "publish_now" ? modeRaw : "draft",
+        mode: modeRaw === "scheduled" ? "scheduled" : "draft",
       };
 
       const rowsRaw = ((historyData?.rows as unknown[]) || [])
@@ -225,7 +247,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           type: asString(account.type),
           picture: asString(account.picture),
           status: asString(account.status),
-        })).filter((account) => account.id);
+        })).filter((account) => account.id && toSocialProvider(account.provider) !== null);
       }
     }
   } catch (error) {
@@ -268,7 +290,32 @@ const providerLabel: Record<SocialProvider, string> = {
   x: "X",
   linkedin: "LinkedIn",
   pinterest: "Pinterest",
-  tiktok: "TikTok",
+};
+
+const offerTypeLabel: Record<SocialOfferType, string> = {
+  direct_offer: "Direct Offers",
+  ingredient_spotlight: "Ingredient Spotlights",
+  science_post: "Science Posts",
+  problem_solution: "Problem → Solution",
+  benefits_post: "Benefits Posts",
+  lifestyle_post: "Lifestyle Posts",
+  myth_busting: "Myth Busting",
+  educational_carousel: "Educational Carousels",
+  blog_promotion: "Blog Promotion",
+  motivational: "Motivational",
+};
+
+const offerTypeDescription: Record<SocialOfferType, string> = {
+  direct_offer: "Strong launch discount-led copy with immediate CTA.",
+  ingredient_spotlight: "Focus on key ingredients and what they do.",
+  science_post: "Evidence/mechanism-led science angle with conversion CTA.",
+  problem_solution: "Open with pain point, position product as the solution.",
+  benefits_post: "Benefit stack angle focused on outcomes.",
+  lifestyle_post: "Routine and lifestyle framing for daily use.",
+  myth_busting: "Myth vs fact style credibility-led copy.",
+  educational_carousel: "Carousel-style educational breakdown tone.",
+  blog_promotion: "Promote read-more content then push the offer.",
+  motivational: "Inspirational tone tied to consistent wellness goals.",
 };
 
 export default function SocialPostsRoute() {
@@ -281,14 +328,18 @@ export default function SocialPostsRoute() {
   const [selectedProviders, setSelectedProviders] = useState<SocialProvider[]>(
     data.defaults.providers.length > 0 ? data.defaults.providers : ["instagram", "facebook", "x"],
   );
-  const [mode, setMode] = useState<"draft" | "scheduled" | "publish_now">(data.defaults.mode || "draft");
-  const [scheduledAt, setScheduledAt] = useState<string>("");
+  const [mode, setMode] = useState<"draft" | "scheduled">(data.defaults.mode || "draft");
 
   const [selectedProductHandle, setSelectedProductHandle] = useState<string>(data.products[0]?.handle || "");
   const [briefText, setBriefText] = useState<string>("");
+  const [offerType, setOfferType] = useState<SocialOfferType>("direct_offer");
   const [campaignName, setCampaignName] = useState<string>("");
   const [baseText, setBaseText] = useState<string>("");
   const [providerTexts, setProviderTexts] = useState<Record<string, string>>({});
+  const [discountUrl, setDiscountUrl] = useState<string>("");
+  const [generatedImageUrls, setGeneratedImageUrls] = useState<string[]>([]);
+  const [selectedImageUrls, setSelectedImageUrls] = useState<string[]>([]);
+  const [imageRatio, setImageRatio] = useState<string>("9:16");
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
 
@@ -355,7 +406,7 @@ export default function SocialPostsRoute() {
         picture: asString(entry.picture),
         status: asString(entry.status),
       }))
-      .filter((entry) => entry.id);
+      .filter((entry) => entry.id && toSocialProvider(entry.provider) !== null);
 
     setAccounts(rows);
     const available = new Set(rows.map((row) => row.id));
@@ -416,6 +467,14 @@ export default function SocialPostsRoute() {
     setProviderTexts((prev) => ({ ...prev, [provider]: text }));
   }
 
+  function toggleImageUrl(imageUrl: string) {
+    setSelectedImageUrls((prev) => (
+      prev.includes(imageUrl)
+        ? prev.filter((url) => url !== imageUrl)
+        : [...prev, imageUrl]
+    ));
+  }
+
   async function generateSocialDraft() {
     setError("");
     setMessage("");
@@ -437,6 +496,7 @@ export default function SocialPostsRoute() {
       productHandle: selectedProduct.handle,
       productUrl: selectedProduct.url,
       briefText,
+      offerType,
       modelId: "",
     });
     setGenerating(false);
@@ -449,6 +509,7 @@ export default function SocialPostsRoute() {
     const providerMap = (payload.provider_texts && typeof payload.provider_texts === "object")
       ? (payload.provider_texts as Record<string, unknown>)
       : {};
+    const normalizedOfferType = toSocialOfferType(asString(payload.offer_type));
 
     const nextTexts: Record<string, string> = {};
     for (const provider of SOCIAL_PROVIDERS) {
@@ -460,10 +521,20 @@ export default function SocialPostsRoute() {
 
     setCampaignName(asString(payload.campaign_name));
     setBaseText(asString(payload.summary));
+    setOfferType(normalizedOfferType);
+    setDiscountUrl(asString(payload.discount_url));
+    const nextImageUrls = asStringArray(payload.image_urls);
+    setGeneratedImageUrls(nextImageUrls);
+    setSelectedImageUrls(nextImageUrls);
+    setImageRatio(asString(payload.image_ratio) || "9:16");
     setProviderTexts(nextTexts);
     setHashtags(asStringArray(payload.hashtags));
     setKeywords(asStringArray(payload.keywords));
-    setMessage("Social post draft generated. Review and edit before sending to Publer.");
+    setMessage(
+      nextImageUrls.length > 0
+        ? `${offerTypeLabel[normalizedOfferType]} draft and 9:16 marketing images generated. Review before sending to Publer.`
+        : `${offerTypeLabel[normalizedOfferType]} draft generated. No images were returned by active image models.`,
+    );
 
     if (selectedProviders.length === 0) {
       setSelectedProviders(["instagram", "facebook", "x"]);
@@ -523,20 +594,6 @@ export default function SocialPostsRoute() {
       return;
     }
 
-    let scheduledAtIso = "";
-    if (mode === "scheduled") {
-      if (!scheduledAt) {
-        setError("Choose a schedule date and time.");
-        return;
-      }
-      const dt = new Date(scheduledAt);
-      if (Number.isNaN(dt.getTime())) {
-        setError("Invalid schedule date/time.");
-        return;
-      }
-      scheduledAtIso = dt.toISOString();
-    }
-
     const filteredProviderTexts: Record<string, string> = {};
     for (const provider of selectedProviders) {
       const text = (providerTexts[provider] || "").trim();
@@ -544,6 +601,11 @@ export default function SocialPostsRoute() {
     }
     if (Object.keys(filteredProviderTexts).length === 0) {
       setError("Generate or enter post text for at least one selected provider.");
+      return;
+    }
+
+    if (generatedImageUrls.length > 0 && selectedImageUrls.length === 0) {
+      setError("Select at least one generated image or regenerate before sending to Publer.");
       return;
     }
 
@@ -559,9 +621,9 @@ export default function SocialPostsRoute() {
       briefText,
       baseText,
       providerTextsJson: JSON.stringify(filteredProviderTexts),
+      imageUrlsJson: JSON.stringify(selectedImageUrls),
       accountIdsJson: JSON.stringify(selectedAccountIds),
       mode,
-      scheduledAt: scheduledAtIso,
     });
     setPublishing(false);
 
@@ -635,6 +697,13 @@ export default function SocialPostsRoute() {
         </s-section>
       ) : null}
 
+      <s-section>
+        <s-paragraph>
+          This page is for text and image-compatible social channels only.
+          TikTok and YouTube will be handled in a separate video workflow.
+        </s-paragraph>
+      </s-section>
+
       {message ? (
         <s-section>
           <div style={{ borderRadius: "12px", padding: "14px 16px", background: "#ecfdf5", border: "1px solid #a7f3d0", color: "#065f46", fontSize: "0.9rem" }}>
@@ -667,6 +736,20 @@ export default function SocialPostsRoute() {
               onChange={(event) => setBriefText(event.target.value)}
               placeholder="Example: highlight anti-ageing benefits, premium quality, and invite people to discover the full range at bioluxelab.com"
             />
+          </label>
+
+          <label style={labelStyle}>
+            <span>Offer Style</span>
+            <select
+              style={inputStyle}
+              value={offerType}
+              onChange={(event) => setOfferType(toSocialOfferType(event.target.value))}
+            >
+              {SOCIAL_OFFER_TYPES.map((value) => (
+                <option key={value} value={value}>{offerTypeLabel[value]}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{offerTypeDescription[offerType]}</span>
           </label>
 
           <div>
@@ -731,6 +814,72 @@ export default function SocialPostsRoute() {
                 />
               </label>
             ))}
+          </div>
+
+          {discountUrl ? (
+            <label style={labelStyle}>
+              <span>Discount CTA URL (20% offer)</span>
+              <input
+                style={inputStyle}
+                value={discountUrl}
+                readOnly
+                placeholder="https://bioluxelab.com/discount/LAUNCH20?redirect=/products/..."
+              />
+            </label>
+          ) : null}
+
+          <div style={{ display: "grid", gap: "10px" }}>
+            <div style={{ fontSize: "0.86rem", fontWeight: 600 }}>Generated Marketing Images ({imageRatio || "9:16"})</div>
+            {generatedImageUrls.length === 0 ? (
+              <div style={{ fontSize: "0.84rem", color: "#6b7280" }}>
+                Generate social copy to create marketing images.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))" }}>
+                {generatedImageUrls.map((imageUrl, index) => {
+                  const checked = selectedImageUrls.includes(imageUrl);
+                  return (
+                    <label
+                      key={`${index}-${imageUrl}`}
+                      style={{
+                        border: checked ? "2px solid #111827" : "1px solid #e5e7eb",
+                        borderRadius: "12px",
+                        padding: "8px",
+                        display: "grid",
+                        gap: "8px",
+                        cursor: "pointer",
+                        background: checked ? "#f9fafb" : "white",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "100%",
+                          aspectRatio: "9 / 16",
+                          borderRadius: "10px",
+                          overflow: "hidden",
+                          background: "#f3f4f6",
+                        }}
+                      >
+                        <img
+                          src={imageUrl}
+                          alt={`Generated marketing visual ${index + 1}`}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                          loading="lazy"
+                        />
+                      </div>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontSize: "0.82rem" }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleImageUrl(imageUrl)}
+                        />
+                        Attach image {index + 1}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {(hashtags.length > 0 || keywords.length > 0) ? (
@@ -806,24 +955,9 @@ export default function SocialPostsRoute() {
               <input type="radio" checked={mode === "draft"} onChange={() => setMode("draft")} /> Draft
             </label>
             <label style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-              <input type="radio" checked={mode === "scheduled"} onChange={() => setMode("scheduled")} /> Schedule once
-            </label>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-              <input type="radio" checked={mode === "publish_now"} onChange={() => setMode("publish_now")} /> Publish now
+              <input type="radio" checked={mode === "scheduled"} onChange={() => setMode("scheduled")} /> Send to Publer Schedule
             </label>
           </div>
-
-          {mode === "scheduled" ? (
-            <label style={labelStyle}>
-              <span>Schedule date/time (local)</span>
-              <input
-                type="datetime-local"
-                style={inputStyle}
-                value={scheduledAt}
-                onChange={(event) => setScheduledAt(event.target.value)}
-              />
-            </label>
-          ) : null}
 
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             <button

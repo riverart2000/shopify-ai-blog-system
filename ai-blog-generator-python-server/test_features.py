@@ -520,8 +520,12 @@ class TestSocialPostService:
             )
 
         provider_texts = result["provider_texts"]
-        assert provider_texts["instagram"] == "Insta caption only"
-        assert all(provider in provider_texts for provider in ["facebook", "x", "linkedin", "pinterest", "tiktok"])
+        assert provider_texts["instagram"].startswith("Insta caption only")
+        assert all(provider in provider_texts for provider in ["facebook", "x", "linkedin", "pinterest"])
+        assert "tiktok" not in provider_texts
+        discount_url = result["discount_url"]
+        assert discount_url.startswith("https://bioluxelab.com/discount/LAUNCH20?redirect=/products/pro-serum")
+        assert all(discount_url in provider_texts[provider] for provider in ["instagram", "facebook", "x", "linkedin", "pinterest"])
         assert result["hashtags"][0].startswith("#")
 
 

@@ -74,6 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           product_handle: String(form.get("productHandle") || ""),
           product_url: String(form.get("productUrl") || ""),
           brief_text: String(form.get("briefText") || ""),
+          offer_type: String(form.get("offerType") || "direct_offer"),
           model_id: String(form.get("modelId") || ""),
         }),
       });
@@ -115,6 +116,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           brief_text: String(form.get("briefText") || ""),
           base_text: String(form.get("baseText") || ""),
           provider_texts: safeJsonParse<Record<string, string>>(String(form.get("providerTextsJson") || "{}"), {}),
+          image_urls: safeJsonParse<string[]>(String(form.get("imageUrlsJson") || "[]"), []),
           account_ids: safeJsonParse<string[]>(String(form.get("accountIdsJson") || "[]"), []),
           mode: String(form.get("mode") || "draft"),
           scheduled_at: String(form.get("scheduledAt") || ""),
