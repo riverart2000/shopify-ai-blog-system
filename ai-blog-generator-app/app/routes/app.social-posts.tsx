@@ -53,6 +53,40 @@ type SocialHistoryRow = {
   created_at: number;
 };
 
+type ProviderCandidate = {
+  id: string;
+  name: string;
+  provider: string;
+  model_type: string;
+  model_name: string;
+  priority: number;
+};
+
+type ImageProviderAttempt = {
+  provider: string;
+  model: string;
+  model_name: string;
+  status: string;
+  error: string;
+  reference_requested: boolean;
+  reference_attempted: boolean;
+  reference_attached: boolean;
+  reference_fallback_to_prompt_only: boolean;
+};
+
+type ImageProviderRun = {
+  index: number;
+  prompt: string;
+  url: string;
+  selected_provider: string;
+  selected_model: string;
+  selected_model_name: string;
+  selected_reference_requested: boolean;
+  selected_reference_attached: boolean;
+  selected_reference_fallback: boolean;
+  attempts: ImageProviderAttempt[];
+};
+
 const SOCIAL_OFFER_TYPES = [
   "direct_offer",
   "ingredient_spotlight",
@@ -99,6 +133,11 @@ function asStringArray(value: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
+function asObjectArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null);
+}
+
 function asBool(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value !== 0;
@@ -107,6 +146,42 @@ function asBool(value: unknown): boolean {
     return normalized === "true" || normalized === "1" || normalized === "yes";
   }
   return false;
+}
+
+function asProviderCandidates(value: unknown): ProviderCandidate[] {
+  return asObjectArray(value).map((row) => ({
+    id: asString(row.id),
+    name: asString(row.name),
+    provider: asString(row.provider),
+    model_type: asString(row.model_type),
+    model_name: asString(row.model_name),
+    priority: Number(row.priority || 0),
+  }));
+}
+
+function asImageProviderRuns(value: unknown): ImageProviderRun[] {
+  return asObjectArray(value).map((row) => ({
+    index: Number(row.index || 0),
+    prompt: asString(row.prompt),
+    url: asString(row.url),
+    selected_provider: asString(row.selected_provider),
+    selected_model: asString(row.selected_model),
+    selected_model_name: asString(row.selected_model_name),
+    selected_reference_requested: asBool(row.selected_reference_requested),
+    selected_reference_attached: asBool(row.selected_reference_attached),
+    selected_reference_fallback: asBool(row.selected_reference_fallback),
+    attempts: asObjectArray(row.attempts).map((attempt) => ({
+      provider: asString(attempt.provider),
+      model: asString(attempt.model),
+      model_name: asString(attempt.model_name),
+      status: asString(attempt.status),
+      error: asString(attempt.error),
+      reference_requested: asBool(attempt.reference_requested),
+      reference_attempted: asBool(attempt.reference_attempted),
+      reference_attached: asBool(attempt.reference_attached),
+      reference_fallback_to_prompt_only: asBool(attempt.reference_fallback_to_prompt_only),
+    })),
+  }));
 }
 
 function toSocialProvider(value: string): SocialProvider | null {
@@ -356,12 +431,17 @@ export default function SocialPostsRoute() {
   const [imageGenerationPrompts, setImageGenerationPrompts] = useState<string[]>([]);
   const [imageReferenceUrl, setImageReferenceUrl] = useState<string>("");
   const [imageReferenceAttached, setImageReferenceAttached] = useState<boolean>(false);
+  const [textProviderCandidates, setTextProviderCandidates] = useState<ProviderCandidate[]>([]);
+  const [imageProviderCandidates, setImageProviderCandidates] = useState<ProviderCandidate[]>([]);
+  const [imageProviderRuns, setImageProviderRuns] = useState<ImageProviderRun[]>([]);
+  const [textProviderUsed, setTextProviderUsed] = useState<string>("");
 
   const [historyRows, setHistoryRows] = useState<SocialHistoryRow[]>(data.historyRows || []);
   const [jobId, setJobId] = useState<string>("");
   const [jobStatus, setJobStatus] = useState<string>("");
 
   const [loadingAccounts, setLoadingAccounts] = useState(false);
+  const [previewingPrompts, setPreviewingPrompts] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [savingDefaults, setSavingDefaults] = useState(false);
@@ -461,6 +541,14 @@ export default function SocialPostsRoute() {
     void refreshAccounts(workspaceId);
   }, [workspaceId]);
 
+  useEffect(() => {
+    if (!data.backendConfigured) return;
+    if (!selectedProduct) return;
+    void previewPrompts({ silent: true });
+    // Run once on first product load so prompts are visible before generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function toggleAccount(accountId: string) {
     setSelectedAccountIds((prev) => (
       prev.includes(accountId)
@@ -489,13 +577,62 @@ export default function SocialPostsRoute() {
     ));
   }
 
+  function applyPromptDebugPayload(payload: Record<string, unknown>) {
+    setTextGenerationPrompt(
+      asString(payload.text_generation_prompt_combined) || asString(payload.text_generation_prompt),
+    );
+    setImageGenerationPrompts(asStringArray(payload.image_generation_prompts));
+    setImageReferenceUrl(asString(payload.image_reference_url) || asString(payload.product_image_url));
+    setImageReferenceAttached(asBool(payload.image_reference_attached));
+    setTextProviderCandidates(asProviderCandidates(payload.text_provider_candidates));
+    setImageProviderCandidates(asProviderCandidates(payload.image_provider_candidates));
+    setImageProviderRuns(asImageProviderRuns(payload.image_provider_runs));
+
+    const provider = asString(payload.generated_provider);
+    const model = asString(payload.generated_by);
+    setTextProviderUsed(provider || model ? `${provider}${model ? ` / ${model}` : ""}` : "");
+  }
+
+  async function previewPrompts(options?: {
+    product?: Product | null;
+    offerType?: SocialOfferType;
+    briefText?: string;
+    silent?: boolean;
+  }) {
+    const previewProduct = options?.product ?? selectedProduct;
+    const previewOfferType = options?.offerType ?? offerType;
+    const previewBriefText = options?.briefText ?? briefText;
+
+    if (!data.storeId || !previewProduct) {
+      return;
+    }
+
+    setPreviewingPrompts(true);
+    const payload = await callSocialApi({
+      intent: "prompt-preview",
+      storeId: data.storeId,
+      productTitle: previewProduct.title,
+      productHandle: previewProduct.handle,
+      productUrl: previewProduct.url,
+      briefText: previewBriefText,
+      offerType: previewOfferType,
+      modelId: "",
+    });
+    setPreviewingPrompts(false);
+
+    if (!payload.ok) {
+      if (!options?.silent) {
+        setError(asString(payload.error) || "Failed to preview prompts.");
+      }
+      return;
+    }
+
+    applyPromptDebugPayload(payload);
+  }
+
   async function generateSocialDraft() {
     setError("");
     setMessage("");
-    setTextGenerationPrompt("");
-    setImageGenerationPrompts([]);
-    setImageReferenceUrl("");
-    setImageReferenceAttached(false);
 
     if (!data.storeId) {
       setError("Store is not available from backend init.");
@@ -548,12 +685,7 @@ export default function SocialPostsRoute() {
     setProviderTexts(nextTexts);
     setHashtags(asStringArray(payload.hashtags));
     setKeywords(asStringArray(payload.keywords));
-    setTextGenerationPrompt(
-      asString(payload.text_generation_prompt_combined) || asString(payload.text_generation_prompt),
-    );
-    setImageGenerationPrompts(asStringArray(payload.image_generation_prompts));
-    setImageReferenceUrl(asString(payload.image_reference_url) || asString(payload.product_image_url));
-    setImageReferenceAttached(asBool(payload.image_reference_attached));
+    applyPromptDebugPayload(payload);
     setMessage(
       nextImageUrls.length > 0
         ? `${offerTypeLabel[normalizedOfferType]} draft and 9:16 marketing images generated. Review before sending to Publer.`
@@ -743,7 +875,12 @@ export default function SocialPostsRoute() {
             <select
               style={inputStyle}
               value={selectedProductHandle}
-              onChange={(event) => setSelectedProductHandle(event.target.value)}
+              onChange={(event) => {
+                const nextHandle = event.target.value;
+                setSelectedProductHandle(nextHandle);
+                const nextProduct = data.products.find((product) => product.handle === nextHandle) || null;
+                void previewPrompts({ product: nextProduct, silent: true });
+              }}
             >
               {data.products.map((product) => (
                 <option key={product.id} value={product.handle}>{product.title}</option>
@@ -758,6 +895,9 @@ export default function SocialPostsRoute() {
               rows={4}
               value={briefText}
               onChange={(event) => setBriefText(event.target.value)}
+              onBlur={() => {
+                void previewPrompts({ silent: true });
+              }}
               placeholder="Example: highlight anti-ageing benefits, premium quality, and invite people to discover the full range at bioluxelab.com"
             />
           </label>
@@ -768,11 +908,9 @@ export default function SocialPostsRoute() {
               style={inputStyle}
               value={offerType}
               onChange={(event) => {
-                setOfferType(toSocialOfferType(event.target.value));
-                setTextGenerationPrompt("");
-                setImageGenerationPrompts([]);
-                setImageReferenceUrl("");
-                setImageReferenceAttached(false);
+                const nextOfferType = toSocialOfferType(event.target.value);
+                setOfferType(nextOfferType);
+                void previewPrompts({ offerType: nextOfferType, silent: true });
               }}
             >
               {SOCIAL_OFFER_TYPES.map((value) => (
@@ -782,7 +920,17 @@ export default function SocialPostsRoute() {
             <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>{offerTypeDescription[offerType]}</span>
           </label>
 
-          <div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => {
+                void previewPrompts();
+              }}
+              disabled={!data.backendConfigured || previewingPrompts || !selectedProduct}
+              style={{ borderRadius: "999px", border: "1px solid #d1d5db", background: "white", color: "#111827", padding: "10px 20px", fontWeight: 700, cursor: "pointer", opacity: previewingPrompts ? 0.7 : 1 }}
+            >
+              {previewingPrompts ? "Previewing..." : "Preview prompts"}
+            </button>
             <button
               type="button"
               onClick={generateSocialDraft}
@@ -793,12 +941,53 @@ export default function SocialPostsRoute() {
             </button>
           </div>
 
-          {(textGenerationPrompt || imageGenerationPrompts.length > 0 || imageReferenceUrl) ? (
+          {(textGenerationPrompt
+            || imageGenerationPrompts.length > 0
+            || imageReferenceUrl
+            || textProviderCandidates.length > 0
+            || imageProviderCandidates.length > 0
+            || imageProviderRuns.length > 0) ? (
             <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "12px", display: "grid", gap: "10px", background: "#f9fafb" }}>
-              <div style={{ fontSize: "0.9rem", fontWeight: 700 }}>Prompt Debug (Exact Prompts Sent)</div>
+              <div style={{ fontSize: "0.9rem", fontWeight: 700 }}>Prompt Preview and Run Debug</div>
               <div style={{ fontSize: "0.8rem", color: "#4b5563" }}>
-                These prompts are from the latest Generate run for the selected Offer Style.
+                Preview shows what will be sent before Generate. After Generate, provider run details show what was actually used.
               </div>
+
+              <div style={{ display: "grid", gap: "6px" }}>
+                <div style={{ fontSize: "0.82rem", fontWeight: 600 }}>Planned text provider order</div>
+                {textProviderCandidates.length === 0 ? (
+                  <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>No active text providers found.</div>
+                ) : (
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {textProviderCandidates.map((provider, index) => (
+                      <span key={`text-provider-${provider.id || index}`} style={{ padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: "999px", fontSize: "0.76rem", background: "white" }}>
+                        {index + 1}. {provider.provider || "unknown"} / {provider.model_name || provider.name || "model"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gap: "6px" }}>
+                <div style={{ fontSize: "0.82rem", fontWeight: 600 }}>Planned image provider order</div>
+                {imageProviderCandidates.length === 0 ? (
+                  <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>No active image providers found.</div>
+                ) : (
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {imageProviderCandidates.map((provider, index) => (
+                      <span key={`img-provider-${provider.id || index}`} style={{ padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: "999px", fontSize: "0.76rem", background: "white" }}>
+                        {index + 1}. {provider.provider || "unknown"} / {provider.model_name || provider.name || "model"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {textProviderUsed ? (
+                <div style={{ fontSize: "0.8rem", color: "#111827" }}>
+                  <strong>Text provider used in latest Generate:</strong> {textProviderUsed}
+                </div>
+              ) : null}
 
               <label style={labelStyle}>
                 <span>Reference image URL passed to image generation</span>
@@ -814,8 +1003,36 @@ export default function SocialPostsRoute() {
                 </span>
               </label>
 
+              {imageProviderRuns.length > 0 ? (
+                <div style={{ display: "grid", gap: "8px" }}>
+                  <div style={{ fontSize: "0.84rem", fontWeight: 600 }}>Image provider run results (latest Generate)</div>
+                  {imageProviderRuns.map((run) => (
+                    <div key={`run-${run.index}`} style={{ border: "1px solid #e5e7eb", borderRadius: "10px", padding: "8px", background: "white", display: "grid", gap: "4px" }}>
+                      <div style={{ fontSize: "0.8rem" }}>
+                        <strong>Image {run.index}:</strong> {run.url ? "generated" : "not generated"}
+                      </div>
+                      <div style={{ fontSize: "0.78rem", color: "#374151" }}>
+                        Provider: {run.selected_provider || "(none)"} | Model: {run.selected_model_name || run.selected_model || "(none)"}
+                      </div>
+                      <div style={{ fontSize: "0.78rem", color: "#4b5563" }}>
+                        Reference requested: {run.selected_reference_requested ? "yes" : "no"} | Attached in successful call: {run.selected_reference_attached ? "yes" : "no"} | Fallback to prompt-only: {run.selected_reference_fallback ? "yes" : "no"}
+                      </div>
+                      {run.attempts.length > 0 ? (
+                        <div style={{ fontSize: "0.76rem", color: "#6b7280", display: "grid", gap: "2px" }}>
+                          {run.attempts.map((attempt, attemptIndex) => (
+                            <div key={`run-${run.index}-attempt-${attemptIndex}`}>
+                              Attempt {attemptIndex + 1}: {attempt.provider || "unknown"} / {attempt.model_name || attempt.model || "model"} | status={attempt.status || "unknown"}{attempt.error ? ` | error=${attempt.error}` : ""}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
               <label style={labelStyle}>
-                <span>Text generation prompt (exact combined prompt sent)</span>
+                <span>Text generation prompt (exact combined prompt)</span>
                 <textarea
                   style={{
                     ...inputStyle,

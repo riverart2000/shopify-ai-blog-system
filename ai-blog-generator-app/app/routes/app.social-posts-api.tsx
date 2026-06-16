@@ -84,6 +84,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (intent === "prompt-preview") {
+    try {
+      const result = await backendFetch("/api/social/prompt-preview", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: storeId,
+          product_title: String(form.get("productTitle") || ""),
+          product_handle: String(form.get("productHandle") || ""),
+          product_url: String(form.get("productUrl") || ""),
+          brief_text: String(form.get("briefText") || ""),
+          offer_type: String(form.get("offerType") || "direct_offer"),
+          model_id: String(form.get("modelId") || ""),
+        }),
+      });
+      return Response.json({ ok: true, ...result });
+    } catch (e) {
+      return Response.json({ ok: false, error: e instanceof Error ? e.message : "Failed to preview prompts" });
+    }
+  }
+
   if (intent === "save-defaults") {
     try {
       const result = await backendFetch("/api/social/defaults/save", {

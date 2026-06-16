@@ -231,6 +231,68 @@ def _build_discount_url(product_url: str, product_handle: str) -> str:
     return f"{_SOCIAL_DISCOUNT_BASE_URL}{_derive_product_redirect_path(product_url, product_handle)}"
 
 
+def _build_social_text_prompt(
+    *,
+    store_name: str,
+    product_title: str,
+    product_url: str,
+    discount_url: str,
+    brief_text: str,
+    offer_type: str,
+) -> str:
+    normalized_offer_type = _normalise_offer_type(offer_type)
+    offer_instructions = _offer_type_instructions(normalized_offer_type)
+
+    return (
+        f"You are a direct-response social media copywriter for ecommerce.\n"
+        f"Store: {store_name}\n"
+        f"Goal: Write high quality short sales and marketing style social posts that create intrigue "
+        f"and drive clicks to the store.\n"
+        f"Offer style to apply: {_offer_type_label(normalized_offer_type)}\n"
+        f"Product title: {product_title}\n"
+        f"Product URL: {product_url or '(not provided)'}\n"
+        f"Campaign URL (must use exactly): {discount_url}\n"
+        f"Brief from merchant: {brief_text or '(not provided)'}\n\n"
+        "Requirements:\n"
+        f"- Offer framework: {offer_instructions}\n"
+        "- Tone: confident, benefit-first, no fake urgency.\n"
+        "- Mention a clear action to visit the product/store and claim the launch offer.\n"
+        "- Include this exact campaign URL in EACH platform post: "
+        f"{discount_url}\n"
+        "- Platform length guidance:\n"
+        "  - X: concise, 1 short paragraph + CTA (around 180-260 chars where possible).\n"
+        "  - Instagram: slightly longer, 2-4 short paragraphs with strong storytelling + CTA.\n"
+        "  - Facebook: slightly longer, 2-4 short paragraphs with benefits + offer + CTA.\n"
+        "  - LinkedIn: the most detailed, 3-5 short paragraphs with clear value framing + CTA.\n"
+        "  - Pinterest: medium length, 2-3 short paragraphs focused on click-through intent.\n"
+        "- Include the offer block line: 🎉 Launch Offer: Save 20%\n"
+        "- Include the offer block line: 🚚 Free UK Delivery\n"
+        "- Include a 'Read more:' line and use Product URL where sensible.\n"
+        "- Include a 'Shop with 20% OFF:' line and use the campaign URL.\n"
+        "- Mention that the offer is a 20% discount.\n"
+        "- Keep each post concise and natural for that network.\n"
+        "- Avoid repetitive openings across platforms."
+    )
+
+
+def _combine_social_text_prompt(prompt: str) -> str:
+    return f"{prompt}\n\n{_SOCIAL_PROMPT_ENDING}"
+
+
+def _derive_image_prompt_context(
+    *,
+    product_title: str,
+    brief_text: str,
+    offer_type: str,
+) -> tuple[str, str, str]:
+    normalized_offer_type = _normalise_offer_type(offer_type)
+    fallback_hook = _offer_type_fallback_hook(normalized_offer_type, product_title)
+    campaign_name = f"{product_title} {_offer_type_label(normalized_offer_type)}".strip()
+    campaign_summary = _clean_text(brief_text) or fallback_hook
+    sample_post_text = fallback_hook
+    return campaign_name[:120], campaign_summary[:260], sample_post_text[:260]
+
+
 def _ensure_discount_url(provider: str, text: str, discount_url: str) -> str:
     content = _clean_text(text)
     if not content:
@@ -420,10 +482,28 @@ async def _generate_social_marketing_image_once(
     store_id: str,
     prompt: str,
     product_image_url: str,
-) -> str | None:
+) -> tuple[str | None, dict[str, Any]]:
     rows = await db.get_active_image_models(store_id)
     if not rows:
-        return None
+        return None, {
+            "selected_provider": "",
+            "selected_model": "",
+            "selected_model_name": "",
+            "selected_reference_requested": bool(_clean_text(product_image_url)),
+            "selected_reference_attached": False,
+            "selected_reference_fallback": False,
+            "attempts": [],
+        }
+
+    debug_data: dict[str, Any] = {
+        "selected_provider": "",
+        "selected_model": "",
+        "selected_model_name": "",
+        "selected_reference_requested": bool(_clean_text(product_image_url)),
+        "selected_reference_attached": False,
+        "selected_reference_fallback": False,
+        "attempts": [],
+    }
 
     skip_providers: set[str] = set()
     reference_image = _clean_text(product_image_url) or None
@@ -432,11 +512,29 @@ async def _generate_social_marketing_image_once(
         if model.provider in skip_providers:
             continue
 
+        attempt_data: dict[str, Any] = {
+            "provider": model.provider,
+            "model": model.name,
+            "model_name": model.model_name,
+            "status": "failed",
+            "error": "",
+            "reference_requested": bool(reference_image),
+            "reference_attempted": False,
+            "reference_attached": False,
+            "reference_fallback_to_prompt_only": False,
+        }
+
         try:
             effective_model = _with_social_image_overrides(model)
             provider = providers.get_image_provider(effective_model)
             urls: list[str] = []
+            reference_attempted = False
+            reference_attached = False
+            used_reference_fallback = False
             try:
+                if reference_image:
+                    reference_attempted = True
+                    reference_attached = True
                 urls = await provider.generate_images(
                     prompt,
                     1,
@@ -447,6 +545,9 @@ async def _generate_social_marketing_image_once(
                     raise
 
                 # Some image models reject conditioning fields; retry prompt-only.
+                reference_attempted = True
+                reference_attached = False
+                used_reference_fallback = True
                 logger.info(
                     "Social image provider %s rejected reference image; retrying without reference: %s",
                     model.name,
@@ -454,20 +555,40 @@ async def _generate_social_marketing_image_once(
                 )
                 urls = await provider.generate_images(prompt, 1)
 
+            attempt_data["reference_attempted"] = reference_attempted
+            attempt_data["reference_attached"] = reference_attached
+            attempt_data["reference_fallback_to_prompt_only"] = used_reference_fallback
+
             if urls:
-                return urls[0]
+                attempt_data["status"] = "success"
+                debug_data["selected_provider"] = model.provider
+                debug_data["selected_model"] = model.name
+                debug_data["selected_model_name"] = model.model_name
+                debug_data["selected_reference_attached"] = reference_attached
+                debug_data["selected_reference_fallback"] = used_reference_fallback
+                debug_data["attempts"].append(attempt_data)
+                return urls[0], debug_data
+
+            attempt_data["status"] = "no_url"
+            debug_data["attempts"].append(attempt_data)
         except providers.ProviderError as exc:
             err_msg = str(exc)
+            attempt_data["status"] = "failed"
+            attempt_data["error"] = err_msg
+            debug_data["attempts"].append(attempt_data)
             logger.warning("Social image provider %s failed: %s", model.name, err_msg)
             await db.log_model_error(store_id, model.id, model.provider, "image_error", err_msg)
             if not exc.retryable:
                 skip_providers.add(model.provider)
         except Exception as exc:
             err_msg = f"Unexpected error: {exc}"
+            attempt_data["status"] = "failed"
+            attempt_data["error"] = err_msg
+            debug_data["attempts"].append(attempt_data)
             logger.exception("Unexpected social image provider error %s", model.name)
             await db.log_model_error(store_id, model.id, model.provider, "unexpected_error", err_msg)
 
-    return None
+    return None, debug_data
 
 
 async def generate_social_marketing_images(
@@ -486,10 +607,11 @@ async def generate_social_marketing_images(
     brief_text: str,
     discount_url: str,
     image_count: int,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
     target_count = max(1, min(image_count, 4))
     image_urls: list[str] = []
     image_prompts: list[str] = []
+    image_provider_runs: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     for index in range(target_count):
@@ -509,17 +631,158 @@ async def generate_social_marketing_images(
             variant_index=index,
         )
         image_prompts.append(prompt)
-        image_url = await _generate_social_marketing_image_once(
+        image_url, run_debug = await _generate_social_marketing_image_once(
             store_id,
             prompt,
             product_image_url,
         )
+        image_provider_runs.append({
+            "index": index + 1,
+            "prompt": prompt,
+            "url": image_url or "",
+            "selected_provider": str(run_debug.get("selected_provider") or ""),
+            "selected_model": str(run_debug.get("selected_model") or ""),
+            "selected_model_name": str(run_debug.get("selected_model_name") or ""),
+            "selected_reference_requested": bool(run_debug.get("selected_reference_requested")),
+            "selected_reference_attached": bool(run_debug.get("selected_reference_attached")),
+            "selected_reference_fallback": bool(run_debug.get("selected_reference_fallback")),
+            "attempts": run_debug.get("attempts", []),
+        })
         if not image_url or image_url in seen:
             continue
         seen.add(image_url)
         image_urls.append(image_url)
 
-    return image_urls, image_prompts
+    return image_urls, image_prompts, image_provider_runs
+
+
+def _build_social_image_prompts(
+    *,
+    store_name: str,
+    product_title: str,
+    product_url: str,
+    product_image_url: str,
+    offer_type: str,
+    offer_type_label: str,
+    offer_instructions: str,
+    campaign_name: str,
+    campaign_summary: str,
+    sample_post_text: str,
+    brief_text: str,
+    discount_url: str,
+    image_count: int,
+) -> list[str]:
+    target_count = max(1, min(image_count, 4))
+    prompts: list[str] = []
+    for index in range(target_count):
+        prompts.append(
+            _build_social_image_prompt(
+                store_name=store_name,
+                product_title=product_title,
+                product_url=product_url,
+                product_image_url=product_image_url,
+                offer_type=offer_type,
+                offer_type_label=offer_type_label,
+                offer_instructions=offer_instructions,
+                campaign_name=campaign_name,
+                campaign_summary=campaign_summary,
+                sample_post_text=sample_post_text,
+                brief_text=brief_text,
+                discount_url=discount_url,
+                variant_index=index,
+            )
+        )
+    return prompts
+
+
+def _serialize_provider_candidates(rows: list[dict]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": str(row.get("id") or ""),
+            "name": str(row.get("name") or ""),
+            "provider": str(row.get("provider") or ""),
+            "model_type": str(row.get("model_type") or ""),
+            "model_name": str(row.get("model_name") or ""),
+            "priority": int(row.get("priority") or 0),
+        }
+        for row in rows
+    ]
+
+
+async def preview_social_generation_prompts(
+    *,
+    store_id: str,
+    store_name: str,
+    product_title: str,
+    product_handle: str = "",
+    product_url: str,
+    product_image_url: str = "",
+    brief_text: str,
+    offer_type: str = _DEFAULT_OFFER_TYPE,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    title = _clean_text(product_title)
+    handle = _clean_text(product_handle)
+    url = _clean_text(product_url)
+    brief = _clean_text(brief_text)
+    if not title:
+        raise ValueError("product_title is required")
+
+    normalized_offer_type = _normalise_offer_type(offer_type)
+    offer_label = _offer_type_label(normalized_offer_type)
+    offer_instructions = _offer_type_instructions(normalized_offer_type)
+    discount_url = _build_discount_url(url, handle)
+
+    text_prompt = _build_social_text_prompt(
+        store_name=store_name,
+        product_title=title,
+        product_url=url,
+        discount_url=discount_url,
+        brief_text=brief,
+        offer_type=normalized_offer_type,
+    )
+    combined_text_prompt = _combine_social_text_prompt(text_prompt)
+
+    campaign_name, campaign_summary, sample_post_text = _derive_image_prompt_context(
+        product_title=title,
+        brief_text=brief,
+        offer_type=normalized_offer_type,
+    )
+    image_prompts = _build_social_image_prompts(
+        store_name=store_name,
+        product_title=title,
+        product_url=url,
+        product_image_url=product_image_url,
+        offer_type=normalized_offer_type,
+        offer_type_label=offer_label,
+        offer_instructions=offer_instructions,
+        campaign_name=campaign_name,
+        campaign_summary=campaign_summary,
+        sample_post_text=sample_post_text,
+        brief_text=brief,
+        discount_url=discount_url,
+        image_count=_social_image_target_count(),
+    )
+
+    text_models = await db.get_active_text_models(store_id)
+    image_models = await db.get_active_image_models(store_id)
+    if model_id:
+        text_models = [row for row in text_models if str(row.get("id") or "") == model_id]
+
+    return {
+        "offer_type": normalized_offer_type,
+        "offer_type_label": offer_label,
+        "discount_url": discount_url,
+        "image_ratio": _SOCIAL_IMAGE_RATIO,
+        "image_reference_url": _clean_text(product_image_url),
+        "image_reference_attached": bool(_clean_text(product_image_url)),
+        "text_generation_prompt": text_prompt,
+        "text_generation_prompt_contract": _SOCIAL_PROMPT_ENDING,
+        "text_generation_prompt_combined": combined_text_prompt,
+        "image_generation_prompts": image_prompts,
+        "text_provider_candidates": _serialize_provider_candidates(text_models),
+        "image_provider_candidates": _serialize_provider_candidates(image_models),
+    }
 
 
 def _normalise_hashtags(raw: list[Any]) -> list[str]:
@@ -564,35 +827,13 @@ async def generate_social_post_variants(
     if not title:
         raise ValueError("product_title is required")
 
-    prompt = (
-        f"You are a direct-response social media copywriter for ecommerce.\n"
-        f"Store: {store_name}\n"
-        f"Goal: Write high quality short sales and marketing style social posts that create intrigue "
-        f"and drive clicks to the store.\n"
-        f"Offer style to apply: {_offer_type_label(normalized_offer_type)}\n"
-        f"Product title: {title}\n"
-        f"Product URL: {url or '(not provided)'}\n"
-        f"Campaign URL (must use exactly): {discount_url}\n"
-        f"Brief from merchant: {brief or '(not provided)'}\n\n"
-        "Requirements:\n"
-        f"- Offer framework: {offer_instructions}\n"
-        "- Tone: confident, benefit-first, no fake urgency.\n"
-        "- Mention a clear action to visit the product/store and claim the launch offer.\n"
-        "- Include this exact campaign URL in EACH platform post: "
-        f"{discount_url}\n"
-        "- Platform length guidance:\n"
-        "  - X: concise, 1 short paragraph + CTA (around 180-260 chars where possible).\n"
-        "  - Instagram: slightly longer, 2-4 short paragraphs with strong storytelling + CTA.\n"
-        "  - Facebook: slightly longer, 2-4 short paragraphs with benefits + offer + CTA.\n"
-        "  - LinkedIn: the most detailed, 3-5 short paragraphs with clear value framing + CTA.\n"
-        "  - Pinterest: medium length, 2-3 short paragraphs focused on click-through intent.\n"
-        "- Include the offer block line: 🎉 Launch Offer: Save 20%\n"
-        "- Include the offer block line: 🚚 Free UK Delivery\n"
-        "- Include a 'Read more:' line and use Product URL where sensible.\n"
-        "- Include a 'Shop with 20% OFF:' line and use the campaign URL.\n"
-        "- Mention that the offer is a 20% discount.\n"
-        "- Keep each post concise and natural for that network.\n"
-        "- Avoid repetitive openings across platforms."
+    prompt = _build_social_text_prompt(
+        store_name=store_name,
+        product_title=title,
+        product_url=url,
+        discount_url=discount_url,
+        brief_text=brief,
+        offer_type=normalized_offer_type,
     )
 
     generated = await llm_service.generate_text(
@@ -636,9 +877,14 @@ async def generate_social_post_variants(
 
     image_urls: list[str] = []
     image_generation_prompts: list[str] = []
+    image_provider_runs: list[dict[str, Any]] = []
     try:
-        primary_provider_text = provider_texts.get("instagram") or provider_texts.get("facebook") or ""
-        image_urls, image_generation_prompts = await generate_social_marketing_images(
+        campaign_hint_name, campaign_hint_summary, sample_post_text = _derive_image_prompt_context(
+            product_title=title,
+            brief_text=brief,
+            offer_type=normalized_offer_type,
+        )
+        image_urls, image_generation_prompts, image_provider_runs = await generate_social_marketing_images(
             store_id=store_id,
             store_name=store_name,
             product_title=title,
@@ -647,9 +893,9 @@ async def generate_social_post_variants(
             offer_type=normalized_offer_type,
             offer_type_label=_offer_type_label(normalized_offer_type),
             offer_instructions=offer_instructions,
-            campaign_name=campaign_name,
-            campaign_summary=summary,
-            sample_post_text=primary_provider_text,
+            campaign_name=campaign_hint_name,
+            campaign_summary=campaign_hint_summary,
+            sample_post_text=sample_post_text,
             brief_text=brief,
             discount_url=discount_url,
             image_count=_social_image_target_count(),
@@ -657,7 +903,9 @@ async def generate_social_post_variants(
     except Exception:
         logger.exception("Social marketing image generation failed for store=%s", store_id)
 
-    combined_text_prompt = f"{prompt}\n\n{_SOCIAL_PROMPT_ENDING}"
+    combined_text_prompt = _combine_social_text_prompt(prompt)
+    text_provider_candidates = _serialize_provider_candidates(await db.get_active_text_models(store_id))
+    image_provider_candidates = _serialize_provider_candidates(await db.get_active_image_models(store_id))
 
     return {
         "campaign_name": campaign_name,
@@ -675,6 +923,9 @@ async def generate_social_post_variants(
         "text_generation_prompt_contract": _SOCIAL_PROMPT_ENDING,
         "text_generation_prompt_combined": combined_text_prompt,
         "image_generation_prompts": image_generation_prompts,
+        "text_provider_candidates": text_provider_candidates,
+        "image_provider_candidates": image_provider_candidates,
+        "image_provider_runs": image_provider_runs,
         "provider_texts": provider_texts,
         "generated_by": generated.get("_model_name", ""),
         "generated_provider": generated.get("_model_provider", ""),

@@ -301,6 +301,34 @@ class SocialGenerateRequest(BaseModel):
     model_id: str = ""
 
 
+async def _resolve_social_product_context(
+    store_row: dict,
+    store_id: str,
+    payload: SocialGenerateRequest,
+) -> tuple[str, str, str, str]:
+    product_title = payload.product_title.strip()
+    if not product_title:
+        raise HTTPException(status_code=400, detail="product_title is required")
+
+    product_handle = payload.product_handle.strip()
+    product_url = payload.product_url.strip()
+    if not product_handle and product_url:
+        parsed = urlparse(product_url)
+        match = re.search(r"/products/([^/?#]+)", parsed.path or "", flags=re.IGNORECASE)
+        if match:
+            product_handle = match.group(1).strip()
+
+    product_image_url = ""
+    if product_handle:
+        try:
+            store_cfg = _store_config_from_row(store_row)
+            product_image_url = (await shopify_client.fetch_product_image_url(store_cfg, product_handle)) or ""
+        except Exception:
+            logger.exception("Failed to fetch social product image handle=%s store=%s", product_handle, store_id)
+
+    return product_title, product_handle, product_url, product_image_url
+
+
 class SocialDefaultsSaveRequest(BaseModel):
     store_id: str = ""
     default_workspace_id: str = ""
@@ -431,31 +459,57 @@ async def api_social_history(request: Request, store_id: str = "", limit: int = 
     return {"store_id": sid, "rows": rows}
 
 
+@router.post("/api/social/prompt-preview")
+async def api_social_prompt_preview(request: Request, payload: SocialGenerateRequest):
+    _verify_backend_api_key(request)
+    store_row = await _resolve_generation_store(payload.store_id)
+    sid = store_row["id"]
+
+    product_title, product_handle, product_url, product_image_url = await _resolve_social_product_context(
+        store_row,
+        sid,
+        payload,
+    )
+
+    try:
+        preview = await social_post_service.preview_social_generation_prompts(
+            store_id=sid,
+            store_name=store_row["name"],
+            product_title=product_title,
+            product_handle=product_handle,
+            product_url=product_url,
+            product_image_url=product_image_url,
+            brief_text=payload.brief_text.strip(),
+            offer_type=payload.offer_type.strip() or "direct_offer",
+            model_id=payload.model_id.strip() or None,
+        )
+    except Exception as exc:
+        logger.exception("Unexpected social prompt preview error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "store_id": sid,
+        "product_title": product_title,
+        "product_handle": product_handle,
+        "product_url": product_url,
+        "product_image_url": product_image_url,
+        "brief_text": payload.brief_text.strip(),
+        **preview,
+    }
+
+
 @router.post("/api/social/generate")
 async def api_social_generate(request: Request, payload: SocialGenerateRequest):
     _verify_backend_api_key(request)
     store_row = await _resolve_generation_store(payload.store_id)
     sid = store_row["id"]
 
-    product_title = payload.product_title.strip()
-    if not product_title:
-        raise HTTPException(status_code=400, detail="product_title is required")
-
-    product_handle = payload.product_handle.strip()
-    product_url = payload.product_url.strip()
-    if not product_handle and product_url:
-        parsed = urlparse(product_url)
-        match = re.search(r"/products/([^/?#]+)", parsed.path or "", flags=re.IGNORECASE)
-        if match:
-            product_handle = match.group(1).strip()
-
-    product_image_url = ""
-    if product_handle:
-        try:
-            store_cfg = _store_config_from_row(store_row)
-            product_image_url = (await shopify_client.fetch_product_image_url(store_cfg, product_handle)) or ""
-        except Exception:
-            logger.exception("Failed to fetch social product image handle=%s store=%s", product_handle, sid)
+    product_title, product_handle, product_url, product_image_url = await _resolve_social_product_context(
+        store_row,
+        sid,
+        payload,
+    )
 
     try:
         generated = await social_post_service.generate_social_post_variants(
@@ -498,6 +552,9 @@ async def api_social_generate(request: Request, payload: SocialGenerateRequest):
         "text_generation_prompt_contract": generated.get("text_generation_prompt_contract", ""),
         "text_generation_prompt_combined": generated.get("text_generation_prompt_combined", ""),
         "image_generation_prompts": generated.get("image_generation_prompts", []),
+        "text_provider_candidates": generated.get("text_provider_candidates", []),
+        "image_provider_candidates": generated.get("image_provider_candidates", []),
+        "image_provider_runs": generated.get("image_provider_runs", []),
         "provider_texts": generated.get("provider_texts", {}),
         "generated_by": generated.get("generated_by", ""),
         "generated_provider": generated.get("generated_provider", ""),
