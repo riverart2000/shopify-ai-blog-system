@@ -507,6 +507,23 @@ def _model_supports_reference_image(model: providers.ModelRecord) -> bool:
     return False
 
 
+def _reference_model_rank(model: providers.ModelRecord) -> int:
+    provider_name = _clean_text(model.provider).lower()
+    model_name = _clean_text(model.model_name).lower()
+
+    # Strong preference: OpenAI GPT Image reference conditioning.
+    if provider_name == "openai" and "gpt-image" in model_name:
+        return 0
+
+    # Next best: other known image-conditioning providers.
+    if provider_name == "grok":
+        return 1
+    if provider_name == "replicate":
+        return 2
+
+    return 9
+
+
 async def _generate_social_marketing_image_once(
     store_id: str,
     prompt: str,
@@ -534,8 +551,20 @@ async def _generate_social_marketing_image_once(
         "attempts": [],
     }
 
-    skip_providers: set[str] = set()
     reference_image = _clean_text(product_image_url) or None
+    if reference_image:
+        # Prefer models that can actually consume reference images, with GPT Image first.
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                0 if _model_supports_reference_image(providers.ModelRecord.from_dict(row)) else 1,
+                _reference_model_rank(providers.ModelRecord.from_dict(row)),
+                int(row.get("priority") or 0),
+                str(row.get("name") or ""),
+            ),
+        )
+
+    skip_providers: set[str] = set()
     for row in rows:
         model = providers.ModelRecord.from_dict(row)
         if model.provider in skip_providers:
