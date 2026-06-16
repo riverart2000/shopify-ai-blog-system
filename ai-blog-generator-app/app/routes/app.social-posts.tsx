@@ -431,6 +431,11 @@ export default function SocialPostsRoute() {
   const [imageGenerationPrompts, setImageGenerationPrompts] = useState<string[]>([]);
   const [imageReferenceUrl, setImageReferenceUrl] = useState<string>("");
   const [imageReferenceAttached, setImageReferenceAttached] = useState<boolean>(false);
+  const [imageReferenceAvailable, setImageReferenceAvailable] = useState<boolean>(false);
+  const [imageReferenceUsedInAiGeneration, setImageReferenceUsedInAiGeneration] = useState<boolean>(false);
+  const [productImageIncludedInResults, setProductImageIncludedInResults] = useState<boolean>(false);
+  const [productImageFallbackActive, setProductImageFallbackActive] = useState<boolean>(false);
+  const [imageReferenceConditioningPossible, setImageReferenceConditioningPossible] = useState<boolean>(false);
   const [textProviderCandidates, setTextProviderCandidates] = useState<ProviderCandidate[]>([]);
   const [imageProviderCandidates, setImageProviderCandidates] = useState<ProviderCandidate[]>([]);
   const [imageProviderRuns, setImageProviderRuns] = useState<ImageProviderRun[]>([]);
@@ -584,6 +589,14 @@ export default function SocialPostsRoute() {
     setImageGenerationPrompts(asStringArray(payload.image_generation_prompts));
     setImageReferenceUrl(asString(payload.image_reference_url) || asString(payload.product_image_url));
     setImageReferenceAttached(asBool(payload.image_reference_attached));
+    setImageReferenceAvailable(
+      asBool(payload.image_reference_available)
+      || Boolean(asString(payload.image_reference_url) || asString(payload.product_image_url)),
+    );
+    setImageReferenceUsedInAiGeneration(asBool(payload.image_reference_used_in_ai_generation));
+    setProductImageIncludedInResults(asBool(payload.product_image_included_in_results));
+    setProductImageFallbackActive(asBool(payload.product_image_fallback_active));
+    setImageReferenceConditioningPossible(asBool(payload.image_reference_conditioning_possible));
     setTextProviderCandidates(asProviderCandidates(payload.text_provider_candidates));
     setImageProviderCandidates(asProviderCandidates(payload.image_provider_candidates));
     setImageProviderRuns(asImageProviderRuns(payload.image_provider_runs));
@@ -997,10 +1010,26 @@ export default function SocialPostsRoute() {
                   readOnly
                 />
                 <span style={{ fontSize: "0.78rem", color: "#4b5563" }}>
-                  {imageReferenceAttached
-                    ? "Reference image was attached in provider requests where supported."
-                    : "Reference image was not attached because no product image URL was available."}
+                  {!imageReferenceAvailable
+                    ? "No product image URL was available from Shopify Admin API."
+                    : imageReferenceUsedInAiGeneration
+                      ? "AI provider accepted reference-image conditioning for this run."
+                      : productImageFallbackActive
+                        ? "Active AI model does not support reference-image conditioning; product image was included directly as fallback media."
+                        : imageReferenceAttached
+                          ? "Reference image was attached in provider requests."
+                          : "Reference image is available, but this run did not use AI reference-image conditioning."}
                 </span>
+                {imageReferenceAvailable ? (
+                  <span style={{ fontSize: "0.78rem", color: "#4b5563" }}>
+                    Conditioning possible with current active image models: {imageReferenceConditioningPossible ? "yes" : "no"}
+                  </span>
+                ) : null}
+                {productImageIncludedInResults ? (
+                  <span style={{ fontSize: "0.78rem", color: "#065f46" }}>
+                    Product image is included in generated media results.
+                  </span>
+                ) : null}
               </label>
 
               {imageProviderRuns.length > 0 ? (

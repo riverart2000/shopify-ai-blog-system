@@ -478,6 +478,35 @@ def _with_social_image_overrides(model: providers.ModelRecord) -> providers.Mode
     return replace(model, extra_json=json.dumps(extra))
 
 
+def _model_supports_reference_image(model: providers.ModelRecord) -> bool:
+    provider_name = _clean_text(model.provider).lower()
+    model_name = _clean_text(model.model_name).lower()
+
+    if provider_name == "openai":
+        return "gpt-image" in model_name
+
+    if provider_name == "grok":
+        return True
+
+    if provider_name == "replicate":
+        extra = model.extra
+        explicit_field = _clean_text(extra.get("reference_image_field"))
+        if explicit_field:
+            return True
+        input_obj = extra.get("input") if isinstance(extra.get("input"), dict) else {}
+        input_keys = {str(key).strip().lower() for key in input_obj.keys()}
+        reference_like_keys = {
+            "image",
+            "input_image",
+            "init_image",
+            "reference_image",
+            "conditioning_image",
+        }
+        return any(key in input_keys for key in reference_like_keys)
+
+    return False
+
+
 async def _generate_social_marketing_image_once(
     store_id: str,
     prompt: str,
@@ -527,21 +556,23 @@ async def _generate_social_marketing_image_once(
         try:
             effective_model = _with_social_image_overrides(model)
             provider = providers.get_image_provider(effective_model)
+            supports_reference = bool(reference_image) and _model_supports_reference_image(effective_model)
+            reference_payload = reference_image if supports_reference else None
             urls: list[str] = []
             reference_attempted = False
             reference_attached = False
             used_reference_fallback = False
             try:
-                if reference_image:
+                if reference_payload:
                     reference_attempted = True
                     reference_attached = True
                 urls = await provider.generate_images(
                     prompt,
                     1,
-                    reference_image=reference_image,
+                    reference_image=reference_payload,
                 )
             except providers.ProviderError as ref_exc:
-                if not reference_image:
+                if not reference_payload:
                     raise
 
                 # Some image models reject conditioning fields; retry prompt-only.
@@ -769,13 +800,22 @@ async def preview_social_generation_prompts(
     if model_id:
         text_models = [row for row in text_models if str(row.get("id") or "") == model_id]
 
+    image_reference_conditioning_possible = any(
+        _model_supports_reference_image(providers.ModelRecord.from_dict(row))
+        for row in image_models
+    )
+
     return {
         "offer_type": normalized_offer_type,
         "offer_type_label": offer_label,
         "discount_url": discount_url,
         "image_ratio": _SOCIAL_IMAGE_RATIO,
         "image_reference_url": _clean_text(product_image_url),
-        "image_reference_attached": bool(_clean_text(product_image_url)),
+        "image_reference_attached": False,
+        "image_reference_available": bool(_clean_text(product_image_url)),
+        "image_reference_conditioning_possible": image_reference_conditioning_possible,
+        "product_image_included_in_results": bool(_clean_text(product_image_url)),
+        "product_image_fallback_active": bool(_clean_text(product_image_url) and not image_reference_conditioning_possible),
         "text_generation_prompt": text_prompt,
         "text_generation_prompt_contract": _SOCIAL_PROMPT_ENDING,
         "text_generation_prompt_combined": combined_text_prompt,
@@ -878,6 +918,7 @@ async def generate_social_post_variants(
     image_urls: list[str] = []
     image_generation_prompts: list[str] = []
     image_provider_runs: list[dict[str, Any]] = []
+    target_image_count = _social_image_target_count()
     try:
         campaign_hint_name, campaign_hint_summary, sample_post_text = _derive_image_prompt_context(
             product_title=title,
@@ -898,10 +939,37 @@ async def generate_social_post_variants(
             sample_post_text=sample_post_text,
             brief_text=brief,
             discount_url=discount_url,
-            image_count=_social_image_target_count(),
+            image_count=target_image_count,
         )
     except Exception:
         logger.exception("Social marketing image generation failed for store=%s", store_id)
+
+    product_reference_url = _clean_text(product_image_url)
+    product_image_included_in_results = False
+    if product_reference_url:
+        if product_reference_url not in image_urls:
+            image_urls.append(product_reference_url)
+            image_provider_runs.append(
+                {
+                    "index": len(image_provider_runs) + 1,
+                    "prompt": "(Direct product main image from Shopify Admin API)",
+                    "url": product_reference_url,
+                    "selected_provider": "shopify_admin_product_image",
+                    "selected_model": "shopify_product_main_image",
+                    "selected_model_name": "shopify_product_main_image",
+                    "selected_reference_requested": True,
+                    "selected_reference_attached": True,
+                    "selected_reference_fallback": False,
+                    "attempts": [],
+                }
+            )
+        product_image_included_in_results = product_reference_url in image_urls
+
+    image_reference_used_in_ai_generation = any(
+        bool(run.get("selected_reference_attached"))
+        for run in image_provider_runs
+        if str(run.get("selected_provider") or "") != "shopify_admin_product_image"
+    )
 
     combined_text_prompt = _combine_social_text_prompt(prompt)
     text_provider_candidates = _serialize_provider_candidates(await db.get_active_text_models(store_id))
@@ -917,8 +985,12 @@ async def generate_social_post_variants(
         "discount_url": discount_url,
         "image_urls": image_urls,
         "image_ratio": _SOCIAL_IMAGE_RATIO,
-        "image_reference_url": _clean_text(product_image_url),
-        "image_reference_attached": bool(_clean_text(product_image_url)),
+        "image_reference_url": product_reference_url,
+        "image_reference_attached": image_reference_used_in_ai_generation,
+        "image_reference_available": bool(product_reference_url),
+        "image_reference_used_in_ai_generation": image_reference_used_in_ai_generation,
+        "product_image_included_in_results": product_image_included_in_results,
+        "product_image_fallback_active": bool(product_reference_url and not image_reference_used_in_ai_generation),
         "text_generation_prompt": prompt,
         "text_generation_prompt_contract": _SOCIAL_PROMPT_ENDING,
         "text_generation_prompt_combined": combined_text_prompt,
