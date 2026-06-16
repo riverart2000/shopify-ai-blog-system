@@ -486,9 +486,10 @@ async def generate_social_marketing_images(
     brief_text: str,
     discount_url: str,
     image_count: int,
-) -> list[str]:
+) -> tuple[list[str], list[str]]:
     target_count = max(1, min(image_count, 4))
     image_urls: list[str] = []
+    image_prompts: list[str] = []
     seen: set[str] = set()
 
     for index in range(target_count):
@@ -507,6 +508,7 @@ async def generate_social_marketing_images(
             discount_url=discount_url,
             variant_index=index,
         )
+        image_prompts.append(prompt)
         image_url = await _generate_social_marketing_image_once(
             store_id,
             prompt,
@@ -517,7 +519,7 @@ async def generate_social_marketing_images(
         seen.add(image_url)
         image_urls.append(image_url)
 
-    return image_urls
+    return image_urls, image_prompts
 
 
 def _normalise_hashtags(raw: list[Any]) -> list[str]:
@@ -633,9 +635,10 @@ async def generate_social_post_variants(
         summary = provider_texts.get("instagram") or provider_texts.get("facebook") or "Social post draft"
 
     image_urls: list[str] = []
+    image_generation_prompts: list[str] = []
     try:
         primary_provider_text = provider_texts.get("instagram") or provider_texts.get("facebook") or ""
-        image_urls = await generate_social_marketing_images(
+        image_urls, image_generation_prompts = await generate_social_marketing_images(
             store_id=store_id,
             store_name=store_name,
             product_title=title,
@@ -654,6 +657,8 @@ async def generate_social_post_variants(
     except Exception:
         logger.exception("Social marketing image generation failed for store=%s", store_id)
 
+    combined_text_prompt = f"{prompt}\n\n{_SOCIAL_PROMPT_ENDING}"
+
     return {
         "campaign_name": campaign_name,
         "summary": summary,
@@ -664,6 +669,12 @@ async def generate_social_post_variants(
         "discount_url": discount_url,
         "image_urls": image_urls,
         "image_ratio": _SOCIAL_IMAGE_RATIO,
+        "image_reference_url": _clean_text(product_image_url),
+        "image_reference_attached": bool(_clean_text(product_image_url)),
+        "text_generation_prompt": prompt,
+        "text_generation_prompt_contract": _SOCIAL_PROMPT_ENDING,
+        "text_generation_prompt_combined": combined_text_prompt,
+        "image_generation_prompts": image_generation_prompts,
         "provider_texts": provider_texts,
         "generated_by": generated.get("_model_name", ""),
         "generated_provider": generated.get("_model_provider", ""),

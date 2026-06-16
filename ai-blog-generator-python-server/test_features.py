@@ -527,6 +527,9 @@ class TestSocialPostService:
         assert discount_url.startswith("https://bioluxelab.com/discount/LAUNCH20?redirect=/products/pro-serum")
         assert all(discount_url in provider_texts[provider] for provider in ["instagram", "facebook", "x", "linkedin", "pinterest"])
         assert result["hashtags"][0].startswith("#")
+        assert "Offer style to apply: Direct Offers" in result["text_generation_prompt"]
+        assert isinstance(result["image_generation_prompts"], list)
+        assert "text_generation_prompt_combined" in result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

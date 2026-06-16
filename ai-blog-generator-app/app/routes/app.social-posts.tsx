@@ -99,6 +99,16 @@ function asStringArray(value: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
+function asBool(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1" || normalized === "yes";
+  }
+  return false;
+}
+
 function toSocialProvider(value: string): SocialProvider | null {
   const normalizedRaw = value.trim().toLowerCase();
   const normalized = normalizedRaw === "twitter" ? "x" : normalizedRaw;
@@ -342,6 +352,10 @@ export default function SocialPostsRoute() {
   const [imageRatio, setImageRatio] = useState<string>("9:16");
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
+  const [textGenerationPrompt, setTextGenerationPrompt] = useState<string>("");
+  const [imageGenerationPrompts, setImageGenerationPrompts] = useState<string[]>([]);
+  const [imageReferenceUrl, setImageReferenceUrl] = useState<string>("");
+  const [imageReferenceAttached, setImageReferenceAttached] = useState<boolean>(false);
 
   const [historyRows, setHistoryRows] = useState<SocialHistoryRow[]>(data.historyRows || []);
   const [jobId, setJobId] = useState<string>("");
@@ -478,6 +492,10 @@ export default function SocialPostsRoute() {
   async function generateSocialDraft() {
     setError("");
     setMessage("");
+    setTextGenerationPrompt("");
+    setImageGenerationPrompts([]);
+    setImageReferenceUrl("");
+    setImageReferenceAttached(false);
 
     if (!data.storeId) {
       setError("Store is not available from backend init.");
@@ -530,6 +548,12 @@ export default function SocialPostsRoute() {
     setProviderTexts(nextTexts);
     setHashtags(asStringArray(payload.hashtags));
     setKeywords(asStringArray(payload.keywords));
+    setTextGenerationPrompt(
+      asString(payload.text_generation_prompt_combined) || asString(payload.text_generation_prompt),
+    );
+    setImageGenerationPrompts(asStringArray(payload.image_generation_prompts));
+    setImageReferenceUrl(asString(payload.image_reference_url) || asString(payload.product_image_url));
+    setImageReferenceAttached(asBool(payload.image_reference_attached));
     setMessage(
       nextImageUrls.length > 0
         ? `${offerTypeLabel[normalizedOfferType]} draft and 9:16 marketing images generated. Review before sending to Publer.`
@@ -743,7 +767,13 @@ export default function SocialPostsRoute() {
             <select
               style={inputStyle}
               value={offerType}
-              onChange={(event) => setOfferType(toSocialOfferType(event.target.value))}
+              onChange={(event) => {
+                setOfferType(toSocialOfferType(event.target.value));
+                setTextGenerationPrompt("");
+                setImageGenerationPrompts([]);
+                setImageReferenceUrl("");
+                setImageReferenceAttached(false);
+              }}
             >
               {SOCIAL_OFFER_TYPES.map((value) => (
                 <option key={value} value={value}>{offerTypeLabel[value]}</option>
@@ -762,6 +792,68 @@ export default function SocialPostsRoute() {
               {generating ? "Generating..." : "Generate social copy"}
             </button>
           </div>
+
+          {(textGenerationPrompt || imageGenerationPrompts.length > 0 || imageReferenceUrl) ? (
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "12px", display: "grid", gap: "10px", background: "#f9fafb" }}>
+              <div style={{ fontSize: "0.9rem", fontWeight: 700 }}>Prompt Debug (Exact Prompts Sent)</div>
+              <div style={{ fontSize: "0.8rem", color: "#4b5563" }}>
+                These prompts are from the latest Generate run for the selected Offer Style.
+              </div>
+
+              <label style={labelStyle}>
+                <span>Reference image URL passed to image generation</span>
+                <input
+                  style={inputStyle}
+                  value={imageReferenceUrl || "(No product image URL was available for this run)"}
+                  readOnly
+                />
+                <span style={{ fontSize: "0.78rem", color: "#4b5563" }}>
+                  {imageReferenceAttached
+                    ? "Reference image was attached in provider requests where supported."
+                    : "Reference image was not attached because no product image URL was available."}
+                </span>
+              </label>
+
+              <label style={labelStyle}>
+                <span>Text generation prompt (exact combined prompt sent)</span>
+                <textarea
+                  style={{
+                    ...inputStyle,
+                    resize: "vertical",
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    lineHeight: 1.35,
+                  }}
+                  rows={14}
+                  value={textGenerationPrompt}
+                  readOnly
+                />
+              </label>
+
+              <div style={{ display: "grid", gap: "8px" }}>
+                <div style={{ fontSize: "0.84rem", fontWeight: 600 }}>Image generation prompt(s) (exact)</div>
+                {imageGenerationPrompts.length === 0 ? (
+                  <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                    No image prompts were captured in this run.
+                  </div>
+                ) : (
+                  imageGenerationPrompts.map((prompt, index) => (
+                    <textarea
+                      key={`img-prompt-${index}`}
+                      style={{
+                        ...inputStyle,
+                        resize: "vertical",
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                        lineHeight: 1.35,
+                      }}
+                      rows={9}
+                      value={prompt}
+                      readOnly
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
       </s-section>
 
