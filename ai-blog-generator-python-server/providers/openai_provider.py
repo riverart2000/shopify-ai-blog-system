@@ -170,6 +170,15 @@ class OpenAIImageProvider(ImageProvider):
             "size": size,
         }
 
+        model_name = (self.model.model_name or "").strip().lower()
+        if "dall-e-3" in model_name:
+            # Prefer the higher-fidelity settings for realistic ecommerce images.
+            payload["quality"] = extra.get("quality", "hd")
+            payload["style"] = extra.get("style", "natural")
+        elif "gpt-image" in model_name:
+            # GPT Image uses a different quality scale than DALL·E.
+            payload["quality"] = extra.get("quality", "high")
+
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 logger.debug(

@@ -11,9 +11,10 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from typing import Annotated
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -440,13 +441,30 @@ async def api_social_generate(request: Request, payload: SocialGenerateRequest):
     if not product_title:
         raise HTTPException(status_code=400, detail="product_title is required")
 
+    product_handle = payload.product_handle.strip()
+    product_url = payload.product_url.strip()
+    if not product_handle and product_url:
+        parsed = urlparse(product_url)
+        match = re.search(r"/products/([^/?#]+)", parsed.path or "", flags=re.IGNORECASE)
+        if match:
+            product_handle = match.group(1).strip()
+
+    product_image_url = ""
+    if product_handle:
+        try:
+            store_cfg = _store_config_from_row(store_row)
+            product_image_url = (await shopify_client.fetch_product_image_url(store_cfg, product_handle)) or ""
+        except Exception:
+            logger.exception("Failed to fetch social product image handle=%s store=%s", product_handle, sid)
+
     try:
         generated = await social_post_service.generate_social_post_variants(
             store_id=sid,
             store_name=store_row["name"],
             product_title=product_title,
-            product_handle=payload.product_handle.strip(),
-            product_url=payload.product_url.strip(),
+            product_handle=product_handle,
+            product_url=product_url,
+            product_image_url=product_image_url,
             brief_text=payload.brief_text.strip(),
             offer_type=payload.offer_type.strip() or "direct_offer",
             model_id=payload.model_id.strip() or None,
@@ -461,8 +479,9 @@ async def api_social_generate(request: Request, payload: SocialGenerateRequest):
         "ok": True,
         "store_id": sid,
         "product_title": payload.product_title.strip(),
-        "product_handle": payload.product_handle.strip(),
-        "product_url": payload.product_url.strip(),
+        "product_handle": product_handle,
+        "product_url": product_url,
+        "product_image_url": product_image_url,
         "brief_text": payload.brief_text.strip(),
         "campaign_name": generated.get("campaign_name", ""),
         "summary": generated.get("summary", ""),

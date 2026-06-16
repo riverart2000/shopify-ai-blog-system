@@ -351,28 +351,56 @@ def _build_social_image_prompt(
     *,
     store_name: str,
     product_title: str,
+    product_url: str,
+    product_image_url: str,
+    offer_type: str,
+    offer_type_label: str,
+    offer_instructions: str,
+    campaign_name: str,
+    campaign_summary: str,
+    sample_post_text: str,
     brief_text: str,
     discount_url: str,
     variant_index: int,
 ) -> str:
     visual_angles = [
-        "hero product scene with premium lifestyle styling",
-        "before-and-after inspired wellness transformation concept",
-        "clean lab-inspired beauty composition with high-end ecommerce look",
-        "social ad-style product focus with dramatic lighting and depth",
+        "hero product photography with premium lifestyle art direction",
+        "hands-on realistic use-case shot with product as the focal point",
+        "clean lab-style ecommerce product scene with true-to-life textures",
+        "performance marketing ad composition with realistic depth and lighting",
     ]
     direction = visual_angles[variant_index % len(visual_angles)]
+    normalized_offer_type = _normalise_offer_type(offer_type)
+    brief_summary = _clean_text(campaign_summary)[:260]
+    campaign_title = _clean_text(campaign_name)[:120]
+    offer_description = _clean_text(brief_text)[:320]
+    sample_line = re.sub(r"\s+", " ", _clean_text(sample_post_text))[:260]
+    product_ref_line = (
+        f"Reference product image URL (keep the same product identity/packaging/shape/colors): {product_image_url}. "
+        if _clean_text(product_image_url)
+        else ""
+    )
 
     return (
-        f"Create a high-converting ecommerce social marketing image for {store_name}. "
+        "Create one high-quality photorealistic ecommerce social ad image. "
+        f"Brand/store: {store_name}. "
         f"Product: {product_title}. "
+        f"Product URL context: {product_url or '(not provided)'}. "
+        f"Offer type: {offer_type_label or _offer_type_label(normalized_offer_type)} ({normalized_offer_type}). "
+        f"Offer strategy: {offer_instructions or _offer_type_instructions(normalized_offer_type)}. "
+        f"Campaign name: {campaign_title or f'{product_title} launch offer'}. "
+        f"Campaign summary: {brief_summary or 'Launch campaign with conversion-focused urgency and trust.'}. "
+        f"Offer description from merchant: {offer_description or 'Show premium wellness value and clear purchase intent.'}. "
+        f"Reference post copy tone: {sample_line or 'Benefit-led, concise, and sales-oriented.'}. "
         f"Visual direction: {direction}. "
-        "The image must be vertical 9:16 composition suitable for stories/reels style placements, "
-        "1080x1920 framing intent, mobile-first layout, premium wellness aesthetics, and strong product prominence. "
-        "Convey a launch campaign with a 20% discount urgency feeling. "
-        f"Associated campaign URL for caption context: {discount_url}. "
-        f"Merchant brief context: {brief_text or 'Use luxury skincare conversion-focused visual language.'}. "
-        "No watermarks, no unrelated brand logos, no UI mockups, no readable text overlays."
+        f"{product_ref_line}"
+        "The image must look like real commercial product photography, not an illustration or CGI render. "
+        "Use realistic materials, shadows, reflections, and camera depth-of-field. "
+        "Keep the product dominant and clearly visible in the frame. "
+        "Convey launch-offer urgency (20% discount) through scene mood and composition only. "
+        "Format: strict vertical 9:16 composition, stories/reels ready, premium mobile-first framing. "
+        f"Campaign destination URL for CTA context: {discount_url}. "
+        "Negative constraints: no watermarks, no unrelated logos, no UI mockups, no collage grid, no readable text overlays, no cartoon style."
     )
 
 
@@ -424,6 +452,14 @@ async def generate_social_marketing_images(
     store_id: str,
     store_name: str,
     product_title: str,
+    product_url: str,
+    product_image_url: str,
+    offer_type: str,
+    offer_type_label: str,
+    offer_instructions: str,
+    campaign_name: str,
+    campaign_summary: str,
+    sample_post_text: str,
     brief_text: str,
     discount_url: str,
     image_count: int,
@@ -436,6 +472,14 @@ async def generate_social_marketing_images(
         prompt = _build_social_image_prompt(
             store_name=store_name,
             product_title=product_title,
+            product_url=product_url,
+            product_image_url=product_image_url,
+            offer_type=offer_type,
+            offer_type_label=offer_type_label,
+            offer_instructions=offer_instructions,
+            campaign_name=campaign_name,
+            campaign_summary=campaign_summary,
+            sample_post_text=sample_post_text,
             brief_text=brief_text,
             discount_url=discount_url,
             variant_index=index,
@@ -475,6 +519,7 @@ async def generate_social_post_variants(
     product_title: str,
     product_handle: str = "",
     product_url: str,
+    product_image_url: str = "",
     brief_text: str,
     offer_type: str = _DEFAULT_OFFER_TYPE,
     model_id: str | None = None,
@@ -556,10 +601,19 @@ async def generate_social_post_variants(
 
     image_urls: list[str] = []
     try:
+        primary_provider_text = provider_texts.get("instagram") or provider_texts.get("facebook") or ""
         image_urls = await generate_social_marketing_images(
             store_id=store_id,
             store_name=store_name,
             product_title=title,
+            product_url=url,
+            product_image_url=product_image_url,
+            offer_type=normalized_offer_type,
+            offer_type_label=_offer_type_label(normalized_offer_type),
+            offer_instructions=offer_instructions,
+            campaign_name=campaign_name,
+            campaign_summary=summary,
+            sample_post_text=primary_provider_text,
             brief_text=brief,
             discount_url=discount_url,
             image_count=_social_image_target_count(),
