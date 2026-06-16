@@ -125,7 +125,12 @@ class ImageProvider(ABC):
         self.model = model
 
     @abstractmethod
-    async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+    async def generate_images(
+        self,
+        image_prompt: str,
+        count: int = 2,
+        reference_image: str | None = None,
+    ) -> list[str]:
         """Generate images. Returns list of public URLs. Raises ProviderError on failure."""
 
     def __repr__(self) -> str:

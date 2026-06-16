@@ -152,7 +152,12 @@ class OpenAITextProvider(TextProvider):
 
 class OpenAIImageProvider(ImageProvider):
 
-    async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+    async def generate_images(
+        self,
+        image_prompt: str,
+        count: int = 2,
+        reference_image: str | None = None,
+    ) -> list[str]:
         api_key = self.model.resolved_api_key
         if not api_key:
             raise ProviderError("OpenAI API key is not configured", retryable=False)
@@ -178,6 +183,9 @@ class OpenAIImageProvider(ImageProvider):
         elif "gpt-image" in model_name:
             # GPT Image uses a different quality scale than DALL·E.
             payload["quality"] = extra.get("quality", "high")
+            if reference_image:
+                # GPT Image supports conditioning with image URLs/base64 inputs.
+                payload["image"] = reference_image
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

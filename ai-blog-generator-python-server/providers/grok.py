@@ -15,7 +15,12 @@ _DEFAULT_ENDPOINT = "https://api.x.ai/v1/images/generations"
 
 class GrokProvider(ImageProvider):
 
-    async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+    async def generate_images(
+        self,
+        image_prompt: str,
+        count: int = 2,
+        reference_image: str | None = None,
+    ) -> list[str]:
         api_key = self.model.resolved_api_key
         if not api_key:
             raise ProviderError("Grok API key is not configured", retryable=False)
@@ -30,6 +35,10 @@ class GrokProvider(ImageProvider):
             "prompt": image_prompt,
             "n": n,
         }
+
+        if reference_image:
+            # Attach when provider/model supports image conditioning; ignored otherwise.
+            payload["image"] = reference_image
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

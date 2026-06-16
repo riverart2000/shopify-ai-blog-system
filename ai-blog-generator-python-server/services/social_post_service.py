@@ -155,10 +155,10 @@ def _cap_text(provider: str, text: str) -> str:
     # Keep platform limits while preserving line-break structure for offer blocks.
     hard_limits = {
         "x": 280,
-        "instagram": 1300,
-        "facebook": 1200,
-        "linkedin": 1300,
-        "pinterest": 700,
+        "instagram": 1800,
+        "facebook": 1800,
+        "linkedin": 2200,
+        "pinterest": 900,
     }
     limit = hard_limits.get(provider, 420)
     trimmed = _clean_text(text)
@@ -416,7 +416,11 @@ def _with_social_image_overrides(model: providers.ModelRecord) -> providers.Mode
     return replace(model, extra_json=json.dumps(extra))
 
 
-async def _generate_social_marketing_image_once(store_id: str, prompt: str) -> str | None:
+async def _generate_social_marketing_image_once(
+    store_id: str,
+    prompt: str,
+    product_image_url: str,
+) -> str | None:
     rows = await db.get_active_image_models(store_id)
     if not rows:
         return None
@@ -430,7 +434,11 @@ async def _generate_social_marketing_image_once(store_id: str, prompt: str) -> s
         try:
             effective_model = _with_social_image_overrides(model)
             provider = providers.get_image_provider(effective_model)
-            urls = await provider.generate_images(prompt, 1)
+            urls = await provider.generate_images(
+                prompt,
+                1,
+                reference_image=_clean_text(product_image_url) or None,
+            )
             if urls:
                 return urls[0]
         except providers.ProviderError as exc:
@@ -484,7 +492,11 @@ async def generate_social_marketing_images(
             discount_url=discount_url,
             variant_index=index,
         )
-        image_url = await _generate_social_marketing_image_once(store_id, prompt)
+        image_url = await _generate_social_marketing_image_once(
+            store_id,
+            prompt,
+            product_image_url,
+        )
         if not image_url or image_url in seen:
             continue
         seen.add(image_url)
@@ -551,6 +563,12 @@ async def generate_social_post_variants(
         "- Mention a clear action to visit the product/store and claim the launch offer.\n"
         "- Include this exact campaign URL in EACH platform post: "
         f"{discount_url}\n"
+        "- Platform length guidance:\n"
+        "  - X: concise, 1 short paragraph + CTA (around 180-260 chars where possible).\n"
+        "  - Instagram: slightly longer, 2-4 short paragraphs with strong storytelling + CTA.\n"
+        "  - Facebook: slightly longer, 2-4 short paragraphs with benefits + offer + CTA.\n"
+        "  - LinkedIn: the most detailed, 3-5 short paragraphs with clear value framing + CTA.\n"
+        "  - Pinterest: medium length, 2-3 short paragraphs focused on click-through intent.\n"
         "- Include the offer block line: 🎉 Launch Offer: Save 20%\n"
         "- Include the offer block line: 🚚 Free UK Delivery\n"
         "- Include a 'Read more:' line and use Product URL where sensible.\n"

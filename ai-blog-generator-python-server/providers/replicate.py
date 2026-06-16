@@ -27,7 +27,12 @@ class ReplicateImageProvider(ImageProvider):
                      (e.g. ``https://replicate.com/black-forest-labs/flux-schnell``)
     """
 
-    async def generate_images(self, image_prompt: str, count: int = 2) -> list[str]:
+    async def generate_images(
+        self,
+        image_prompt: str,
+        count: int = 2,
+        reference_image: str | None = None,
+    ) -> list[str]:
         api_key = self.model.resolved_api_key
         if not api_key:
             raise ProviderError("Replicate API token is not configured", retryable=False)
@@ -50,6 +55,9 @@ class ReplicateImageProvider(ImageProvider):
 
         input_params: dict = dict(extra.get("input", {}) or {})
         input_params["prompt"] = image_prompt
+        if reference_image:
+            # Commonly accepted key across many Replicate diffusion models.
+            input_params.setdefault("image", reference_image)
 
         if version:
             predictions_url = _PREDICTIONS_URL
