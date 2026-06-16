@@ -417,6 +417,114 @@ class TestGenerations:
         assert "Rate limited" in errors[0]["message"]
 
 
+class TestSocialPosts:
+    async def test_log_and_retrieve_social_post(self, tmp_db):
+        await db.log_social_post(
+            store_id="s1",
+            store_name="Store One",
+            workspace_id="workspace-1",
+            campaign_name="Launch Wave",
+            product_handle="pro-serum",
+            product_title="Pro Serum",
+            brief_text="Highlight glow and hydration",
+            base_text="Glow routine launch",
+            provider_texts={
+                "instagram": "Glow starts here.",
+                "facebook": "Hydration + glow combo.",
+            },
+            account_ids=["acc-1", "acc-2"],
+            mode="draft",
+            scheduled_at=None,
+            publer_job_id="job-100",
+            publer_status="queued",
+            publer_failures=[],
+        )
+
+        rows = await db.get_recent_social_posts("s1", limit=10)
+        assert rows
+        latest = rows[0]
+        assert latest["campaign_name"] == "Launch Wave"
+        assert latest["provider_texts"]["instagram"] == "Glow starts here."
+        assert latest["account_ids"] == ["acc-1", "acc-2"]
+
+    async def test_update_social_post_job_status(self, tmp_db):
+        await db.log_social_post(
+            store_id="s1",
+            store_name="Store One",
+            workspace_id="workspace-2",
+            campaign_name="Retarget Burst",
+            product_handle="night-cream",
+            product_title="Night Cream",
+            brief_text="",
+            base_text="Night routine",
+            provider_texts={"x": "Night routine refresh"},
+            account_ids=["acc-3"],
+            mode="scheduled",
+            scheduled_at="2026-01-02T10:00:00Z",
+            publer_job_id="job-200",
+            publer_status="queued",
+            publer_failures=[],
+        )
+
+        await db.update_social_post_job_status(
+            publer_job_id="job-200",
+            status="done",
+            failures=[{"account_id": "acc-3", "reason": "none"}],
+        )
+
+        rows = await db.get_recent_social_posts("s1", limit=20)
+        match = next((row for row in rows if row["publer_job_id"] == "job-200"), None)
+        assert match is not None
+        assert match["publer_status"] == "done"
+        assert isinstance(match["publer_failures_list"], list)
+
+
+class TestSocialPostService:
+    async def test_generate_variants_requires_product_title(self, tmp_db):
+        from services import social_post_service
+
+        with pytest.raises(ValueError, match="product_title is required"):
+            await social_post_service.generate_social_post_variants(
+                store_id="s1",
+                store_name="Store One",
+                product_title="",
+                product_url="https://example.com/products/item",
+                brief_text="",
+            )
+
+    async def test_generate_variants_fills_missing_provider_lines(self, tmp_db):
+        from services import social_post_service
+
+        await db.upsert_store(_make_store("social-s1", "Store One"))
+        await db.upsert_model(_make_model("social-s1", "text", "deepseek", is_active=True))
+
+        llm_payload = {
+            "title": "Glow campaign",
+            "summary": "Short objective",
+            "keywords": ["glow", "hydration"],
+            "hashtags": ["#Glow", "Hydration"],
+            "content": "instagram: Insta caption only",
+        }
+
+        with patch(
+            "services.social_post_service.llm_service.generate_text",
+            new_callable=AsyncMock,
+            return_value=llm_payload,
+        ):
+            result = await social_post_service.generate_social_post_variants(
+                store_id="social-s1",
+                store_name="Store One",
+                product_title="Pro Serum",
+                product_url="https://example.com/products/pro-serum",
+                brief_text="Drive curiosity",
+            )
+
+        provider_texts = result["provider_texts"]
+        assert provider_texts["instagram"] == "Insta caption only"
+        assert all(provider in provider_texts for provider in ["facebook", "x", "linkedin", "pinterest", "tiktok"])
+        assert result["hashtags"][0].startswith("#")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ⑧ DB — scheduled jobs
 # ─────────────────────────────────────────────────────────────────────────────

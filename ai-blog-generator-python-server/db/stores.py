@@ -62,6 +62,7 @@ async def delete_store(store_id: str) -> None:
         for tbl in (
             "stores", "access_tokens", "store_settings",
             "models", "prompts", "scheduled_jobs",
+            "social_posts",
         ):
             col = "store_id" if tbl != "stores" else "id"
             await db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (store_id,))

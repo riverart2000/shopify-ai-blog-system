@@ -20,6 +20,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Blog Studio</s-link>
         <s-link href="/app/product-blogs">Product Blogs</s-link>
+        <s-link href="/app/social-posts">Social Posts</s-link>
         <s-link href="/app/history">History</s-link>
         <s-link href="/app/schedule">Schedule</s-link>
         <s-link href="/app/prompts">Prompts</s-link>

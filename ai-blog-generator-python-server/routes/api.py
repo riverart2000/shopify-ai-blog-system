@@ -8,6 +8,7 @@ routes/api.py — Utility and data endpoints.
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
 import time
@@ -21,6 +22,8 @@ from pydantic import BaseModel
 import db
 import shopify_client
 import state
+import services.publer_service as publer_service
+import services.social_post_service as social_post_service
 from config import StoreConfig
 from providers import AllModelsFailedError
 from services import blog_scope, image_service, internal_links, llm_service, logo_service, title_service
@@ -259,6 +262,295 @@ async def api_errors(request: Request, store_id: str = "", limit: int = 30):
             ) as _cur:
                 rows = [dict(r) for r in await _cur.fetchall()]
     return {"errors": rows}
+
+
+# --- Social Posts + Publer ---
+
+def _safe_json_loads(raw: str, fallback):
+    try:
+        return json.loads(raw)
+    except Exception:
+        return fallback
+
+
+class SocialGenerateRequest(BaseModel):
+    store_id: str = ""
+    product_title: str = ""
+    product_handle: str = ""
+    product_url: str = ""
+    brief_text: str = ""
+    model_id: str = ""
+
+
+class SocialDefaultsSaveRequest(BaseModel):
+    store_id: str = ""
+    default_workspace_id: str = ""
+    default_account_ids: list[str] = []
+    default_providers: list[str] = []
+    default_mode: str = "draft"
+
+
+class SocialPublishRequest(BaseModel):
+    store_id: str = ""
+    workspace_id: str = ""
+    campaign_name: str = ""
+    product_handle: str = ""
+    product_title: str = ""
+    product_url: str = ""
+    brief_text: str = ""
+    base_text: str = ""
+    provider_texts: dict[str, str] = {}
+    account_ids: list[str] = []
+    mode: str = "draft"
+    scheduled_at: str = ""
+
+
+@router.get("/api/social/workspaces")
+async def api_social_workspaces(request: Request):
+    _verify_backend_api_key(request)
+    if not publer_service.is_configured():
+        return {
+            "configured": False,
+            "docs_url": publer_service.docs_url(),
+            "workspaces": [],
+        }
+
+    try:
+        workspaces = await publer_service.list_workspaces()
+    except publer_service.PublerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {
+        "configured": True,
+        "docs_url": publer_service.docs_url(),
+        "workspaces": workspaces,
+    }
+
+
+@router.get("/api/social/accounts")
+async def api_social_accounts(request: Request, workspace_id: str = ""):
+    _verify_backend_api_key(request)
+    if not workspace_id.strip():
+        raise HTTPException(status_code=400, detail="workspace_id is required")
+    if not publer_service.is_configured():
+        raise HTTPException(status_code=503, detail="PUBLER_API_KEY is not configured on the backend")
+
+    try:
+        accounts = await publer_service.list_accounts(workspace_id.strip())
+    except publer_service.PublerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {"workspace_id": workspace_id.strip(), "accounts": accounts}
+
+
+@router.get("/api/social/defaults")
+async def api_social_defaults(request: Request, store_id: str = ""):
+    _verify_backend_api_key(request)
+    store = await _resolve_generation_store(store_id)
+    sid = store["id"]
+
+    workspace_id = await db.get_store_setting(sid, "social_default_workspace_id", "")
+    account_ids = _safe_json_loads(
+        await db.get_store_setting(sid, "social_default_account_ids", "[]"),
+        [],
+    )
+    providers = _safe_json_loads(
+        await db.get_store_setting(sid, "social_default_providers", '["instagram","facebook","x"]'),
+        ["instagram", "facebook", "x"],
+    )
+    mode = (await db.get_store_setting(sid, "social_default_mode", "draft")).strip() or "draft"
+
+    return {
+        "store_id": sid,
+        "defaults": {
+            "workspace_id": workspace_id,
+            "account_ids": [str(a).strip() for a in account_ids if str(a).strip()],
+            "providers": [str(p).strip().lower() for p in providers if str(p).strip()],
+            "mode": mode if mode in {"draft", "scheduled", "publish_now"} else "draft",
+        },
+    }
+
+
+@router.post("/api/social/defaults/save")
+async def api_social_defaults_save(request: Request, payload: SocialDefaultsSaveRequest):
+    _verify_backend_api_key(request)
+    store = await _resolve_generation_store(payload.store_id)
+    sid = store["id"]
+
+    normalized_mode = payload.default_mode.strip().lower() or "draft"
+    if normalized_mode not in {"draft", "scheduled", "publish_now"}:
+        raise HTTPException(status_code=400, detail="default_mode must be draft, scheduled, or publish_now")
+
+    account_ids = [str(a).strip() for a in payload.default_account_ids if str(a).strip()]
+    providers = [str(p).strip().lower() for p in payload.default_providers if str(p).strip()]
+
+    await db.set_store_settings(
+        sid,
+        {
+            "social_default_workspace_id": payload.default_workspace_id.strip(),
+            "social_default_account_ids": json.dumps(account_ids),
+            "social_default_providers": json.dumps(providers),
+            "social_default_mode": normalized_mode,
+        },
+    )
+    return {"ok": True}
+
+
+@router.get("/api/social/history")
+async def api_social_history(request: Request, store_id: str = "", limit: int = 30):
+    _verify_backend_api_key(request)
+    store = await _resolve_generation_store(store_id)
+    sid = store["id"]
+    rows = await db.get_recent_social_posts(sid, limit=min(max(limit, 1), 200))
+    return {"store_id": sid, "rows": rows}
+
+
+@router.post("/api/social/generate")
+async def api_social_generate(request: Request, payload: SocialGenerateRequest):
+    _verify_backend_api_key(request)
+    store_row = await _resolve_generation_store(payload.store_id)
+    sid = store_row["id"]
+
+    product_title = payload.product_title.strip()
+    if not product_title:
+        raise HTTPException(status_code=400, detail="product_title is required")
+
+    try:
+        generated = await social_post_service.generate_social_post_variants(
+            store_id=sid,
+            store_name=store_row["name"],
+            product_title=product_title,
+            product_url=payload.product_url.strip(),
+            brief_text=payload.brief_text.strip(),
+            model_id=payload.model_id.strip() or None,
+        )
+    except AllModelsFailedError as exc:
+        raise HTTPException(status_code=502, detail=f"Social post generation failed: {exc}") from exc
+    except Exception as exc:
+        logger.exception("Unexpected social generation error")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "store_id": sid,
+        "product_title": payload.product_title.strip(),
+        "product_handle": payload.product_handle.strip(),
+        "product_url": payload.product_url.strip(),
+        "brief_text": payload.brief_text.strip(),
+        "campaign_name": generated.get("campaign_name", ""),
+        "summary": generated.get("summary", ""),
+        "keywords": generated.get("keywords", []),
+        "hashtags": generated.get("hashtags", []),
+        "provider_texts": generated.get("provider_texts", {}),
+        "generated_by": generated.get("generated_by", ""),
+        "generated_provider": generated.get("generated_provider", ""),
+    }
+
+
+@router.post("/api/social/publish")
+async def api_social_publish(request: Request, payload: SocialPublishRequest):
+    _verify_backend_api_key(request)
+    store_row = await _resolve_generation_store(payload.store_id)
+    sid = store_row["id"]
+
+    if not publer_service.is_configured():
+        raise HTTPException(status_code=503, detail="PUBLER_API_KEY is not configured on the backend")
+
+    workspace_id = payload.workspace_id.strip()
+    if not workspace_id:
+        raise HTTPException(status_code=400, detail="workspace_id is required")
+
+    mode = payload.mode.strip().lower() or "draft"
+    if mode not in {"draft", "scheduled", "publish_now"}:
+        raise HTTPException(status_code=400, detail="mode must be draft, scheduled, or publish_now")
+
+    account_ids = [str(a).strip() for a in payload.account_ids if str(a).strip()]
+    if not account_ids:
+        raise HTTPException(status_code=400, detail="account_ids must include at least one account")
+
+    provider_texts = {
+        str(provider).strip().lower(): str(text).strip()
+        for provider, text in (payload.provider_texts or {}).items()
+        if str(provider).strip() and str(text).strip()
+    }
+    if not provider_texts:
+        raise HTTPException(status_code=400, detail="provider_texts is required")
+
+    scheduled_at = payload.scheduled_at.strip()
+    if mode == "scheduled" and not scheduled_at:
+        raise HTTPException(status_code=400, detail="scheduled_at is required for scheduled mode")
+
+    try:
+        created = await publer_service.create_text_post(
+            workspace_id=workspace_id,
+            account_ids=account_ids,
+            provider_texts=provider_texts,
+            mode=mode,
+            scheduled_at=scheduled_at,
+        )
+        job_id = str(created.get("job_id") or "").strip()
+
+        await db.log_social_post(
+            store_id=sid,
+            store_name=store_row["name"],
+            workspace_id=workspace_id,
+            campaign_name=payload.campaign_name.strip(),
+            product_handle=payload.product_handle.strip(),
+            product_title=payload.product_title.strip(),
+            brief_text=payload.brief_text.strip(),
+            base_text=payload.base_text.strip(),
+            provider_texts=provider_texts,
+            account_ids=account_ids,
+            mode=mode,
+            scheduled_at=scheduled_at or None,
+            publer_job_id=job_id,
+            publer_status="queued",
+            publer_failures=[],
+        )
+    except publer_service.PublerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    return {
+        "ok": True,
+        "store_id": sid,
+        "workspace_id": workspace_id,
+        "job_id": job_id,
+        "mode": mode,
+        "status": "queued",
+    }
+
+
+@router.get("/api/social/job-status")
+async def api_social_job_status(request: Request, workspace_id: str = "", job_id: str = ""):
+    _verify_backend_api_key(request)
+    if not publer_service.is_configured():
+        raise HTTPException(status_code=503, detail="PUBLER_API_KEY is not configured on the backend")
+
+    if not workspace_id.strip() or not job_id.strip():
+        raise HTTPException(status_code=400, detail="workspace_id and job_id are required")
+
+    try:
+        status = await publer_service.get_job_status(
+            workspace_id=workspace_id.strip(),
+            job_id=job_id.strip(),
+        )
+    except publer_service.PublerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    await db.update_social_post_job_status(
+        publer_job_id=job_id.strip(),
+        status=str(status.get("status") or "unknown"),
+        failures=status.get("failures", []),
+    )
+
+    return {
+        "ok": True,
+        "workspace_id": workspace_id.strip(),
+        "job_id": job_id.strip(),
+        "status": status.get("status", "unknown"),
+        "payload": status.get("payload", {}),
+        "failures": status.get("failures", []),
+    }
 
 
 # --- Schedule CRUD ---

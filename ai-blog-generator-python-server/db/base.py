@@ -112,6 +112,26 @@ CREATE TABLE IF NOT EXISTS generations (
     created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 );
 
+CREATE TABLE IF NOT EXISTS social_posts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id            TEXT NOT NULL,
+    store_name          TEXT NOT NULL,
+    workspace_id        TEXT NOT NULL DEFAULT '',
+    campaign_name       TEXT NOT NULL DEFAULT '',
+    product_handle      TEXT NOT NULL DEFAULT '',
+    product_title       TEXT NOT NULL DEFAULT '',
+    brief_text          TEXT NOT NULL DEFAULT '',
+    base_text           TEXT NOT NULL DEFAULT '',
+    provider_texts_json TEXT NOT NULL DEFAULT '{}',
+    account_ids_json    TEXT NOT NULL DEFAULT '[]',
+    mode                TEXT NOT NULL DEFAULT 'draft',
+    scheduled_at        TEXT,
+    publer_job_id       TEXT NOT NULL DEFAULT '',
+    publer_status       TEXT NOT NULL DEFAULT '',
+    publer_failures     TEXT NOT NULL DEFAULT '[]',
+    created_at          INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
 CREATE TABLE IF NOT EXISTS generation_errors (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     store_id   TEXT NOT NULL,

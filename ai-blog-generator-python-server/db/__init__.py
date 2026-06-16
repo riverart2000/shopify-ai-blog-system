@@ -20,6 +20,7 @@ from .scheduled_jobs import (
     get_scheduled_jobs, get_all_active_jobs, get_due_jobs,
     upsert_job, delete_job, update_job_run_times,
 )
+from .social_posts import log_social_post, get_recent_social_posts, update_social_post_job_status
 from .keyword_pool import (
     add_keywords, get_keyword_pool, count_keyword_pool,
     peek_keyword, pop_keyword, delete_keyword, clear_keyword_pool,
@@ -49,6 +50,8 @@ __all__ = [
     # scheduled jobs
     "get_scheduled_jobs", "get_all_active_jobs", "get_due_jobs",
     "upsert_job", "delete_job", "update_job_run_times",
+    # social posts
+    "log_social_post", "get_recent_social_posts", "update_social_post_job_status",
     # keyword pool
     "add_keywords", "get_keyword_pool", "count_keyword_pool",
     "peek_keyword", "pop_keyword", "delete_keyword", "clear_keyword_pool",
