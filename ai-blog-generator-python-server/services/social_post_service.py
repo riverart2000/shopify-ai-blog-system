@@ -426,6 +426,7 @@ async def _generate_social_marketing_image_once(
         return None
 
     skip_providers: set[str] = set()
+    reference_image = _clean_text(product_image_url) or None
     for row in rows:
         model = providers.ModelRecord.from_dict(row)
         if model.provider in skip_providers:
@@ -434,11 +435,25 @@ async def _generate_social_marketing_image_once(
         try:
             effective_model = _with_social_image_overrides(model)
             provider = providers.get_image_provider(effective_model)
-            urls = await provider.generate_images(
-                prompt,
-                1,
-                reference_image=_clean_text(product_image_url) or None,
-            )
+            urls: list[str] = []
+            try:
+                urls = await provider.generate_images(
+                    prompt,
+                    1,
+                    reference_image=reference_image,
+                )
+            except providers.ProviderError as ref_exc:
+                if not reference_image:
+                    raise
+
+                # Some image models reject conditioning fields; retry prompt-only.
+                logger.info(
+                    "Social image provider %s rejected reference image; retrying without reference: %s",
+                    model.name,
+                    ref_exc,
+                )
+                urls = await provider.generate_images(prompt, 1)
+
             if urls:
                 return urls[0]
         except providers.ProviderError as exc:
