@@ -151,23 +151,73 @@ def use_product_featured_image(
     image_types: list[str],
     image_labels: list[str],
 ) -> tuple[list[str], list[str], list[str]]:
-    """Replace the generated hero image with the Shopify product image.
+    """Build a stable 4-image set for product blogs.
 
-    Product blogs should still use the Shopify product image as the featured
-    image while keeping the remaining AI-generated support images.
+    Preferred order:
+    1) Shopify product image first (featured)
+    2) Non-hero generated support images
+    3) Hero image as fallback when support image typing is incomplete
+
+    This avoids collapsing to a single-image post when upstream image type
+    metadata is partial or inconsistent.
     """
-    merged = [
-        (url, image_type, image_labels[index] if index < len(image_labels) else image_type)
-        for index, (url, image_type) in enumerate(zip(image_urls, image_types))
-        if image_type not in ("photo", "hero_photo")
-    ]
+
+    target_count = 4
+    merged: list[tuple[str, str, str]] = []
+    seen_urls: set[str] = set()
+
+    def _append(url: str, image_type: str, label: str) -> None:
+        normalized_url = (url or "").strip()
+        if not normalized_url or normalized_url in seen_urls:
+            return
+        merged.append((normalized_url, image_type, label))
+        seen_urls.add(normalized_url)
+
+    normalized_entries: list[tuple[str, str, str]] = []
+    for index, url in enumerate(image_urls):
+        image_type = image_types[index] if index < len(image_types) else "generated"
+        if index < len(image_labels):
+            label = image_labels[index]
+        else:
+            label = image_type.replace("_", " ").title()
+        normalized_entries.append((url, image_type, label))
 
     if product_image_url:
-        merged.insert(0, (product_image_url, "product", "Product Image"))
+        _append(product_image_url, "product", "Product Image")
+
+    non_hero_entries = [
+        (url, image_type, label)
+        for url, image_type, label in normalized_entries
+        if image_type not in ("photo", "hero_photo")
+    ]
+    hero_entries = [
+        (url, image_type, label)
+        for url, image_type, label in normalized_entries
+        if image_type in ("photo", "hero_photo")
+    ]
+
+    for url, image_type, label in non_hero_entries:
+        _append(url, image_type, label)
+
+    # If type metadata over-classifies images as hero/photo, keep enough hero
+    # images as a fallback so product blogs don't degrade to a single image.
+    if len(merged) < target_count:
+        for url, image_type, label in hero_entries:
+            _append(url, image_type, label)
+            if len(merged) >= target_count:
+                break
+
+    # Final safety net for malformed type arrays: include remaining raw URLs.
+    if len(merged) < target_count:
+        for url, image_type, label in normalized_entries:
+            _append(url, image_type, label)
+            if len(merged) >= target_count:
+                break
 
     if not merged:
         return [], [], []
 
+    merged = merged[:target_count]
     merged_urls = [url for url, _image_type, _label in merged]
     merged_types = [image_type for _url, image_type, _label in merged]
     merged_labels = [label for _url, _image_type, label in merged]

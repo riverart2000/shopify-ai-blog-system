@@ -941,6 +941,55 @@ class TestImageService:
         ]
         assert len(urls) == 4
 
+    async def test_use_product_featured_image_falls_back_when_all_types_are_hero(self, tmp_db):
+        from services import image_service
+
+        merged_urls, merged_types, merged_labels = image_service.use_product_featured_image(
+            "https://cdn.shopify.com/product-main.png",
+            [
+                "https://img.example.com/hero-1.png",
+                "https://img.example.com/hero-2.png",
+                "https://img.example.com/hero-3.png",
+                "https://img.example.com/hero-4.png",
+            ],
+            ["hero_photo", "hero_photo", "hero_photo", "hero_photo"],
+            ["Hero 1", "Hero 2", "Hero 3", "Hero 4"],
+        )
+
+        assert merged_urls[0] == "https://cdn.shopify.com/product-main.png"
+        assert merged_types[0] == "product"
+        assert merged_labels[0] == "Product Image"
+        assert merged_urls[1:] == [
+            "https://img.example.com/hero-1.png",
+            "https://img.example.com/hero-2.png",
+            "https://img.example.com/hero-3.png",
+        ]
+        assert len(merged_urls) == 4
+
+    async def test_use_product_featured_image_handles_missing_types_and_labels(self, tmp_db):
+        from services import image_service
+
+        merged_urls, merged_types, merged_labels = image_service.use_product_featured_image(
+            "https://cdn.shopify.com/product-main.png",
+            [
+                "https://img.example.com/a.png",
+                "https://img.example.com/b.png",
+                "https://img.example.com/c.png",
+                "https://img.example.com/d.png",
+            ],
+            [],
+            [],
+        )
+
+        assert merged_urls == [
+            "https://cdn.shopify.com/product-main.png",
+            "https://img.example.com/a.png",
+            "https://img.example.com/b.png",
+            "https://img.example.com/c.png",
+        ]
+        assert merged_types == ["product", "generated", "generated", "generated"]
+        assert merged_labels == ["Product Image", "Generated", "Generated", "Generated"]
+
     async def test_generate_feature_image_falls_back_to_simpler_prompt(self, tmp_db):
         from services import image_service
 
