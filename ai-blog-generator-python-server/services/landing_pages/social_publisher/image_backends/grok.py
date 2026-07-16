@@ -14,7 +14,7 @@ from __future__ import annotations
 import base64
 from typing import List, Optional
 
-from product_prompts.utils import get_logger
+from services.landing_pages.product_prompts.utils import get_logger
 
 from .base import GeneratedImage, ImageBackend
 

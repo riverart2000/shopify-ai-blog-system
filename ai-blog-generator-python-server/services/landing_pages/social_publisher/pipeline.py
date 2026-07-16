@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from product_prompts.config import Settings
-from product_prompts.utils import build_session, get_logger, slugify
+from services.landing_pages.product_prompts.config import Settings
+from services.landing_pages.product_prompts.utils import build_session, get_logger, slugify
 
 from .caption import build_post_text
 from .image_backends import get_image_backend

@@ -7,9 +7,9 @@ from typing import Dict, List, Optional
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from product_prompts.config import Settings
-from product_prompts.utils import build_session, get_logger, slugify
-from product_prompts.fetchers.shopify import ShopifyAdminFetcher
+from services.landing_pages.product_prompts.config import Settings
+from services.landing_pages.product_prompts.utils import build_session, get_logger, slugify
+from services.landing_pages.product_prompts.fetchers.shopify import ShopifyAdminFetcher
 
 log = get_logger("social.landing_page")
 
