@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -93,6 +94,8 @@ async def generate_prompts(req: GeneratePromptsRequest):
 async def generate_social(req: GenerateSocialRequest):
     """Run generate_social.py logic for a product handle."""
     settings = get_settings()
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(req.handle)
     
     def run_publisher():
         publisher = SocialPublisher(
@@ -107,12 +110,12 @@ async def generate_social(req: GenerateSocialRequest):
         output_dir.mkdir(parents=True, exist_ok=True)
         produced = []
         
-        json_path = settings.output_dir / f"{req.handle}.json"
+        json_path = settings.output_dir / f"{safe_handle}.json"
         if json_path.exists():
             data = json.loads(json_path.read_text(encoding="utf-8"))
             produced.extend(publisher._process_product(json_path, data, output_dir))
         else:
-            raise FileNotFoundError(f"No JSON found for handle: {req.handle}")
+            raise FileNotFoundError(f"No JSON found for handle: {safe_handle}")
 
         return [str(p) for p in produced]
 
@@ -129,7 +132,10 @@ async def generate_social(req: GenerateSocialRequest):
 async def get_product(handle: str):
     """Get the generated JSON data for a specific product."""
     settings = get_settings()
-    json_path = settings.output_dir / f"{handle}.json"
+    # slugify the handle the exact same way as the pipeline does
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(handle)
+    json_path = settings.output_dir / f"{safe_handle}.json"
     if not json_path.exists():
         raise HTTPException(status_code=404, detail="Product JSON not found")
     
@@ -143,7 +149,10 @@ async def get_product(handle: str):
 async def update_product(handle: str, update_data: dict):
     """Update the generated JSON data for a specific product (e.g. edited text)."""
     settings = get_settings()
-    json_path = settings.output_dir / f"{handle}.json"
+    # slugify the handle the exact same way as the pipeline does
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(handle)
+    json_path = settings.output_dir / f"{safe_handle}.json"
     if not json_path.exists():
         raise HTTPException(status_code=404, detail="Product JSON not found")
     
@@ -167,24 +176,35 @@ async def get_rss_feed():
     if not feed_path.exists():
         raise HTTPException(status_code=404, detail="RSS feed not yet generated")
     
-    from fastapi.responses import FileResponse
     return FileResponse(feed_path, media_type="application/rss+xml")
+
+@router.get("/images/{filename}")
+async def get_image(filename: str):
+    """Serve images from the output directory."""
+    settings = get_settings()
+    img_path = settings.output_dir / filename
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    return FileResponse(img_path)
 
 @router.post("/publish")
 async def publish_landing_page(req: PublishLandingPageRequest):
     """Run publish_landing_page.py logic."""
     settings = get_settings()
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(req.handle)
     
     def run_publish():
         publisher = LandingPagePublisher(settings, concept_filter=req.concept_filter)
-        json_path = settings.output_dir / f"{req.handle}.json"
+        json_path = settings.output_dir / f"{safe_handle}.json"
         if not json_path.exists():
-            raise FileNotFoundError(f"No JSON found for handle: {req.handle}")
+            raise FileNotFoundError(f"No JSON found for handle: {safe_handle}")
         
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             
-        publisher._publish_product_page(req.handle, data, Path("social"), req.published)
+        publisher._publish_product_page(safe_handle, data, Path("social"), req.published)
     
     try:
         await run_in_threadpool(run_publish)
