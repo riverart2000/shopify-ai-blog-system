@@ -188,6 +188,55 @@ async def get_image(filename: str):
     
     return FileResponse(img_path)
 
+@router.get("/social/images/{filename}")
+async def get_social_image(filename: str):
+    """Serve images from the social directory."""
+    settings = get_settings()
+    img_path = settings.project_root / "social" / filename
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="Social image not found")
+    
+    return FileResponse(img_path)
+
+@router.get("/social/{handle}")
+async def get_social_items(handle: str):
+    """Get the generated social images and texts for a product."""
+    settings = get_settings()
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(handle)
+    social_dir = settings.project_root / "social"
+    
+    items = []
+    if social_dir.exists():
+        for img_file in social_dir.glob(f"{safe_handle}__*.jpg"):
+            concept_slug = img_file.stem.replace(f"{safe_handle}__", "")
+            txt_file = social_dir / f"{img_file.stem}.txt"
+            
+            text_content = ""
+            if txt_file.exists():
+                text_content = txt_file.read_text(encoding="utf-8")
+                
+            items.append({
+                "concept": concept_slug,
+                "image_file": img_file.name,
+                "text": text_content
+            })
+    return {"success": True, "items": items}
+
+@router.put("/social/{handle}/{concept}")
+async def update_social_text(handle: str, concept: str, update_data: dict):
+    """Update the text for a specific social post."""
+    settings = get_settings()
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(handle)
+    txt_file = settings.project_root / "social" / f"{safe_handle}__{concept}.txt"
+    
+    if "text" in update_data:
+        txt_file.write_text(update_data["text"], encoding="utf-8")
+        return {"success": True}
+    
+    raise HTTPException(status_code=400, detail="Missing text in update payload")
+
 @router.post("/publish")
 async def publish_landing_page(req: PublishLandingPageRequest):
     """Run publish_landing_page.py logic."""
