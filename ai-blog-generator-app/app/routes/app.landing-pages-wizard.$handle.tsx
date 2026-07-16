@@ -123,7 +123,8 @@ export default function LandingPageWizard() {
     if (actionData) {
       if (actionData.ok) {
         if (actionData.intent === "generate_prompts") {
-          setData(actionData.data);
+          // Use a function to ensure we capture the new data directly into state
+          setData((prevData: any) => actionData.data);
           setStep(2);
         } else if (actionData.intent === "save_edits") {
           setData(actionData.data);
@@ -197,6 +198,18 @@ export default function LandingPageWizard() {
              <strong>Ideal Client:</strong> {data.persona?.name}, {data.persona?.age} {data.persona?.sex}
           </div>
 
+          <div style={{ display: "flex", gap: "20px", marginBottom: "20px", overflowX: "auto" }}>
+            {data.assets?.map((asset: any, idx: number) => (
+              <div key={idx} style={{ flex: "0 0 auto", width: "150px" }}>
+                <img 
+                  src={`/api/landing-pages/images/${asset.local_path.split('/').pop()}`} 
+                  alt="Product Asset" 
+                  style={{ width: "100%", height: "150px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
+                />
+              </div>
+            ))}
+          </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
             {data.concepts?.map((c: any, idx: number) => (
               <div key={idx} style={{ padding: "16px", border: "1px solid #e1e3e5", borderRadius: "8px", background: "#fcfcfc" }}>
@@ -217,6 +230,22 @@ export default function LandingPageWizard() {
                 />
               </div>
             ))}
+          </div>
+
+          <div style={{ marginTop: "20px" }}>
+            <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold", fontSize: "0.85rem" }}>Raw JSON (Advanced)</label>
+            <textarea 
+              value={JSON.stringify(data, null, 2)} 
+              onChange={(e) => {
+                try {
+                  const parsed = JSON.parse(e.target.value);
+                  setData(parsed);
+                } catch (err) {
+                  // Ignore parse errors while typing
+                }
+              }}
+              style={{ width: "100%", height: "300px", padding: "8px", borderRadius: "4px", border: "1px solid #ccc", fontFamily: "monospace", fontSize: "0.85rem" }}
+            />
           </div>
 
           <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>

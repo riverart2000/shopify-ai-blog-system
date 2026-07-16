@@ -17,8 +17,7 @@ except Exception:  # pragma: no cover - dotenv is optional at runtime
     load_dotenv = None  # type: ignore
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 def _get(name: str, default: Optional[str] = None) -> Optional[str]:
     value = os.environ.get(name)
@@ -26,17 +25,8 @@ def _get(name: str, default: Optional[str] = None) -> Optional[str]:
         return default
     return value
 
-
 @dataclass
 class Settings:
-    """Runtime configuration for the pipeline.
-
-    Values are resolved from environment variables (after loading ``.env``).
-    Only a handful are strictly required depending on which fetcher / prompt
-    backend is selected, so validation is deferred to the components that
-    actually need a given value.
-    """
-
     # --- Grok / xAI (used by the optional LLM prompt backend) ---
     grok_api_key: Optional[str] = None
     grok_base_url: str = "https://api.x.ai/v1"
@@ -65,10 +55,10 @@ class Settings:
 
     # --- Paths ---
     project_root: Path = field(default=PROJECT_ROOT)
-    product_list: Path = field(default=PROJECT_ROOT / "product.list")
-    concepts_list: Path = field(default=PROJECT_ROOT / "creative_concepts.list")
-    campaign_file: Path = field(default=PROJECT_ROOT / "campaign.txt")
-    output_dir: Path = field(default=PROJECT_ROOT / "output")
+    product_list: Path = field(default=PROJECT_ROOT / "services" / "landing_pages" / "product.list")
+    concepts_list: Path = field(default=PROJECT_ROOT / "services" / "landing_pages" / "creative_concepts.list")
+    campaign_file: Path = field(default=PROJECT_ROOT / "services" / "landing_pages" / "campaign.txt")
+    output_dir: Path = field(default=PROJECT_ROOT / "data" / "landing_pages_output")
     image_resolution: int = 1024
 
     @classmethod
