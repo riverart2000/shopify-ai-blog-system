@@ -1,0 +1,399 @@
+{
+  "schema_version": 3,
+  "generated_at": "2026-07-14T15:57:46.298222+00:00",
+  "generator": "grok",
+  "product": {
+    "url": "https://bioluxelab.com/products/mobile-hair-growth-therapy-cap",
+    "handle": "mobile-hair-growth-therapy-cap",
+    "title": "Mobile Laser Hair Growth Therapy Cap with Red Light",
+    "description_html": "<p><b><meta charset=\"UTF-8\">\n<span>Welcome fuller, healthier-looking hair with this Mobile Laser Hair Growth Therapy Cap. This portable, drug-free device delivers targeted red light therapy to nourish your scalp and support your follicles where you need them most. With a sleek handheld design, you can position it exactly where your hair needs attention—whether at home, in the office, or on the go. The gentle laser pulses work without heat or chemicals, making it comfortable for everyday use. Pair it with regular sessions over several months and you may notice visible changes in hair density and thickness. Take your hair wellness routine wherever life takes you. Give it a try and start seeing the difference today.</span></b></p>\n<p><b> Product information: <br></b> Material: Bamei satin 50%, non-woven fabric 50%. <br><br><b> Size Information: <br></b> Size: 28*18cm <br>Line: 1.25m <br><br></p>",
+    "description_text": "Welcome fuller, healthier-looking hair with this Mobile Laser Hair Growth Therapy Cap. This portable, drug-free device delivers targeted red light therapy to nourish your scalp and support your follicles where you need them most. With a sleek handheld design, you can position it exactly where your hair needs attention—whether at home, in the office, or on the go. The gentle laser pulses work without heat or chemicals, making it comfortable for everyday use. Pair it with regular sessions over several months and you may notice visible changes in hair density and thickness. Take your hair wellness routine wherever life takes you. Give it a try and start seeing the difference today.\nProduct information:\nMaterial: Bamei satin 50%, non-woven fabric 50%.\nSize Information:\nSize: 28*18cm\nLine: 1.25m",
+    "vendor": "BioLuxeLab",
+    "product_type": "red light",
+    "tags": [],
+    "price": "29.0",
+    "currency": "GBP",
+    "image_urls": [
+      "https://cdn.shopify.com/s/files/1/1037/0849/2121/files/cc391b7f-273d-4df2-88f6-dac86c9d6b77.jpg?v=1783602640",
+      "https://cdn.shopify.com/s/files/1/1037/0849/2121/files/Screenshot_2026-07-14_at_13.58.36.png?v=1784035409"
+    ],
+    "source": "shopify"
+  },
+  "persona": {
+    "name": "Elena Vargas",
+    "age": 42,
+    "sex": "woman",
+    "race": "Hispanic",
+    "ethnicity": "Mexican-American",
+    "appearance": "Warm olive skin, expressive brown eyes, medium-length dark brown hair with visible thinning at the temples and crown, soft natural makeup, wearing a cream knit sweater and gold stud earrings, approachable professional vibe",
+    "occupation": "Marketing manager at a tech firm",
+    "location": "Austin, Texas",
+    "lifestyle": "High-pressure career with frequent travel, practices yoga twice weekly, meal-preps clean food, values portable wellness tools that fit into short daily windows",
+    "pain_point": "Stress- and age-related thinning hair that makes her feel older and less confident in meetings and photos",
+    "description": "Elena is a driven 42-year-old marketing manager who juggles deadlines and family life; she wants fuller-looking hair without drugs, chemicals or clinic visits and seeks a discreet device she can use at home or on the go."
+  },
+  "campaign": {
+    "raw": "20% LAUNCH DISCOUNT & FREE SHIPPING: LAUNCH20",
+    "headline": "20% LAUNCH DISCOUNT & FREE SHIPPING: LAUNCH20",
+    "discount": "20% OFF",
+    "code": "LAUNCH20",
+    "free_shipping": true
+  },
+  "blog": {
+    "url": null,
+    "title": null,
+    "text": "",
+    "image_urls": []
+  },
+  "landing_page_plan": {
+    "funnel_stages": [
+      {
+        "stage": "Hero / Hook",
+        "concept": "Lifestyle Image",
+        "why": "Immediately shows the ideal customer using the cap in a real, aspirational setting, creating instant desire and relatability while displaying the strong launch offer."
+      },
+      {
+        "stage": "Agitation / Problem",
+        "concept": "Problem → Solution",
+        "why": "Surfaces the emotional pain of thinning hair that Elena feels, then positions the portable red-light cap as a simple drug-free alternative, deepening relevance."
+      },
+      {
+        "stage": "Solution / Benefits",
+        "concept": "Benefits Graphic",
+        "why": "Clearly lists the five core product benefits in a scannable visual so visitors quickly understand value without reading long copy."
+      },
+      {
+        "stage": "Social Proof",
+        "concept": "Social Proof",
+        "why": "A believable customer-style review from the same persona builds trust and reduces purchase anxiety right before the final decision."
+      },
+      {
+        "stage": "CTA / Close",
+        "concept": "Premium Brand Image",
+        "why": "Elegant minimal shot elevates perceived quality and pairs with a clean offer badge and code, making the final click feel premium and low-risk."
+      }
+    ],
+    "advice": "Structure the landing page as a single long-scroll experience: open with the Lifestyle Image as full-width hero (headline + offer badge + primary CTA button using code LAUNCH20). Immediately below, place the Problem → Solution split image with short agitation copy. Follow with the Benefits Graphic as an interactive or static section listing the five benefits. Insert the Social Proof image plus the review quote in a testimonial block. Close with the Premium Brand Image as a clean final CTA section repeating the 20% OFF + FREE SHIPPING badge and large ‘Shop Now – Use LAUNCH20’ button. Keep all on-image text consistent with the creatives, use the same color palette (charcoal, coral, cream), and ensure mobile-first 4:5 and 1:1 assets load fast. These five concepts together move the visitor from emotional connection → problem awareness → rational benefits → trust → confident purchase without inventing unsupported claims."
+  },
+  "main_image": "/Users/joebains/marketing/output/mobile-hair-growth-therapy-cap_1.jpg",
+  "assets": [
+    {
+      "source_url": "https://cdn.shopify.com/s/files/1/1037/0849/2121/files/cc391b7f-273d-4df2-88f6-dac86c9d6b77.jpg?v=1783602640",
+      "local_path": "/Users/joebains/marketing/output/mobile-hair-growth-therapy-cap_1.jpg",
+      "role": "main"
+    },
+    {
+      "source_url": "https://cdn.shopify.com/s/files/1/1037/0849/2121/files/Screenshot_2026-07-14_at_13.58.36.png?v=1784035409",
+      "local_path": "/Users/joebains/marketing/output/mobile-hair-growth-therapy-cap_2.png",
+      "role": "supporting"
+    }
+  ],
+  "creative_concepts": [
+    {
+      "concept": "Lifestyle Image",
+      "concept_description": "Product being used naturally in a real-life setting.",
+      "image_prompt": "Photorealistic 4:5 vertical lifestyle photograph rendered at 1024px on the longest side, featuring Elena Vargas (42-year-old Mexican-American woman, warm olive skin, brown eyes, medium-length dark brown hair with slight temple thinning, cream knit sweater) seated on a modern cream sofa in a sun-drenched Austin living room with large windows, soft morning light streaming in. She gently positions the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (soft satin/non-woven fabric, 28x18cm, subtle red LED glow visible under the brim, thin 1.25m cord draped naturally) onto her head with a calm, confident half-smile. Clean modern interior with green plant and laptop on side table. Warm inviting mood, shallow depth of field, natural color palette of soft creams, warm wood and gentle red accents from the device lights. Exact on-image text rendered accurately and legibly in clean modern sans-serif: bold white headline centered at top 'Fuller Hair On Your Schedule', smaller white subheadline directly beneath 'Portable Red Light Therapy Cap', bright coral offer badge in top-right corner reading '20% OFF + FREE SHIPPING', white call-to-action bar at bottom 'Use Code LAUNCH20', small discount code text bottom-right 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Morning coffee + 10 minutes of red light therapy = hair wellness that travels with you. Elena starts her day feeling in control again. Grab 20% OFF + free shipping with code LAUNCH20 while the launch offer lasts. Link in bio.",
+      "image_text": {
+        "headline": "Fuller Hair On Your Schedule",
+        "subheadline": "Portable Red Light Therapy Cap",
+        "call_to_action": "Use Code LAUNCH20",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": true,
+      "negative_prompt": "blurry text, misspelled words, extra people, clinic setting, medical equipment, heat effects, steam, harsh flash, cartoon style, low resolution, distorted hands, oversaturated red",
+      "aspect_ratio": "4:5",
+      "width": 816,
+      "height": 1024,
+      "hashtags": [
+        "#HairGrowthJourney",
+        "#RedLightTherapy",
+        "#BioLuxeLab",
+        "#PortableWellness",
+        "#ThickerHair",
+        "#DrugFreeHairCare"
+      ],
+      "keywords": [
+        "portable laser hair growth cap",
+        "red light therapy for thinning hair",
+        "mobile hair wellness device",
+        "BioLuxeLab hair cap review",
+        "at home laser hair therapy",
+        "travel friendly hair growth tool"
+      ]
+    },
+    {
+      "concept": "Problem → Solution",
+      "concept_description": "Shows a relatable problem and positions the product as one option to address it.",
+      "image_prompt": "Photorealistic 4:5 vertical split-scene image rendered at 1024px on the longest side. Left half: close-up of Elena Vargas (42, Mexican-American, olive skin, dark brown hair showing clear thinning at temples and part line) looking concerned while examining her hairline in a bathroom mirror under cool white light, soft shadows emphasizing sparse areas. Right half: same woman smiling gently while wearing the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (satin/non-woven fabric, red LEDs glowing softly, 1.25m cord visible), warm golden light, confident posture. Clean modern bathroom-to-bedroom transition background. Soft realistic lighting, natural skin texture, premium commercial photography style. Exact on-image text rendered accurately and legibly in bold modern sans-serif: large white headline across top 'Thinning Hair Feeling Familiar?', white subheadline mid-left over problem side 'Everyday Stress Shows', coral call-to-action bar bottom-right over solution side 'Try Red Light Therapy', bright offer badge top-right '20% OFF + FREE SHIPPING', small white discount code bottom-left 'Code: LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Stress, age, hormones… thinning hair can sneak up. Elena found a drug-free portable option that fits her busy Austin life. 20% OFF + free shipping with LAUNCH20. See if red light therapy belongs in your routine.",
+      "image_text": {
+        "headline": "Thinning Hair Feeling Familiar?",
+        "subheadline": "Everyday Stress Shows",
+        "call_to_action": "Try Red Light Therapy",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": true,
+      "negative_prompt": "exaggerated baldness, medical scars, ugly expressions, clinic equipment, heat waves, steam, text cut off, misspelled words, cartoon, low light, extra faces",
+      "aspect_ratio": "4:5",
+      "width": 816,
+      "height": 1024,
+      "hashtags": [
+        "#ThinningHairSolution",
+        "#RedLightForHair",
+        "#BioLuxeLab",
+        "#HairConfidence",
+        "#DrugFreeOption",
+        "#ScalpCare"
+      ],
+      "keywords": [
+        "solution for thinning hair women",
+        "portable red light hair device",
+        "drug free hair growth cap",
+        "stress related hair thinning help",
+        "BioLuxeLab laser cap",
+        "at home follicle support tool"
+      ]
+    },
+    {
+      "concept": "Educational Infographic",
+      "concept_description": "Teaches something useful while featuring the product subtly.",
+      "image_prompt": "Clean modern 1:1 square educational infographic rendered at 1024px on the longest side, soft white and soft coral background with subtle geometric lines. Centered product shot of the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (soft satin/non-woven fabric, red LED dots glowing gently, 28x18cm size shown to scale, 1.25m cord coiled neatly) floating slightly above a simplified scalp diagram with soft red light rays illustrating targeted nourishment. Minimal icons around: clock for session time, leaf for drug-free, location pin for portable. No people. Soft even studio lighting, premium graphic design style with ample white space. Exact on-image text rendered accurately and legibly in modern sans-serif: bold dark headline at top 'How Red Light Supports Follicles', three short numbered callouts mid-image '1. Targets Scalp', '2. Gentle Pulses', '3. No Heat or Chemicals', small product label under device 'BioLuxeLab Cap', coral offer badge bottom-right '20% OFF + FREE SHIPPING', tiny discount code bottom-center 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Red light therapy delivers gentle energy to the scalp without drugs or heat. Learn the basics and see why busy professionals keep the BioLuxeLab cap handy. 20% OFF + free shipping with LAUNCH20 – link in bio.",
+      "image_text": {
+        "headline": "How Red Light Supports Follicles",
+        "subheadline": "Gentle. Targeted. Portable.",
+        "call_to_action": "Shop the Cap",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": false,
+      "negative_prompt": "people, faces, hands, cluttered layout, medical jargon, false claims, blurry icons, misspelled text, dark background, low contrast, 3D cartoon style",
+      "aspect_ratio": "1:1",
+      "width": 1024,
+      "height": 1024,
+      "hashtags": [
+        "#RedLightTherapyExplained",
+        "#ScalpScience",
+        "#BioLuxeLab",
+        "#HairWellnessEducation",
+        "#DrugFreeHairCare",
+        "#FollicleSupport"
+      ],
+      "keywords": [
+        "how red light helps hair growth",
+        "educational red light therapy hair",
+        "BioLuxeLab how it works",
+        "gentle laser for scalp health",
+        "drug free follicle support facts",
+        "portable red light device science"
+      ]
+    },
+    {
+      "concept": "Benefits Graphic",
+      "concept_description": "Highlights 3–5 key benefits with strong visual design.",
+      "image_prompt": "Bold modern 1:1 square benefits graphic rendered at 1024px on the longest side, deep charcoal background with soft coral and white accents. Large centered product hero shot of the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (satin/non-woven fabric texture visible, red LEDs glowing softly, clean 1.25m cord) surrounded by five crisp benefit cards in white rounded rectangles with small icons: 'Drug-Free', 'Portable On-the-Go', 'Targeted Placement', 'No Heat or Chemicals', 'Supports Density & Thickness'. Soft studio lighting, high-end commercial design, balanced composition, generous negative space. Exact on-image text rendered accurately and legibly in bold sans-serif: large white headline at top '5 Reasons to Try BioLuxeLab', coral subheadline under product 'Mobile Laser Hair Growth Therapy Cap', white call-to-action bottom bar 'Shop Now – 20% Off', bright offer badge top-right corner '20% OFF + FREE SHIPPING', small discount code under CTA 'Code LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Drug-free. Portable. Comfortable. See why the BioLuxeLab cap is becoming a daily ritual for fuller-looking hair. Use LAUNCH20 for 20% OFF + free shipping today only at launch.",
+      "image_text": {
+        "headline": "5 Reasons to Try BioLuxeLab",
+        "subheadline": "Mobile Laser Hair Growth Therapy Cap",
+        "call_to_action": "Shop Now – 20% Off",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": false,
+      "negative_prompt": "people, faces, cluttered icons, medical claims, heat visuals, blurry product, misspelled benefits, neon colors, low resolution, stock photo watermarks",
+      "aspect_ratio": "1:1",
+      "width": 1024,
+      "height": 1024,
+      "hashtags": [
+        "#HairBenefits",
+        "#RedLightCap",
+        "#BioLuxeLab",
+        "#PortableHairCare",
+        "#DrugFreeBeauty",
+        "#HairDensitySupport"
+      ],
+      "keywords": [
+        "benefits of laser hair growth cap",
+        "portable red light hair device benefits",
+        "drug free hair thickness tool",
+        "BioLuxeLab key features",
+        "no heat hair therapy cap",
+        "mobile follicle support benefits"
+      ]
+    },
+    {
+      "concept": "Social Proof",
+      "concept_description": "Uses a genuine customer review alongside the product.",
+      "image_prompt": "Photorealistic 4:5 vertical image rendered at 1024px on the longest side. Elena Vargas (42-year-old Mexican-American woman, warm olive skin, brown eyes, medium dark brown hair looking fuller and healthy, soft smile, cream sweater) holds the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap beside her face in a bright modern kitchen with morning light. Soft natural window light, warm authentic mood, shallow depth of field. Large semi-transparent white review card overlaid in lower third containing the exact customer quote. Exact on-image text rendered accurately and legibly in clean sans-serif: bold white headline at top 'Real Results from Real Routines', large quote text inside card '“After consistent sessions I noticed thicker-looking hair at my temples. So easy to use at home.” – Elena V., Austin', coral offer badge top-right '20% OFF + FREE SHIPPING', white call-to-action bottom 'Start Your Routine – Code LAUNCH20', small discount code under quote 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "“After consistent sessions I noticed thicker-looking hair at my temples.” Elena’s real experience with the BioLuxeLab cap. Ready to try it yourself? 20% OFF + free shipping with code LAUNCH20. Limited launch pricing.",
+      "image_text": {
+        "headline": "Real Results from Real Routines",
+        "subheadline": "“After consistent sessions I noticed thicker-looking hair at my temples. So easy to use at home.” – Elena V., Austin",
+        "call_to_action": "Start Your Routine – Code LAUNCH20",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": true,
+      "negative_prompt": "fake smiling stock models, exaggerated before-after, medical badges, blurry quote text, misspelled names, clinic background, extra people, cartoon style, oversaturated colors",
+      "aspect_ratio": "4:5",
+      "width": 816,
+      "height": 1024,
+      "hashtags": [
+        "#CustomerReview",
+        "#HairGrowthResults",
+        "#BioLuxeLab",
+        "#RealTalkHair",
+        "#RedLightReview",
+        "#ThickerHairJourney"
+      ],
+      "keywords": [
+        "BioLuxeLab customer review",
+        "real results red light hair cap",
+        "portable laser hair therapy feedback",
+        "thicker hair after red light",
+        "Austin woman hair growth story",
+        "honest laser cap review women"
+      ]
+    },
+    {
+      "concept": "Premium Brand Image",
+      "concept_description": "Minimal, elegant photography that builds trust and reinforces a premium brand.",
+      "image_prompt": "Ultra-minimal elegant 1:1 square product photograph rendered at 1024px on the longest side. Single sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (premium satin/non-woven fabric texture, subtle red LED glow under brim, 1.25m thin black cord coiled artfully) resting on a smooth matte charcoal stone surface against a soft gradient charcoal-to-black background. Soft directional studio lighting creating gentle highlights and long soft shadows, high-end luxury advertising style, zero clutter, extreme simplicity, rich blacks and deep reds. Exact on-image text rendered accurately and legibly in refined thin white sans-serif: elegant headline centered upper third 'BioLuxeLab', delicate subheadline beneath 'Mobile Laser Hair Growth Therapy Cap', tiny offer badge bottom-right corner in soft coral '20% OFF + FREE SHIPPING', small refined call-to-action bottom center 'Discover the Difference', tiny discount code under product 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Quiet luxury for your scalp. The BioLuxeLab Mobile Laser Hair Growth Therapy Cap – drug-free, portable, designed for real life. Launch offer: 20% OFF + free shipping with LAUNCH20.",
+      "image_text": {
+        "headline": "BioLuxeLab",
+        "subheadline": "Mobile Laser Hair Growth Therapy Cap",
+        "call_to_action": "Discover the Difference",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": false,
+      "negative_prompt": "people, hands, busy backgrounds, bright colors, plastic look, text clutter, misspelled brand name, harsh shadows, low-end packaging, watermarks, cartoon",
+      "aspect_ratio": "1:1",
+      "width": 1024,
+      "height": 1024,
+      "hashtags": [
+        "#PremiumHairCare",
+        "#BioLuxeLab",
+        "#LuxuryWellness",
+        "#RedLightTherapy",
+        "#MinimalDesign",
+        "#HairWellness"
+      ],
+      "keywords": [
+        "premium laser hair growth cap",
+        "luxury red light therapy device",
+        "BioLuxeLab brand product",
+        "elegant portable hair cap",
+        "high end drug free hair tool",
+        "minimalist hair wellness product"
+      ]
+    },
+    {
+      "concept": "Myth vs Fact",
+      "concept_description": "",
+      "image_prompt": "Clean modern 1:1 square graphic rendered at 1024px on the longest side, split vertically into two equal panels. Left panel soft gray background labeled 'MYTH' with simple crossed-out pill bottle icon; right panel soft coral background labeled 'FACT' featuring the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap (red LEDs softly glowing, fabric texture clear). Soft even lighting, premium flat design with subtle shadows. Exact on-image text rendered accurately and legibly in bold sans-serif: large headline spanning top 'Myth vs Fact', left panel text 'Myth: Hair growth only comes from drugs or clinics', right panel text 'Fact: Targeted red light therapy is a drug-free portable option you can use daily', small product name under cap 'BioLuxeLab Cap', coral offer badge bottom-right '20% OFF + FREE SHIPPING', tiny discount code bottom-center 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Myth: You need prescriptions or expensive clinics. Fact: Red light therapy offers a drug-free portable path. Learn more and save 20% + free shipping with LAUNCH20.",
+      "image_text": {
+        "headline": "Myth vs Fact",
+        "subheadline": "Myth: Hair growth only comes from drugs or clinics | Fact: Targeted red light therapy is a drug-free portable option you can use daily",
+        "call_to_action": "Explore Red Light",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": false,
+      "negative_prompt": "people, faces, medical charts, false guarantees, cluttered icons, misspelled words, dark muddy colors, low contrast text, cartoon characters",
+      "aspect_ratio": "1:1",
+      "width": 1024,
+      "height": 1024,
+      "hashtags": [
+        "#MythVsFact",
+        "#HairGrowthTruth",
+        "#RedLightTherapy",
+        "#BioLuxeLab",
+        "#DrugFreeHair",
+        "#ScalpFacts"
+      ],
+      "keywords": [
+        "myth fact hair loss treatments",
+        "drug free red light hair myth",
+        "BioLuxeLab myth busting",
+        "portable laser vs clinic treatments",
+        "red light therapy hair facts",
+        "non drug hair growth options"
+      ]
+    },
+    {
+      "concept": "Did You Know?",
+      "concept_description": "",
+      "image_prompt": "Bright educational 1:1 square graphic rendered at 1024px on the longest side, soft cream background with coral accent shapes. Centered elegant product rendering of the black BioLuxeLab Mobile Laser Hair Growth Therapy Cap with gentle red light rays illustrated around it. Minimal line icons of a clock and a leaf. Soft diffused lighting, clean premium infographic style, ample white space. Exact on-image text rendered accurately and legibly in modern sans-serif: large bold headline at top 'Did You Know?', main body text centered 'Consistent red light sessions over months may support visible changes in hair density and thickness – without heat or chemicals.', small product label under device 'BioLuxeLab Mobile Cap', coral offer badge top-right '20% OFF + FREE SHIPPING', white call-to-action bottom 'Try It Risk-Free', tiny discount code bottom-right 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Did you know? Gentle red light can be part of a consistent hair wellness routine. The BioLuxeLab cap makes it portable and drug-free. Use LAUNCH20 for 20% OFF + free shipping.",
+      "image_text": {
+        "headline": "Did You Know?",
+        "subheadline": "Consistent red light sessions over months may support visible changes in hair density and thickness – without heat or chemicals.",
+        "call_to_action": "Try It Risk-Free",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": false,
+      "negative_prompt": "people, exaggerated claims, before-after photos, medical seals, cluttered layout, misspelled text, neon colors, low resolution icons, dark background",
+      "aspect_ratio": "1:1",
+      "width": 1024,
+      "height": 1024,
+      "hashtags": [
+        "#DidYouKnow",
+        "#HairFacts",
+        "#RedLightTherapy",
+        "#BioLuxeLab",
+        "#HairDensity",
+        "#WellnessTips"
+      ],
+      "keywords": [
+        "did you know red light hair",
+        "facts about laser hair growth",
+        "BioLuxeLab did you know",
+        "red light density thickness support",
+        "portable hair therapy facts",
+        "drug free hair wellness info"
+      ]
+    },
+    {
+      "concept": "Quick Wellness Tip",
+      "concept_description": "",
+      "image_prompt": "Photorealistic 4:5 vertical lifestyle image rendered at 1024px on the longest side. Elena Vargas (42-year-old Mexican-American woman, warm olive skin, brown eyes, medium dark brown hair, soft smile, light gray loungewear) sits cross-legged on a yoga mat in a bright minimalist home studio with plants, calmly placing the sleek black BioLuxeLab Mobile Laser Hair Growth Therapy Cap on her head while holding a glass of water. Soft natural afternoon light, calm wellness mood, shallow depth of field. Exact on-image text rendered accurately and legibly in clean white sans-serif with soft shadow: bold headline top 'Quick Wellness Tip', subheadline mid-upper 'Pair 10-minute red light sessions with hydration & scalp massage for best daily ritual', coral offer badge top-right '20% OFF + FREE SHIPPING', white call-to-action bottom bar 'Build Your Routine – Code LAUNCH20', small discount code under CTA 'LAUNCH20'. Correct spelling throughout.",
+      "social_text": "Quick tip: 10 calm minutes with red light + a glass of water + gentle scalp massage. Elena’s simple ritual for hair that looks denser over time. Grab 20% OFF + free shipping with LAUNCH20.",
+      "image_text": {
+        "headline": "Quick Wellness Tip",
+        "subheadline": "Pair 10-minute red light sessions with hydration & scalp massage for best daily ritual",
+        "call_to_action": "Build Your Routine – Code LAUNCH20",
+        "offer_badge": "20% OFF + FREE SHIPPING",
+        "discount_code": "LAUNCH20"
+      },
+      "include_persona": true,
+      "negative_prompt": "medical setting, sweaty gym, extra people, messy room, blurry text, misspelled tip, harsh lighting, cartoon, product floating unnaturally",
+      "aspect_ratio": "4:5",
+      "width": 816,
+      "height": 1024,
+      "hashtags": [
+        "#WellnessTip",
+        "#HairCareRoutine",
+        "#RedLightTherapy",
+        "#BioLuxeLab",
+        "#DailyRitual",
+        "#ScalpHealth"
+      ],
+      "keywords": [
+        "quick tip red light hair growth",
+        "daily hair wellness routine women",
+        "portable laser cap tip",
+        "BioLuxeLab usage tip",
+        "hydration and red light for hair",
+        "at home scalp care ritual"
+      ]
+    }
+  ]
+}
