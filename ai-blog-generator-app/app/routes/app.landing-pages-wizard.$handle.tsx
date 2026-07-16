@@ -3,6 +3,11 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useNavigate, useParams, useSubmit, useActionData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import { loadShopifyStudioContext, requireShopifySession } from "../lib/blog-studio.server";
+import {
+  addLandingPageAssetPreviewUrls,
+  addSocialImagePreviewUrls,
+  removeLandingPageAssetPreviewUrls,
+} from "../lib/landing-page-images.server";
 
 const BACKEND_URL = process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000";
 const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
@@ -46,7 +51,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return {
     handle,
     productUrl,
-    initialData: productDataResponse?.data || null,
+    initialData: addLandingPageAssetPreviewUrls(productDataResponse?.data || null),
   };
 };
 
@@ -63,26 +68,28 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         method: "POST",
         body: JSON.stringify({ product_url: productUrl })
       });
-      return { ok: true, intent, data: res.data };
+      return { ok: true, intent, data: addLandingPageAssetPreviewUrls(res.data) };
     }
     
     if (intent === "save_edits") {
       const payload = formData.get("payload") as string;
       const data = JSON.parse(payload);
+      const persistedData = removeLandingPageAssetPreviewUrls(data);
       await backendFetch(`/api/landing-pages/products/${handle}`, {
         method: "PUT",
-        body: JSON.stringify({ data })
+        body: JSON.stringify({ data: persistedData })
       });
-      return { ok: true, intent, data };
+      return { ok: true, intent, data: addLandingPageAssetPreviewUrls(persistedData) };
     }
 
     if (intent === "generate_social") {
       const payload = formData.get("payload") as string;
       if (payload) {
         const data = JSON.parse(payload);
+        const persistedData = removeLandingPageAssetPreviewUrls(data);
         await backendFetch(`/api/landing-pages/products/${handle}`, {
           method: "PUT",
-          body: JSON.stringify({ data })
+          body: JSON.stringify({ data: persistedData })
         });
       }
       await backendFetch("/api/landing-pages/generate-social", {
@@ -91,12 +98,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
       // Fetch the generated social items to display them
       const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
-      return { ok: true, intent, socialItems: fetchRes.items };
+      return { ok: true, intent, socialItems: addSocialImagePreviewUrls(fetchRes.items) };
     }
 
     if (intent === "fetch_social") {
       const res = await backendFetch(`/api/landing-pages/social/${handle}`);
-      return { ok: true, intent, socialItems: res.items };
+      return { ok: true, intent, socialItems: addSocialImagePreviewUrls(res.items) };
     }
 
     if (intent === "regenerate_social_item") {
@@ -106,7 +113,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         body: JSON.stringify({ handle, concept_filter: [concept], overwrite: true })
       });
       const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
-      return { ok: true, intent: "generate_social", socialItems: fetchRes.items };
+      return {
+        ok: true,
+        intent: "generate_social",
+        socialItems: addSocialImagePreviewUrls(fetchRes.items),
+      };
     }
 
     if (intent === "update_social_text") {
@@ -256,7 +267,7 @@ export default function LandingPageWizard() {
             {data.assets?.map((asset: any, idx: number) => (
               <div key={idx} style={{ flex: "0 0 auto", width: "150px" }}>
                 <img 
-                  src={`/app/landing-pages/images/${asset.local_path.split('/').pop()}`} 
+                  src={asset.preview_url}
                   alt="Product Asset" 
                   style={{ width: "100%", height: "150px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
                 />
@@ -337,7 +348,7 @@ export default function LandingPageWizard() {
                     <h4 style={{ margin: "0", fontSize: "1rem", color: "#202223" }}>{item.concept}</h4>
                     {item.image_file && (
                       <img 
-                        src={`/app/landing-pages/social-images/${item.image_file}?t=${new Date().getTime()}`} 
+                        src={item.preview_url}
                         alt={item.concept} 
                         style={{ width: "100%", height: "250px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
                       />
