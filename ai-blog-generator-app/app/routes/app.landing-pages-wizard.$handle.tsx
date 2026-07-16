@@ -202,7 +202,7 @@ export default function LandingPageWizard() {
             {data.assets?.map((asset: any, idx: number) => (
               <div key={idx} style={{ flex: "0 0 auto", width: "150px" }}>
                 <img 
-                  src={`/api/landing-pages/images/${asset.local_path.split('/').pop()}`} 
+                  src={`/app/landing-pages/images/${asset.local_path.split('/').pop()}`} 
                   alt="Product Asset" 
                   style={{ width: "100%", height: "150px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
                 />
