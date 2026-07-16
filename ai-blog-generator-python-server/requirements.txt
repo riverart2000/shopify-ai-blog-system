@@ -10,3 +10,4 @@ slowapi>=0.1.9
 itsdangerous>=2.1.2
 croniter>=2.0.0
 Pillow>=10.0.0
+beautifulsoup4>=4.12.0
