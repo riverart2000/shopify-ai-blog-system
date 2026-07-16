@@ -85,11 +85,38 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           body: JSON.stringify({ data })
         });
       }
-      const res = await backendFetch("/api/landing-pages/generate-social", {
+      await backendFetch("/api/landing-pages/generate-social", {
         method: "POST",
         body: JSON.stringify({ handle })
       });
-      return { ok: true, intent, produced: res.produced };
+      // Fetch the generated social items to display them
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent, socialItems: fetchRes.items };
+    }
+
+    if (intent === "fetch_social") {
+      const res = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent, socialItems: res.items };
+    }
+
+    if (intent === "regenerate_social_item") {
+      const concept = formData.get("concept") as string;
+      await backendFetch("/api/landing-pages/generate-social", {
+        method: "POST",
+        body: JSON.stringify({ handle, concept_filter: [concept] })
+      });
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent: "generate_social", socialItems: fetchRes.items };
+    }
+
+    if (intent === "update_social_text") {
+      const concept = formData.get("concept") as string;
+      const text = formData.get("text") as string;
+      await backendFetch(`/api/landing-pages/social/${handle}/${concept}`, {
+        method: "PUT",
+        body: JSON.stringify({ text })
+      });
+      return { ok: true, intent };
     }
 
     if (intent === "publish") {
@@ -116,8 +143,16 @@ export default function LandingPageWizard() {
   const [data, setData] = useState<any>(initialData);
   const [step, setStep] = useState(initialData ? 2 : 1);
   const [error, setError] = useState<string | null>(null);
+  const [socialItems, setSocialItems] = useState<any[] | null>(null);
 
   const isSubmitting = navigation.state !== "idle";
+
+  // If we're on step 3 but don't have social items loaded yet, fetch them
+  useEffect(() => {
+    if (step >= 3 && !socialItems && !isSubmitting) {
+      submit({ intent: "fetch_social" }, { method: "post" });
+    }
+  }, [step, socialItems, isSubmitting, submit]);
 
   useEffect(() => {
     if (actionData) {
@@ -128,7 +163,10 @@ export default function LandingPageWizard() {
           setStep(2);
         } else if (actionData.intent === "save_edits") {
           setData(actionData.data);
-        } else if (actionData.intent === "generate_social") {
+        } else if (actionData.intent === "generate_social" || actionData.intent === "fetch_social") {
+          if (actionData.socialItems) {
+            setSocialItems(actionData.socialItems);
+          }
           setStep(3);
         } else if (actionData.intent === "publish") {
           setStep(4);
@@ -152,6 +190,22 @@ export default function LandingPageWizard() {
   const handleGenerateSocial = () => {
     setError(null);
     submit({ intent: "generate_social", payload: JSON.stringify(data) }, { method: "post" });
+  };
+
+  const handleRegenerateSocialItem = (concept: string) => {
+    setError(null);
+    submit({ intent: "regenerate_social_item", concept }, { method: "post" });
+  };
+
+  const handleUpdateSocialText = (concept: string, text: string) => {
+    setError(null);
+    // Update local state immediately for fast typing
+    if (socialItems) {
+      const updated = socialItems.map(item => item.concept === concept ? { ...item, text } : item);
+      setSocialItems(updated);
+    }
+    // Save to backend
+    submit({ intent: "update_social_text", concept, text }, { method: "post", navigate: false });
   };
 
   const handlePublish = () => {
@@ -268,19 +322,63 @@ export default function LandingPageWizard() {
         </s-section>
       )}
 
-      {/* STEP 3: Publish Landing Page */}
+      {/* STEP 3: Review Social & Publish Landing Page */}
       {step >= 3 && (
-        <s-section heading="Step 3: Publish Landing Page">
+        <s-section heading="Step 3: Review Social & Publish Landing Page">
           <s-paragraph>
-            Images have been generated! Click below to assemble the Shopify Landing Page, upload assets, and prepare the RSS feed.
+            Images and texts have been generated for your social posts. You can edit the final text or regenerate specific images below.
           </s-paragraph>
-          <button
-            onClick={handlePublish}
-            disabled={isSubmitting}
-            style={{ padding: "8px 16px", background: "#107c41", color: "#fff", borderRadius: "8px", border: "none", cursor: isSubmitting ? "not-allowed" : "pointer" }}
-          >
-            {isSubmitting && navigation.formData?.get("intent") === "publish" ? "Publishing..." : "Publish Page & RSS Feed"}
-          </button>
+
+          {socialItems ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "30px", marginTop: "20px", marginBottom: "30px" }}>
+              {socialItems.map((item, idx) => (
+                <div key={idx} style={{ display: "flex", gap: "20px", padding: "20px", border: "1px solid #e1e3e5", borderRadius: "12px", background: "#fcfcfc" }}>
+                  <div style={{ flex: "0 0 250px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <h4 style={{ margin: "0", fontSize: "1rem", color: "#202223" }}>{item.concept}</h4>
+                    {item.image_file && (
+                      <img 
+                        src={`/app/landing-pages/social-images/${item.image_file}?t=${new Date().getTime()}`} 
+                        alt={item.concept} 
+                        style={{ width: "100%", height: "250px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
+                      />
+                    )}
+                    <button
+                      onClick={() => handleRegenerateSocialItem(item.concept)}
+                      disabled={isSubmitting}
+                      style={{ padding: "6px 12px", background: "#ffffff", color: "#202223", border: "1px solid #8c9196", borderRadius: "6px", cursor: isSubmitting ? "not-allowed" : "pointer", fontSize: "0.85rem" }}
+                    >
+                      {isSubmitting && navigation.formData?.get("concept") === item.concept && navigation.formData?.get("intent") === "regenerate_social_item" ? "Regenerating..." : "Regenerate Image"}
+                    </button>
+                  </div>
+                  <div style={{ flex: "1" }}>
+                    <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold", fontSize: "0.85rem", color: "#202223" }}>Final Social Text</label>
+                    <textarea 
+                      value={item.text} 
+                      onChange={(e) => handleUpdateSocialText(item.concept, e.target.value)}
+                      style={{ width: "100%", height: "250px", padding: "12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "0.95rem", lineHeight: "1.4" }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ padding: "20px", textAlign: "center", color: "#6d7175" }}>
+              Loading social items...
+            </div>
+          )}
+
+          <div style={{ marginTop: "30px", paddingTop: "20px", borderTop: "1px solid #e1e3e5" }}>
+            <s-paragraph>
+              Once you are happy with the social posts, click below to assemble the Shopify Landing Page, upload assets, and prepare the RSS feed.
+            </s-paragraph>
+            <button
+              onClick={handlePublish}
+              disabled={isSubmitting}
+              style={{ padding: "8px 16px", background: "#107c41", color: "#fff", borderRadius: "8px", border: "none", cursor: isSubmitting ? "not-allowed" : "pointer", fontSize: "1rem" }}
+            >
+              {isSubmitting && navigation.formData?.get("intent") === "publish" ? "Publishing..." : "Publish Page & RSS Feed"}
+            </button>
+          </div>
         </s-section>
       )}
 
