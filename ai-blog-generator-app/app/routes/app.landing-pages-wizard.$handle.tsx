@@ -103,7 +103,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const concept = formData.get("concept") as string;
       await backendFetch("/api/landing-pages/generate-social", {
         method: "POST",
-        body: JSON.stringify({ handle, concept_filter: [concept] })
+        body: JSON.stringify({ handle, concept_filter: [concept], overwrite: true })
       });
       const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
       return { ok: true, intent: "generate_social", socialItems: fetchRes.items };

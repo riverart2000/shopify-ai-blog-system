@@ -29,6 +29,7 @@ class GenerateSocialRequest(BaseModel):
     quality: bool = False
     variations: int = 1
     concept_filter: Optional[List[str]] = None
+    overwrite: bool = False
 
 class PublishLandingPageRequest(BaseModel):
     handle: str
@@ -104,7 +105,7 @@ async def generate_social(req: GenerateSocialRequest):
             quality=req.quality,
             variations=req.variations,
             concept_filter=req.concept_filter,
-            overwrite=True
+            overwrite=req.overwrite
         )
         output_dir = Path("social")
         output_dir.mkdir(parents=True, exist_ok=True)
