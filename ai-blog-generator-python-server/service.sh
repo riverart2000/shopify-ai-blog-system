@@ -205,6 +205,12 @@ fi)
         header_up X-Forwarded-Proto https
     }
 
+    reverse_proxy /publar/rss-landingpages localhost:${PYTHON_BACKEND_PORT} {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+        rewrite * /api/landing-pages/rss
+    }
+
     reverse_proxy /publar* localhost:18090 {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto https
@@ -275,6 +281,12 @@ fi)
     reverse_proxy /apps/rss* localhost:18090 {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-Proto https
+    }
+
+    reverse_proxy /publar/rss-landingpages localhost:${PYTHON_BACKEND_PORT} {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto https
+        rewrite * /api/landing-pages/rss
     }
 
     reverse_proxy /publar* localhost:18090 {
