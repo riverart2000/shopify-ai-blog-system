@@ -6,7 +6,7 @@ import abc
 from dataclasses import dataclass
 from typing import List, Optional
 
-from product_prompts.config import Settings
+from services.landing_pages.product_prompts.config import Settings
 
 
 @dataclass

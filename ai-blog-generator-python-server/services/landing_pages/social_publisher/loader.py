@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Iterator, List, Tuple
 
-from product_prompts.utils import get_logger
+from services.landing_pages.product_prompts.utils import get_logger
 
 log = get_logger("social.loader")
 
