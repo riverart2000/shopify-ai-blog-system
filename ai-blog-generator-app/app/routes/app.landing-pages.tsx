@@ -35,7 +35,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const session = requireShopifySession((auth as { session?: unknown }).session);
   const [context, landingPagesData] = await Promise.all([
     loadShopifyStudioContext(session),
-    BACKEND_KEY ? backendFetch("/api/landing-pages/products").catch(() => null) : Promise.resolve(null),
+    BACKEND_KEY
+      ? backendFetch("/api/landing-pages/products", { cache: "no-store" }).catch(() => null)
+      : Promise.resolve(null),
   ]);
   const storefrontDomain = context.storefrontDomain;
   const products = context.products || [];
@@ -62,6 +64,7 @@ export default function LandingPagesIndex() {
       ...p,
       hasGeneratedAssets: !!generated,
       conceptsGenerated: generated?.concepts_generated || 0,
+      landingPageUrl: generated?.landing_page?.url || "",
     };
   });
 
@@ -106,9 +109,19 @@ export default function LandingPagesIndex() {
                     </div>
                   </td>
                   <td style={{ padding: "12px" }}>
-                    {p.hasGeneratedAssets ? (
-                       <span style={{ color: "#107c41", fontWeight: 600, background: "#dff6dd", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem" }}>
-                         Generated ({p.conceptsGenerated} concepts)
+                    {p.landingPageUrl ? (
+                       <a
+                         href={p.landingPageUrl}
+                         target="_blank"
+                         rel="noreferrer"
+                         title={p.landingPageUrl}
+                         style={{ display: "inline-block", color: "#107c41", fontWeight: 600, background: "#dff6dd", padding: "4px 9px", borderRadius: "12px", fontSize: "0.75rem", textDecoration: "underline" }}
+                       >
+                         Published — View landing page ↗
+                       </a>
+                    ) : p.hasGeneratedAssets ? (
+                       <span style={{ color: "#8a6116", fontWeight: 600, background: "#fff5d6", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem" }}>
+                         Ready to publish ({p.conceptsGenerated} concepts)
                        </span>
                     ) : (
                        <span style={{ color: "#616e75", background: "#f1f2f4", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem" }}>

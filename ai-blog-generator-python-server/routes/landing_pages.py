@@ -51,6 +51,38 @@ def landing_pages_rss_url() -> str:
         return f"{app_url}/publar/rss-landingpages"
     return "/publar/rss-landingpages"
 
+
+def landing_page_product_summary(json_file: Path, data: dict) -> dict:
+    product = data.get("product", {}) if isinstance(data.get("product"), dict) else {}
+    concepts = data.get("creative_concepts")
+    if not isinstance(concepts, list):
+        concepts = data.get("concepts", [])
+    assets = data.get("assets", [])
+    publication = data.get("landing_page_publication", {})
+    if not isinstance(publication, dict):
+        publication = {}
+    page = publication.get("page", {})
+    if not isinstance(page, dict):
+        page = {}
+
+    # Use the original Shopify handle for registry matching. The JSON filename
+    # can be truncated to 80 characters for filesystem safety.
+    return {
+        "handle": product.get("handle") or json_file.stem,
+        "storage_handle": json_file.stem,
+        "title": product.get("title", ""),
+        "url": product.get("url", ""),
+        "concepts_generated": len(concepts),
+        "images": len(assets) if isinstance(assets, list) else 0,
+        "landing_page": {
+            "url": page.get("url") or "",
+            "handle": page.get("handle") or "",
+            "title": page.get("title") or "",
+            "action": page.get("action") or "",
+            "published_at": publication.get("published_at") or "",
+        },
+    }
+
 @router.get("/products")
 async def list_products():
     """
@@ -64,14 +96,7 @@ async def list_products():
         for json_file in output_dir.glob("*.json"):
             try:
                 data = json.loads(json_file.read_text(encoding="utf-8"))
-                # We can return summary data
-                products.append({
-                    "handle": json_file.stem,
-                    "title": data.get("product", {}).get("title", ""),
-                    "url": data.get("product", {}).get("url", ""),
-                    "concepts_generated": len(data.get("concepts", [])),
-                    "images": len(data.get("assets", [])),
-                })
+                products.append(landing_page_product_summary(json_file, data))
             except Exception as e:
                 pass
     return {"products": products}

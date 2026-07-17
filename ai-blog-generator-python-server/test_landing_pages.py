@@ -9,6 +9,7 @@ from services.landing_pages.social_publisher.rss_feed import (
     read_product_section,
     write_product_section,
 )
+from routes.landing_pages import landing_page_product_summary
 
 
 class FakeResponse:
@@ -42,6 +43,33 @@ def publisher_with_payloads(payloads: list[dict]) -> LandingPagePublisher:
         storefront_domain="https://storefront.test/",
     )
     return publisher
+
+
+def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: Path) -> None:
+    json_file = tmp_path / "a-very-long-truncated-storage-handle.json"
+    full_handle = "a-very-long-shopify-product-handle-that-is-not-the-storage-filename"
+    summary = landing_page_product_summary(
+        json_file,
+        {
+            "product": {"handle": full_handle, "title": "Product"},
+            "creative_concepts": [{"concept": "One"}, {"concept": "Two"}],
+            "landing_page_publication": {
+                "published_at": "2026-07-17T10:00:00+00:00",
+                "page": {
+                    "url": "https://store.test/pages/product-offer",
+                    "handle": "product-offer",
+                    "title": "Product - Special Offer",
+                    "action": "created",
+                },
+            },
+        },
+    )
+
+    assert summary["handle"] == full_handle
+    assert summary["storage_handle"] == json_file.stem
+    assert summary["concepts_generated"] == 2
+    assert summary["landing_page"]["url"] == "https://store.test/pages/product-offer"
+    assert summary["landing_page"]["published_at"] == "2026-07-17T10:00:00+00:00"
 
 
 def test_page_upsert_updates_legacy_title_match_and_normalises_seo() -> None:
