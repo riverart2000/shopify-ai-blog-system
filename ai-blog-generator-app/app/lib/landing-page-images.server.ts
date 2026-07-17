@@ -111,9 +111,15 @@ export function addSocialImagePreviewUrls<T>(items: T): T {
   return items.map((item) => {
     if (!isRecord(item)) return item;
     const filename = filenameFromPath(item?.image_file);
+    const baseUrl = previewUrl("social", filename);
+    const version = item?.image_version;
+    const versionedUrl =
+      baseUrl && (typeof version === "string" || typeof version === "number")
+        ? `${baseUrl}&version=${encodeURIComponent(String(version))}`
+        : baseUrl;
     return {
       ...item,
-      preview_url: previewUrl("social", filename),
+      preview_url: versionedUrl,
     };
   }) as T;
 }

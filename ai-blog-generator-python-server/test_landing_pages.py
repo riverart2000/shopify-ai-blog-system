@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from services.landing_pages.social_publisher.landing_page import LandingPagePublisher
+from services.landing_pages.social_publisher.pipeline import SocialPublisher
 from services.landing_pages.social_publisher.rss_feed import (
     read_product_section,
     write_product_section,
@@ -70,6 +71,18 @@ def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: 
     assert summary["concepts_generated"] == 2
     assert summary["landing_page"]["url"] == "https://store.test/pages/product-offer"
     assert summary["landing_page"]["published_at"] == "2026-07-17T10:00:00+00:00"
+
+
+def test_social_concept_filter_accepts_image_slug_and_variation_suffix() -> None:
+    publisher = SocialPublisher.__new__(SocialPublisher)
+    publisher.concept_filter = {"premium-brand-image"}
+    assert publisher._concept_matches_filter("Premium Brand Image") is True
+
+    publisher.concept_filter = {"premium-brand-image_v1"}
+    assert publisher._concept_matches_filter("Premium Brand Image") is True
+
+    publisher.concept_filter = {"lifestyle-image"}
+    assert publisher._concept_matches_filter("Premium Brand Image") is False
 
 
 def test_page_upsert_updates_legacy_title_match_and_normalises_seo() -> None:

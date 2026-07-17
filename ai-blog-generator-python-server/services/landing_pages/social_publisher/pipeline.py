@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import List, Optional
 
@@ -80,7 +81,7 @@ class SocialPublisher:
         produced: List[Path] = []
         for concept in concepts:
             name = concept.get("concept", "concept")
-            if self.concept_filter and name.strip().lower() not in self.concept_filter:
+            if not self._concept_matches_filter(name):
                 continue
             try:
                 produced.extend(
@@ -91,6 +92,20 @@ class SocialPublisher:
             except Exception as exc:  # noqa: BLE001 - one bad concept shouldn't stop the run
                 log.error("Failed concept '%s' for %s: %s", name, handle, exc)
         return produced
+
+    def _concept_matches_filter(self, name: str) -> bool:
+        if not self.concept_filter:
+            return True
+
+        # The UI identifies an image by its filename slug, while generated JSON
+        # stores the human-readable concept name. Accept either representation,
+        # including historical variation suffixes such as ``_v1``.
+        candidates = {name.strip().lower(), slugify(name)}
+        requested = {
+            re.sub(r"_v\d+$", "", value.strip().lower())
+            for value in self.concept_filter
+        }
+        return bool(candidates & requested)
 
     def _load_references(self, data: dict, input_dir: Path) -> List[bytes]:
         """Read up to ``max_references`` product images from disk as bytes.
@@ -185,6 +200,7 @@ class SocialPublisher:
             image_name = f"{base}{suffix}{image.extension}"
             image_path = output_dir / image_name
             image_path.write_bytes(image.data)
+            self._remove_other_image_formats(output_dir, base, suffix, image_path)
             produced.append(image_path)
 
             text_path = output_dir / f"{base}{suffix}.txt"
@@ -200,6 +216,15 @@ class SocialPublisher:
             if candidate.exists():
                 return candidate
         return None
+
+    @staticmethod
+    def _remove_other_image_formats(
+        output_dir: Path, base: str, suffix: str, keep: Path
+    ) -> None:
+        for ext in (".jpg", ".jpeg", ".png", ".webp"):
+            candidate = output_dir / f"{base}{suffix}{ext}"
+            if candidate != keep and candidate.exists():
+                candidate.unlink()
 
     @staticmethod
     def _write_text(path: Path, product: dict, campaign: dict, concept: dict) -> None:

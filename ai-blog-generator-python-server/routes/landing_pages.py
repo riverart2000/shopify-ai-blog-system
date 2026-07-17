@@ -154,6 +154,14 @@ async def generate_social(req: GenerateSocialRequest):
         else:
             raise FileNotFoundError(f"No JSON found for handle: {safe_handle}")
 
+        if not produced:
+            requested = ", ".join(req.concept_filter or [])
+            if requested:
+                raise RuntimeError(
+                    f"No image was regenerated for concept: {requested}"
+                )
+            raise RuntimeError("No social images were generated")
+
         return [str(p) for p in produced]
 
     try:
@@ -257,7 +265,12 @@ async def get_social_items(handle: str):
     
     items = []
     if social_dir.exists():
-        for img_file in social_dir.glob(f"{safe_handle}__*.jpg"):
+        image_files = sorted(
+            path
+            for path in social_dir.glob(f"{safe_handle}__*")
+            if path.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+        )
+        for img_file in image_files:
             concept_slug = img_file.stem.replace(f"{safe_handle}__", "")
             txt_file = social_dir / f"{img_file.stem}.txt"
             
@@ -268,6 +281,7 @@ async def get_social_items(handle: str):
             items.append({
                 "concept": concept_slug,
                 "image_file": img_file.name,
+                "image_version": img_file.stat().st_mtime_ns,
                 "text": text_content
             })
     return {"success": True, "items": items}
