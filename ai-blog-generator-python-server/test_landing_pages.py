@@ -142,6 +142,28 @@ def _concept(slug: str, name: str, image_url: str) -> dict:
     }
 
 
+def test_landing_selection_does_not_discard_other_rss_concepts() -> None:
+    all_concepts = [
+        _concept("lifestyle", "Lifestyle", "https://cdn.test/lifestyle.jpg"),
+        _concept("benefits", "Benefits", "https://cdn.test/benefits.jpg"),
+        _concept("education", "Education", "https://cdn.test/education.jpg"),
+        _concept("social-proof", "Social Proof", "https://cdn.test/social-proof.jpg"),
+    ]
+
+    landing_concepts = LandingPagePublisher._select_landing_concepts(
+        all_concepts,
+        ["Benefits", "Lifestyle"],
+    )
+
+    assert [item["slug"] for item in landing_concepts] == ["benefits", "lifestyle"]
+    assert [item["slug"] for item in all_concepts] == [
+        "lifestyle",
+        "benefits",
+        "education",
+        "social-proof",
+    ]
+
+
 def test_rss_product_section_is_replaced_without_duplicates(tmp_path: Path) -> None:
     feed_path = tmp_path / "social" / "feed.xml"
     concepts = [

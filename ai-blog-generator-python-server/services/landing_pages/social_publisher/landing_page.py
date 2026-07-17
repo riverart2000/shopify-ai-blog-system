@@ -1,6 +1,7 @@
 """Shopify landing page generator using uploaded marketing images."""
 
 import json
+import mimetypes
 import re
 import time
 from pathlib import Path
@@ -174,24 +175,18 @@ class LandingPagePublisher:
         else:
             log.info("Using planned funnel concepts: %s", selected_concepts)
         
-        # 1. Collect images to upload
+        # 1. Collect every generated concept image. The landing-page plan only
+        # controls the page layout; RSS should make use of every creative.
         concept_data = []
         for c in concepts:
             name = c.get("concept", "")
             if self.concept_filter and name.strip().lower() not in self.concept_filter:
                 continue
-                
-            # If the LLM gave us a plan, only use the selected concepts.
-            if selected_concepts and name not in selected_concepts:
-                continue
 
             slug = slugify(name)
-            # We look for the primary image without variation suffixes first, or _v1
-            image_path = social_dir / f"{handle}__{slug}.jpg"
-            if not image_path.exists():
-                image_path = social_dir / f"{handle}__{slug}_v1.jpg"
-            
-            if image_path.exists():
+            image_path = self._find_generated_image(social_dir, handle, slug)
+
+            if image_path:
                 concept_data.append({
                     "concept": c,
                     "slug": slug,
@@ -199,17 +194,6 @@ class LandingPagePublisher:
                     "cdn_url": None
                 })
         
-        # Ensure we respect the plan's order if possible
-        if selected_concepts:
-            ordered_data = []
-            for sc in selected_concepts:
-                for cd in concept_data:
-                    if cd["concept"].get("concept") == sc:
-                        ordered_data.append(cd)
-                        break
-            if ordered_data:
-                concept_data = ordered_data
-                
         if not concept_data:
             raise RuntimeError(f"No generated images found for {handle}")
 
@@ -227,8 +211,13 @@ class LandingPagePublisher:
         if not concept_data:
             raise RuntimeError(f"All Shopify image uploads failed for {handle}")
 
+        # The Shopify page stays focused on its planned funnel concepts. If a
+        # planned image failed to upload, use up to three available creatives so
+        # the page can still be published. RSS continues with the complete list.
+        landing_concept_data = self._select_landing_concepts(concept_data, selected_concepts)
+
         # 3. Build HTML
-        html = self._build_html(product, campaign, concept_data)
+        html = self._build_html(product, campaign, landing_concept_data)
 
         # 4. Create Page
         page_title = f"{product.get('title')} - Special Offer"
@@ -278,6 +267,31 @@ class LandingPagePublisher:
             },
             "rss": rss_result,
         }
+
+    @staticmethod
+    def _find_generated_image(social_dir: Path, handle: str, slug: str) -> Optional[Path]:
+        for suffix in ("", "_v1"):
+            for extension in (".jpg", ".jpeg", ".png", ".webp"):
+                image_path = social_dir / f"{handle}__{slug}{suffix}{extension}"
+                if image_path.exists():
+                    return image_path
+        return None
+
+    @staticmethod
+    def _select_landing_concepts(concept_data: list, selected_concepts: list) -> list:
+        ordered_data = []
+        for selected_name in selected_concepts:
+            match = next(
+                (
+                    item
+                    for item in concept_data
+                    if item["concept"].get("concept") == selected_name
+                ),
+                None,
+            )
+            if match and match not in ordered_data:
+                ordered_data.append(match)
+        return ordered_data or concept_data[:3]
 
     def _update_blog_article_with_link(self, blog_url: str, landing_page_url: str) -> None:
         """Update a Shopify blog article's content to append a CTA to the landing page."""
@@ -433,6 +447,7 @@ class LandingPagePublisher:
         return "\n".join(blocks)
 
     def _upload_image(self, image_path: Path) -> Optional[str]:
+        mime_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
         # 1. stagedUploadsCreate
         query = """
         mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
@@ -445,7 +460,7 @@ class LandingPagePublisher:
         variables = {
             "input": [{
                 "filename": image_path.name,
-                "mimeType": "image/jpeg",
+                "mimeType": mime_type,
                 "httpMethod": "POST",
                 "resource": "IMAGE"
             }]
@@ -462,7 +477,7 @@ class LandingPagePublisher:
         # 2. POST file
         url = target["url"]
         params = {p["name"]: p["value"] for p in target["parameters"]}
-        files = {"file": (image_path.name, image_path.read_bytes(), "image/jpeg")}
+        files = {"file": (image_path.name, image_path.read_bytes(), mime_type)}
         resp2 = self.session.post(url, data=params, files=files)
         resp2.raise_for_status()
 
