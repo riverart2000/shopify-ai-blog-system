@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -12,6 +13,7 @@ from services.landing_pages.product_prompts.config import Settings
 from services.landing_pages.product_prompts.pipeline import Pipeline
 from services.landing_pages.social_publisher.pipeline import SocialPublisher
 from services.landing_pages.social_publisher.landing_page import LandingPagePublisher
+from services.landing_pages.social_publisher.rss_feed import read_product_section
 
 router = APIRouter(
     prefix="/api/landing-pages",
@@ -39,6 +41,15 @@ class PublishLandingPageRequest(BaseModel):
 def get_settings():
     settings = Settings.load()
     return settings
+
+def landing_pages_rss_url() -> str:
+    configured = (os.environ.get("LANDING_PAGES_RSS_URL") or "").strip()
+    if configured:
+        return configured
+    app_url = (os.environ.get("SHOPIFY_REACT_APP_URL") or "").strip().rstrip("/")
+    if app_url:
+        return f"{app_url}/publar/rss-landingpages"
+    return "/publar/rss-landingpages"
 
 @router.get("/products")
 async def list_products():
@@ -107,7 +118,7 @@ async def generate_social(req: GenerateSocialRequest):
             concept_filter=req.concept_filter,
             overwrite=req.overwrite
         )
-        output_dir = Path("social")
+        output_dir = settings.project_root / "social"
         output_dir.mkdir(parents=True, exist_ok=True)
         produced = []
         
@@ -178,6 +189,18 @@ async def get_rss_feed():
         raise HTTPException(status_code=404, detail="RSS feed not yet generated")
     
     return FileResponse(feed_path, media_type="application/rss+xml")
+
+@router.get("/rss/{handle}")
+async def get_product_rss_section(handle: str):
+    """Return the landing-page RSS items for one product."""
+    settings = get_settings()
+    from services.landing_pages.product_prompts.utils import slugify
+    safe_handle = slugify(handle)
+    section = read_product_section(
+        settings.project_root / "social" / "feed.xml", safe_handle
+    )
+    section["feed_url"] = landing_pages_rss_url()
+    return {"success": True, "rss": section}
 
 @router.get("/images/{filename}")
 async def get_image(filename: str):
@@ -254,10 +277,24 @@ async def publish_landing_page(req: PublishLandingPageRequest):
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             
-        publisher._publish_product_page(safe_handle, data, Path("social"), req.published)
+        result = publisher._publish_product_page(
+            safe_handle,
+            data,
+            settings.project_root / "social",
+            req.published,
+        )
+        result["rss"]["feed_url"] = landing_pages_rss_url()
+        result["published_at"] = datetime.now(timezone.utc).isoformat()
+        data["landing_page_publication"] = result
+        temporary_path = json_path.with_suffix(".json.tmp")
+        temporary_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        temporary_path.replace(json_path)
+        return result
     
     try:
-        await run_in_threadpool(run_publish)
-        return {"success": True}
+        result = await run_in_threadpool(run_publish)
+        return {"success": True, "publication": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

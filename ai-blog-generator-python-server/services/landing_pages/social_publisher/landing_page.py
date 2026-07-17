@@ -1,15 +1,17 @@
 """Shopify landing page generator using uploaded marketing images."""
 
 import json
+import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from services.landing_pages.product_prompts.config import Settings
 from services.landing_pages.product_prompts.utils import build_session, get_logger, slugify
 from services.landing_pages.product_prompts.fetchers.shopify import ShopifyAdminFetcher
+from services.landing_pages.social_publisher.rss_feed import write_product_section
 
 log = get_logger("social.landing_page")
 
@@ -152,7 +154,7 @@ class LandingPagePublisher:
             
             self._publish_product_page(json_path.stem, data, social_dir, published)
 
-    def _publish_product_page(self, handle: str, data: dict, social_dir: Path, published: bool) -> None:
+    def _publish_product_page(self, handle: str, data: dict, social_dir: Path, published: bool) -> dict:
         product = data.get("product", {})
         campaign = data.get("campaign", {})
         concepts = data.get("creative_concepts", [])
@@ -209,8 +211,7 @@ class LandingPagePublisher:
                 concept_data = ordered_data
                 
         if not concept_data:
-            log.warning("No generated images found in %s for %s", social_dir, handle)
-            return
+            raise RuntimeError(f"No generated images found for {handle}")
 
         # 2. Upload images to Shopify
         log.info("Uploading %d images to Shopify for %s...", len(concept_data), handle)
@@ -224,8 +225,7 @@ class LandingPagePublisher:
         # Filter out failed uploads
         concept_data = [cd for cd in concept_data if cd["cdn_url"]]
         if not concept_data:
-            log.error("All image uploads failed for %s", handle)
-            return
+            raise RuntimeError(f"All Shopify image uploads failed for {handle}")
 
         # 3. Build HTML
         html = self._build_html(product, campaign, concept_data)
@@ -246,7 +246,9 @@ class LandingPagePublisher:
         if len(meta_desc) > 250:
             meta_desc = meta_desc[:247] + "..."
             
-        page_id, url = self._create_page(page_title, page_handle, html, published, meta_desc)
+        page_id, url, page_action, actual_page_handle = self._upsert_page(
+            page_title, page_handle, html, published, meta_desc
+        )
         if url:
             log.info("✅ Published Landing Page for %s: %s", handle, url)
         else:
@@ -257,6 +259,25 @@ class LandingPagePublisher:
         blog_url = blog.get("url")
         if blog_url and url:
             self._update_blog_article_with_link(blog_url, url)
+
+        rss_result = write_product_section(
+            self.settings.project_root / "social" / "feed.xml",
+            handle=handle,
+            product_title=str(product.get("title") or ""),
+            landing_page_url=url,
+            concepts=concept_data,
+        )
+        return {
+            "page": {
+                "id": page_id,
+                "url": url,
+                "handle": actual_page_handle,
+                "title": page_title,
+                "action": page_action,
+                "duplicate_prevented": page_action == "updated",
+            },
+            "rss": rss_result,
+        }
 
     def _update_blog_article_with_link(self, blog_url: str, landing_page_url: str) -> None:
         """Update a Shopify blog article's content to append a CTA to the landing page."""
@@ -498,8 +519,121 @@ class LandingPagePublisher:
         log.error("Timeout waiting for image to be READY.")
         return None
 
-    def _create_page(self, title: str, handle: str, html: str, published: bool, meta_desc: str = "") -> tuple[str, str]:
+    @staticmethod
+    def _single_line(value: str, limit: int = 250) -> str:
+        normalised = re.sub(r"\s+", " ", value or "").strip()
+        if len(normalised) <= limit:
+            return normalised
+        return normalised[: max(0, limit - 3)].rstrip() + "..."
+
+    @staticmethod
+    def _user_error_message(operation: str, payload: dict) -> str:
+        errors = payload.get("data", {}).get(operation, {}).get("userErrors", [])
+        messages = [str(error.get("message") or "").strip() for error in errors]
+        messages = [message for message in messages if message]
+        return "; ".join(messages) or f"Shopify {operation} failed"
+
+    def _find_page(self, handle: str, title: str) -> Optional[dict]:
         query = """
+        query findLandingPage($query: String!) {
+          pages(first: 10, query: $query) {
+            nodes { id title handle }
+          }
+        }
+        """
+        def find(search_query: str) -> list:
+            response = self.session.post(
+                self.endpoint,
+                json={"query": query, "variables": {"query": search_query}},
+                headers={"X-Shopify-Access-Token": self.token},
+            )
+            response.raise_for_status()
+            return response.json().get("data", {}).get("pages", {}).get("nodes", [])
+
+        nodes = find(f"handle:{handle}")
+        exact_handle = next((node for node in nodes if node.get("handle") == handle), None)
+        if exact_handle:
+            return exact_handle
+
+        # Older versions let Shopify generate the handle from the title. Find
+        # those pages by exact title and preserve their URL when updating.
+        escaped_title = title.replace('"', '\\"')
+        nodes = find(f'title:"{escaped_title}"')
+        return next((node for node in nodes if node.get("title") == title), None)
+
+    def _set_page_seo_metafields(self, page_id: str, title: str, meta_desc: str) -> None:
+        metafields = [
+            {
+                "ownerId": page_id,
+                "namespace": "global",
+                "key": "title_tag",
+                "type": "single_line_text_field",
+                "value": self._single_line(title, 255),
+            }
+        ]
+        description = self._single_line(meta_desc, 250)
+        if description:
+            metafields.append(
+                {
+                    "ownerId": page_id,
+                    "namespace": "global",
+                    "key": "description_tag",
+                    "type": "single_line_text_field",
+                    "value": description,
+                }
+            )
+
+        query = """
+        mutation setLandingPageSeo($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id namespace key }
+            userErrors { field message }
+          }
+        }
+        """
+        response = self.session.post(
+            self.endpoint,
+            json={"query": query, "variables": {"metafields": metafields}},
+            headers={"X-Shopify-Access-Token": self.token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        errors = payload.get("data", {}).get("metafieldsSet", {}).get("userErrors", [])
+        if errors:
+            messages = "; ".join(str(error.get("message") or "") for error in errors)
+            raise RuntimeError(f"Failed to set Shopify page SEO: {messages}")
+
+    def _upsert_page(
+        self,
+        title: str,
+        handle: str,
+        html: str,
+        published: bool,
+        meta_desc: str = "",
+    ) -> tuple[str, str, str, str]:
+        existing = self._find_page(handle, title)
+        effective_handle = str(existing.get("handle") or handle) if existing else handle
+        page_input = {
+            "title": title,
+            "handle": effective_handle,
+            "body": html,
+            "isPublished": published,
+        }
+
+        if existing:
+            query = """
+            mutation pageUpdate($id: ID!, $page: PageUpdateInput!) {
+              pageUpdate(id: $id, page: $page) {
+                page { id title handle }
+                userErrors { field message }
+              }
+            }
+            """
+            operation = "pageUpdate"
+            variables = {"id": existing["id"], "page": page_input}
+            action = "updated"
+        else:
+            query = """
         mutation pageCreate($page: PageCreateInput!) {
           pageCreate(page: $page) {
             page { id title handle }
@@ -507,40 +641,22 @@ class LandingPagePublisher:
           }
         }
         """
-        variables = {
-          "page": {
-            "title": title,
-            "body": html,
-            "isPublished": published
-          }
-        }
-        if meta_desc:
-            # Shopify uses metafields on pages for SEO title and description
-            variables["page"]["metafields"] = [
-                {
-                    "namespace": "global",
-                    "key": "title_tag",
-                    "type": "single_line_text_field",
-                    "value": title
-                },
-                {
-                    "namespace": "global",
-                    "key": "description_tag",
-                    "type": "single_line_text_field",
-                    "value": meta_desc
-                }
-            ]
-            
+            operation = "pageCreate"
+            variables = {"page": page_input}
+            action = "created"
+
         resp = self.session.post(self.endpoint, json={"query": query, "variables": variables}, headers={"X-Shopify-Access-Token": self.token})
+        resp.raise_for_status()
         data = resp.json()
-        
-        page_node = data.get("data", {}).get("pageCreate", {}).get("page")
+
+        page_node = data.get("data", {}).get(operation, {}).get("page")
         if not page_node:
-            log.error("pageCreate failed: %s", data)
-            raise RuntimeError("Failed to create Shopify Page")
-            
+            log.error("%s failed: %s", operation, data)
+            raise RuntimeError(self._user_error_message(operation, data))
+
         page_id = page_node["id"]
-        
+        self._set_page_seo_metafields(page_id, title, meta_desc)
+
         # Try to guess the URL if published
         url = ""
         if published:
@@ -551,5 +667,5 @@ class LandingPagePublisher:
                 url = f"{storefront.rstrip('/')}/pages/{page_node['handle']}"
             else:
                 url = f"https://{domain}.myshopify.com/pages/{page_node['handle']}"
-                
-        return page_id, url
+
+        return page_id, url, action, str(page_node["handle"])

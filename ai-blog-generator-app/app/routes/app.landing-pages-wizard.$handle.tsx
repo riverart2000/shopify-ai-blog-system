@@ -47,11 +47,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   
   const storefrontDomain = context.storefrontDomain;
   const productUrl = `https://${storefrontDomain}/products/${handle}`;
+  const rawProductData = productDataResponse?.data || null;
 
   return {
     handle,
     productUrl,
-    initialData: addLandingPageAssetPreviewUrls(productDataResponse?.data || null),
+    initialData: addLandingPageAssetPreviewUrls(rawProductData),
+    initialPublishResult: rawProductData?.landing_page_publication || null,
   };
 };
 
@@ -131,11 +133,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
 
     if (intent === "publish") {
-      await backendFetch("/api/landing-pages/publish", {
+      const res = await backendFetch("/api/landing-pages/publish", {
         method: "POST",
         body: JSON.stringify({ handle, published: true })
       });
-      return { ok: true, intent };
+      return { ok: true, intent, publishResult: res.publication };
     }
 
     return { ok: false, error: "Unknown intent" };
@@ -145,22 +147,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function LandingPageWizard() {
-  const { handle, productUrl, initialData } = useLoaderData<typeof loader>();
+  const { handle, productUrl, initialData, initialPublishResult } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   
   const [data, setData] = useState<any>(initialData);
-  const [step, setStep] = useState(initialData ? 2 : 1);
+  const [step, setStep] = useState(initialPublishResult ? 4 : initialData ? 2 : 1);
   const [error, setError] = useState<string | null>(null);
   const [socialItems, setSocialItems] = useState<any[] | null>(null);
+  const [publishResult, setPublishResult] = useState<any>(initialPublishResult);
 
   const isSubmitting = navigation.state !== "idle";
 
   // If we're on step 3 but don't have social items loaded yet, fetch them
   useEffect(() => {
-    if (step >= 3 && !socialItems && !isSubmitting) {
+    if (step === 3 && !socialItems && !isSubmitting) {
       submit({ intent: "fetch_social" }, { method: "post" });
     }
   }, [step, socialItems, isSubmitting, submit]);
@@ -180,6 +183,7 @@ export default function LandingPageWizard() {
           }
           setStep(3);
         } else if (actionData.intent === "publish") {
+          setPublishResult(actionData.publishResult);
           setStep(4);
         }
       } else {
@@ -394,10 +398,52 @@ export default function LandingPageWizard() {
       )}
 
       {step >= 4 && (
-        <s-section heading="Success!">
+        <s-section heading="Published & Verified">
           <div style={{ color: "#107c41", background: "#dff6dd", padding: "14px", borderRadius: "12px", border: "1px solid #107c41" }}>
-            The landing page was published successfully. Social posts are now queued in the RSS feed for Publer.
+            The landing page and this product&apos;s RSS section were published successfully without creating duplicates.
           </div>
+          {publishResult?.page && (
+            <div style={{ marginTop: "18px", padding: "16px", border: "1px solid #d1d5db", borderRadius: "10px" }}>
+              <h3 style={{ margin: "0 0 10px" }}>Shopify landing page</h3>
+              <div style={{ marginBottom: "8px" }}>
+                Status: <strong>{publishResult.page.action === "updated" ? "Existing page updated" : "New page created"}</strong>
+              </div>
+              <a href={publishResult.page.url} target="_blank" rel="noreferrer" style={{ color: "#005bd3", wordBreak: "break-all" }}>
+                {publishResult.page.url}
+              </a>
+            </div>
+          )}
+          {publishResult?.rss && (
+            <div style={{ marginTop: "18px", padding: "16px", border: "1px solid #d1d5db", borderRadius: "10px" }}>
+              <h3 style={{ margin: "0 0 10px" }}>RSS section for this product</h3>
+              <div style={{ marginBottom: "6px" }}>
+                Status: <strong>{publishResult.rss.action === "updated" ? "Existing product entries replaced" : "New product entries created"}</strong>
+              </div>
+              <div style={{ marginBottom: "10px" }}>
+                Entries: <strong>{publishResult.rss.entry_count}</strong>
+                {publishResult.rss.replaced_count > 0 ? ` (${publishResult.rss.replaced_count} previous entries replaced)` : ""}
+              </div>
+              <a href={publishResult.rss.feed_url} target="_blank" rel="noreferrer" style={{ color: "#005bd3", wordBreak: "break-all" }}>
+                {publishResult.rss.feed_url}
+              </a>
+              <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "16px" }}>
+                {publishResult.rss.entries?.map((entry: any) => (
+                  <div key={entry.guid} style={{ display: "flex", gap: "14px", padding: "12px", background: "#f6f6f7", borderRadius: "8px" }}>
+                    {entry.image_url && (
+                      <img src={entry.image_url} alt={entry.concept} style={{ width: "90px", height: "90px", objectFit: "cover", borderRadius: "6px" }} />
+                    )}
+                    <div style={{ minWidth: 0 }}>
+                      <strong>{entry.title}</strong>
+                      <div style={{ marginTop: "5px", color: "#4b5563" }}>Concept: {entry.concept}</div>
+                      <div style={{ marginTop: "5px", color: "#6b7280", fontFamily: "monospace", fontSize: "0.78rem", wordBreak: "break-all" }}>
+                        GUID: {entry.guid}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </s-section>
       )}
     </s-page>
