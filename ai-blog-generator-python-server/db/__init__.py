@@ -29,6 +29,11 @@ from .title_pool import (
     add_titles, get_title_pool, count_title_pool,
     pop_title, delete_title, clear_title_pool, mark_title_published, reserve_title,
 )
+from .intelligence import (
+    create_intelligence_run, complete_intelligence_run, fail_intelligence_run,
+    get_latest_intelligence_run, get_intelligence_runs, get_run_recommendations,
+    dismiss_recommendation, get_stores_due_for_intelligence,
+)
 
 __all__ = [
     # base
@@ -58,4 +63,8 @@ __all__ = [
     # title pool
     "add_titles", "get_title_pool", "count_title_pool",
     "pop_title", "delete_title", "clear_title_pool", "mark_title_published", "reserve_title",
+    # customer intelligence
+    "create_intelligence_run", "complete_intelligence_run", "fail_intelligence_run",
+    "get_latest_intelligence_run", "get_intelligence_runs", "get_run_recommendations",
+    "dismiss_recommendation", "get_stores_due_for_intelligence",
 ]

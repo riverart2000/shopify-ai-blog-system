@@ -178,6 +178,45 @@ CREATE TABLE IF NOT EXISTS blog_title_pool (
     created_at       INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     UNIQUE(store_id, title)
 );
+
+CREATE TABLE IF NOT EXISTS intelligence_runs (
+    id            TEXT PRIMARY KEY,
+    store_id      TEXT NOT NULL,
+    trigger_type  TEXT NOT NULL DEFAULT 'manual',
+    status        TEXT NOT NULL DEFAULT 'running',
+    period_days   INTEGER NOT NULL DEFAULT 90,
+    summary_json  TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT NOT NULL DEFAULT '',
+    started_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    completed_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_runs_store_started
+    ON intelligence_runs(store_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS intelligence_recommendations (
+    id              TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    store_id        TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'conversion',
+    severity        TEXT NOT NULL DEFAULT 'medium',
+    title           TEXT NOT NULL,
+    evidence        TEXT NOT NULL DEFAULT '',
+    action          TEXT NOT NULL DEFAULT '',
+    confidence      TEXT NOT NULL DEFAULT 'medium',
+    impact          TEXT NOT NULL DEFAULT 'medium',
+    effort          TEXT NOT NULL DEFAULT 'medium',
+    metric_key      TEXT NOT NULL DEFAULT '',
+    source          TEXT NOT NULL DEFAULT 'rules',
+    status          TEXT NOT NULL DEFAULT 'open',
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_run
+    ON intelligence_recommendations(run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_store
+    ON intelligence_recommendations(store_id, status, created_at DESC);
 """
 
 # Columns added in v2 — wrapped in try/except since ALTER TABLE has no IF NOT EXISTS

@@ -13,6 +13,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -66,9 +67,12 @@ from services.keyword_service import fetch_keywords
 import shopify_client
 from config import StoreConfig
 from services.quality_service import QualityGateError
+from services.intelligence_service import run_scheduled_scans
 
 _POLL_INTERVAL = 60  # seconds between ticks
 _DB_PATH = os.environ.get("DB_PATH", "data/ai_blog_server.db")
+_INTELLIGENCE_POLL_INTERVAL = 15 * 60
+_last_intelligence_poll = 0
 
 
 # ---------------------------------------------------------------------------
@@ -268,15 +272,20 @@ async def _initialise_next_run_times() -> None:
 # ---------------------------------------------------------------------------
 
 async def _tick() -> None:
+    global _last_intelligence_poll
     due = await db.get_due_jobs()
-    if not due:
-        return
-    logger.info("Tick: %d due job(s)", len(due))
-    tasks = [asyncio.create_task(_process_job(job)) for job in due]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for job, res in zip(due, results):
-        if isinstance(res, Exception):
-            logger.error("Unhandled exception in job '%s': %s", job.get("name"), res)
+    if due:
+        logger.info("Tick: %d due job(s)", len(due))
+        tasks = [asyncio.create_task(_process_job(job)) for job in due]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for job, res in zip(due, results):
+            if isinstance(res, Exception):
+                logger.error("Unhandled exception in job '%s': %s", job.get("name"), res)
+
+    now = int(time.time())
+    if now - _last_intelligence_poll >= _INTELLIGENCE_POLL_INTERVAL:
+        _last_intelligence_poll = now
+        await run_scheduled_scans()
 
 
 # ---------------------------------------------------------------------------

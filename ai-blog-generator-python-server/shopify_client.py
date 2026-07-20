@@ -204,6 +204,56 @@ def _is_404(exc: Exception) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
+async def graphql_request(
+    store: StoreConfig,
+    query: str,
+    variables: Optional[dict] = None,
+    timeout: float = 45,
+) -> dict:
+    """Execute an authenticated Shopify Admin GraphQL request.
+
+    Feature services use this public boundary instead of reaching into token
+    internals. GraphQL top-level errors are normalised to ``ShopifyError`` by
+    ``_graphql``.
+    """
+    token = await _get_token(store)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        return await _graphql(client, store, token, query, variables or {})
+
+
+async def run_shopifyql_query(store: StoreConfig, query_text: str) -> list[dict]:
+    """Run ShopifyQL and return rows keyed by the API column names."""
+    query = """
+      query IntelligenceShopifyQL($query: String!) {
+        shopifyqlQuery(query: $query) {
+          tableData {
+            columns { name displayName dataType }
+            rows
+          }
+          parseErrors
+        }
+      }
+    """
+    data = await graphql_request(store, query, {"query": query_text})
+    result = data.get("shopifyqlQuery") or {}
+    parse_errors = result.get("parseErrors") or []
+    if parse_errors:
+        raise ShopifyError(f"ShopifyQL parse error: {json.dumps(parse_errors)[:500]}")
+    table = result.get("tableData") or {}
+    columns = [col.get("name", "") for col in table.get("columns", [])]
+    output: list[dict] = []
+    for raw_row in table.get("rows", []) or []:
+        if isinstance(raw_row, str):
+            try:
+                raw_row = json.loads(raw_row)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(raw_row, dict):
+            output.append(raw_row)
+        elif isinstance(raw_row, list):
+            output.append(dict(zip(columns, raw_row)))
+    return output
+
 async def fetch_blogs(store: StoreConfig) -> list[ShopifyBlog]:
     """Return all blogs for the store."""
     url = f"{_base_url(store)}/blogs.json"

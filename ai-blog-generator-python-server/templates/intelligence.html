@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Intelligence — AI Blog Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing:border-box; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:#0b1220; color:#e5edf7; min-height:100vh; }
+    nav { background:#0f172a; padding:0 24px; display:flex; align-items:center; height:52px; border-bottom:1px solid #1e293b; overflow-x:auto; }
+    nav .logo { color:#fff; font-weight:700; font-size:15px; margin-right:24px; white-space:nowrap; }
+    nav a { color:#94a3b8; text-decoration:none; font-size:14px; font-weight:500; padding:0 14px; height:52px; display:flex; align-items:center; border-bottom:2px solid transparent; white-space:nowrap; }
+    nav a:hover, nav a.active { color:#fff; } nav a.active { border-bottom-color:#22c55e; }
+    .page { max-width:1180px; margin:0 auto; padding:34px 18px 70px; }
+    .hero { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:22px; }
+    h1 { font-size:28px; margin:0 0 7px; } h2 { margin:0 0 5px; font-size:19px; } h3 { margin:0; font-size:16px; }
+    .sub, .muted { color:#94a3b8; } .sub { max-width:720px; line-height:1.55; }
+    .card { background:#111c2e; border:1px solid #23314a; border-radius:13px; padding:20px; margin-bottom:18px; box-shadow:0 12px 32px rgba(0,0,0,.12); }
+    .btn { border:0; border-radius:8px; padding:10px 15px; font-weight:700; cursor:pointer; background:#22c55e; color:#052e16; font-size:14px; }
+    .btn:hover { filter:brightness(1.08); } .btn-secondary { background:#24334d; color:#e5edf7; } .btn-small { padding:7px 10px; font-size:12px; }
+    .run-form { display:flex; gap:10px; align-items:center; white-space:nowrap; }
+    select, input, textarea { background:#0b1425; border:1px solid #33445f; border-radius:8px; color:#e5edf7; padding:10px; font:inherit; width:100%; }
+    textarea { min-height:110px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+    .alert { border-radius:9px; padding:12px 15px; margin-bottom:16px; font-size:14px; }
+    .success { background:#123322; border:1px solid #227447; color:#bbf7d0; } .error { background:#3b1720; border:1px solid #7f2b3a; color:#fecdd3; }
+    .sufficiency { display:flex; gap:12px; align-items:flex-start; background:#12233b; border:1px solid #285283; }
+    .badge { display:inline-flex; align-items:center; border-radius:999px; padding:4px 9px; text-transform:uppercase; letter-spacing:.05em; font-size:10px; font-weight:800; }
+    .high { background:#52202a; color:#fecdd3; } .medium { background:#4a3715; color:#fde68a; } .low, .strong { background:#153d2a; color:#bbf7d0; } .directional { background:#4a3715; color:#fde68a; } .limited { background:#52202a; color:#fecdd3; }
+    .kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:18px 0; }
+    .kpi { background:#111c2e; border:1px solid #23314a; border-radius:11px; padding:15px; }
+    .kpi-label { color:#94a3b8; font-size:11px; text-transform:uppercase; letter-spacing:.055em; }
+    .kpi-value { font-size:24px; font-weight:750; margin-top:6px; }
+    .grid { display:grid; grid-template-columns:1.25fr .75fr; gap:18px; align-items:start; }
+    .rec { border-left:4px solid #eab308; padding:16px; background:#0e192a; border-radius:8px; margin-top:12px; }
+    .rec.severity-high { border-left-color:#ef4444; } .rec.severity-low { border-left-color:#22c55e; }
+    .rec-head { display:flex; justify-content:space-between; gap:15px; align-items:flex-start; }
+    .meta { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0 12px; }
+    .tag { background:#1d2a40; color:#b9c8dc; border-radius:5px; padding:3px 7px; font-size:11px; }
+    .evidence { color:#dbeafe; line-height:1.5; font-size:14px; margin:8px 0; } .action { color:#a7b6cb; line-height:1.55; font-size:14px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; margin-top:13px; } th { color:#91a3bb; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.04em; } th, td { padding:9px 7px; border-bottom:1px solid #223149; } td.num, th.num { text-align:right; }
+    .stats { display:grid; grid-template-columns:repeat(2,1fr); gap:9px; margin-top:14px; } .stat { background:#0d1728; border-radius:8px; padding:12px; } .stat b { display:block; font-size:19px; } .stat span { color:#94a3b8; font-size:12px; }
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; } label { display:block; color:#cbd5e1; font-size:13px; font-weight:650; margin:12px 0 6px; }
+    .check { display:flex; gap:8px; align-items:center; color:#cbd5e1; font-size:13px; margin:13px 0; } .check input { width:auto; }
+    details summary { cursor:pointer; color:#93c5fd; font-weight:650; margin-top:10px; }
+    .empty { padding:25px; text-align:center; color:#94a3b8; }
+    @media (max-width:900px) { .kpis { grid-template-columns:repeat(3,1fr); } .grid { grid-template-columns:1fr; } .hero { flex-direction:column; } }
+    @media (max-width:560px) { .kpis { grid-template-columns:repeat(2,1fr); } .form-row { grid-template-columns:1fr; } nav { padding:0 10px; } nav .logo { display:none; } }
+  </style>
+</head>
+<body>
+<nav>
+  <span class="logo">AI Blog Generator</span>
+  <a href="/">Generate</a><a href="/history">History</a><a href="/setup">Setup</a>
+  <a href="/schedule">Schedule</a><a href="/intelligence" class="active">Intelligence</a>
+  <a href="/logout" style="margin-left:auto;">Logout</a>
+</nav>
+<main class="page">
+  <div class="hero">
+    <div><h1>Customer Intelligence</h1><div class="sub">Evidence-led conversion and store recommendations for {{ store.name }}. Shopify behaviour is measured directly; GA4 adds channel, device and landing-page depth.</div></div>
+    <form method="POST" action="/intelligence/run" class="run-form">
+      <select name="period_days" aria-label="Analysis period"><option value="30" {% if period_days == '30' %}selected{% endif %}>30 days</option><option value="90" {% if period_days == '90' %}selected{% endif %}>90 days</option><option value="180" {% if period_days == '180' %}selected{% endif %}>180 days</option><option value="365" {% if period_days == '365' %}selected{% endif %}>365 days</option></select>
+      <button class="btn" type="submit">Run analysis</button>
+    </form>
+  </div>
+  {% if saved %}<div class="alert success">{% if saved == 'analysis' %}Analysis complete and recommendations updated.{% elif saved == 'settings' %}Intelligence settings saved.{% else %}Recommendation dismissed.{% endif %}</div>{% endif %}
+  {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+
+  {% if latest and latest.status == 'complete' %}
+    {% set funnel = summary.shopify.funnel %}
+    {% set suff = summary.data_sufficiency %}
+    <div class="card sufficiency"><span class="badge {{ suff.level }}">{{ suff.level }}</span><div><b>Data confidence</b><div class="muted">{{ suff.message }} Period: {{ summary.period_days }} days; updated {{ latest.completed_at|datetimeformat }}.</div></div></div>
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-label">Sessions</div><div class="kpi-value">{{ '{:,}'.format(funnel.sessions) }}</div></div>
+      <div class="kpi"><div class="kpi-label">Added to cart</div><div class="kpi-value">{{ funnel.cart_additions }}</div><div class="muted">{{ '%.2f'|format(funnel.add_to_cart_rate) }}%</div></div>
+      <div class="kpi"><div class="kpi-label">Checkouts</div><div class="kpi-value">{{ funnel.checkouts }}</div></div>
+      <div class="kpi"><div class="kpi-label">Purchases</div><div class="kpi-value">{{ funnel.purchases }}</div></div>
+      <div class="kpi"><div class="kpi-label">Conversion</div><div class="kpi-value">{{ '%.2f'|format(funnel.conversion_rate) }}%</div></div>
+      <div class="kpi"><div class="kpi-label">Shopify sales</div><div class="kpi-value">£{{ '%.2f'|format(funnel.total_sales) }}</div></div>
+    </div>
+    {% if summary.executive_summary %}<div class="card"><h2>Grok management summary</h2><div class="sub">{{ summary.executive_summary }}</div></div>{% endif %}
+    <div class="grid">
+      <section class="card"><h2>Prioritised recommendations</h2><div class="muted">Ranked by Grok from verified findings. “Action” means a test or investigation, not a claim of cause.</div>
+        {% for rec in recommendations %}
+        <article class="rec severity-{{ rec.severity }}">
+          <div class="rec-head"><h3>{{ loop.index }}. {{ rec.title }}</h3><span class="badge {{ rec.severity }}">{{ rec.severity }}</span></div>
+          <div class="meta"><span class="tag">Confidence: {{ rec.confidence }}</span><span class="tag">Impact: {{ rec.impact }}</span><span class="tag">Effort: {{ rec.effort }}</span><span class="tag">{{ rec.category }}</span></div>
+          <div class="evidence"><b>Evidence:</b> {{ rec.evidence }}</div><div class="action"><b>Recommended action:</b> {{ rec.action }}</div>
+          <form method="POST" action="/intelligence/recommendations/dismiss" style="margin-top:11px;"><input type="hidden" name="recommendation_id" value="{{ rec.id }}"/><button type="submit" class="btn btn-secondary btn-small">Dismiss</button></form>
+        </article>
+        {% else %}<div class="empty">No evidence-backed recommendation crossed its sample threshold.</div>{% endfor %}
+      </section>
+      <aside>
+        <section class="card"><h2>Acquisition sources</h2><div class="muted">Meta traffic is included in Shopify’s social attribution.</div><table><thead><tr><th>Source</th><th class="num">Sessions</th><th class="num">Purchases</th><th class="num">CVR</th></tr></thead><tbody>{% for row in summary.shopify.sources %}<tr><td>{{ row.referrer_source or 'Unknown' }}</td><td class="num">{{ row.sessions }}</td><td class="num">{{ row.purchases }}</td><td class="num">{{ '%.2f'|format(row.conversion_rate) }}%</td></tr>{% endfor %}</tbody></table></section>
+        {% set catalog = summary.shopify.catalog %}<section class="card"><h2>Catalogue health</h2><div class="stats"><div class="stat"><b>{{ catalog.products }}</b><span>Total products</span></div><div class="stat"><b>{{ catalog.active_products }}</b><span>Active</span></div><div class="stat"><b>{{ catalog.missing_seo_descriptions }}</b><span>Missing SEO descriptions</span></div><div class="stat"><b>{{ catalog.invalid_product_types }}</b><span>Invalid product types</span></div><div class="stat"><b>{{ catalog.active_zero_stock }}</b><span>Active, zero stock</span></div><div class="stat"><b>{{ summary.shopify.content.articles }}</b><span>Blog articles</span></div></div></section>
+      </aside>
+    </div>
+    {% if summary.ga4.connected %}<section class="card"><h2>GA4 behaviour</h2><div class="sub">Connected to property {{ summary.ga4.property_id }}. Aggregate data only.</div><div class="grid" style="margin-top:12px;"><div><h3>Channels</h3><table><thead><tr><th>Channel</th><th class="num">Sessions</th><th class="num">Engaged</th><th class="num">Key events</th></tr></thead><tbody>{% for row in summary.ga4.channels %}<tr><td>{{ row.sessionDefaultChannelGroup }}</td><td class="num">{{ row.sessions }}</td><td class="num">{{ row.engagedSessions }}</td><td class="num">{{ row.keyEvents }}</td></tr>{% endfor %}</tbody></table></div><div><h3>Devices</h3><table><thead><tr><th>Device</th><th class="num">Sessions</th><th class="num">Engaged</th><th class="num">Key events</th></tr></thead><tbody>{% for row in summary.ga4.devices %}<tr><td>{{ row.deviceCategory }}</td><td class="num">{{ row.sessions }}</td><td class="num">{{ row.engagedSessions }}</td><td class="num">{{ row.keyEvents }}</td></tr>{% endfor %}</tbody></table></div></div></section>{% endif %}
+  {% elif latest and latest.status == 'failed' %}<div class="alert error">Last analysis failed: {{ latest.error_message }}</div>
+  {% else %}<div class="card empty"><h2>No analysis yet</h2><p>Run the first analysis to build a measured Shopify funnel and ranked action list.</p></div>{% endif %}
+
+  <section class="card"><h2>Data connections and automation</h2><div class="sub">Shopify is already connected. The Meta Shopify app contributes to social/referral attribution; direct ad spend and ROAS would require separate Meta Ads read access.</div>
+    <form method="POST" action="/intelligence/settings">
+      <div class="form-row"><div><label for="property">GA4 property ID</label><input id="property" name="ga4_property_id" value="{{ property_id }}" placeholder="123456789" /></div><div><label for="period">Automatic analysis period</label><select id="period" name="period_days"><option value="30" {% if period_days == '30' %}selected{% endif %}>30 days</option><option value="90" {% if period_days == '90' %}selected{% endif %}>90 days</option><option value="180" {% if period_days == '180' %}selected{% endif %}>180 days</option><option value="365" {% if period_days == '365' %}selected{% endif %}>365 days</option></select></div></div>
+      <details><summary>GA4 read-only service account {% if credentials_saved %}— credentials saved{% endif %}</summary><label for="credentials">Paste new service-account JSON</label><textarea id="credentials" name="ga4_service_account_json" placeholder="Existing credentials are never displayed. Leave blank to keep them."></textarea>{% if credentials_saved %}<label class="check"><input type="checkbox" name="clear_ga4_credentials" value="1"/> Remove saved GA4 credentials</label>{% endif %}<div class="muted">Grant the service account Viewer access to this GA4 property. No customer-level or personally identifiable data is requested.</div></details>
+      <label class="check"><input type="checkbox" name="auto_enabled" value="1" {% if auto_enabled %}checked{% endif %}/> Refresh this report automatically every 24 hours</label>
+      <button class="btn" type="submit">Save connections</button>
+    </form>
+  </section>
+  {% if history %}<section class="card"><h2>Analysis history</h2><table><thead><tr><th>Started</th><th>Trigger</th><th>Period</th><th>Status</th></tr></thead><tbody>{% for run in history %}<tr><td>{{ run.started_at|datetimeformat }}</td><td>{{ run.trigger_type }}</td><td>{{ run.period_days }} days</td><td><span class="badge {% if run.status == 'complete' %}low{% else %}high{% endif %}">{{ run.status }}</span></td></tr>{% endfor %}</tbody></table></section>{% endif %}
+</main>
+</body>
+</html>

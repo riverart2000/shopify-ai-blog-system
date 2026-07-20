@@ -89,6 +89,9 @@ Responsibilities:
 `routes/scheduler_routes.py`
 - CRUD UI for scheduled publishing jobs.
 
+`routes/intelligence.py`
+- Customer Intelligence dashboard, manual analysis, GA4 read-only credentials, automation, and recommendation controls.
+
 ### Service Layer
 
 `services/llm_service.py`
@@ -100,6 +103,15 @@ Responsibilities:
 - Chooses active image models by store.
 - Generates photo and infographic assets.
 - Soft-fails to `[]` so publishing can continue without images.
+
+`services/intelligence_service.py`
+- Collects aggregate Shopify funnel, acquisition, landing-page, sales, catalogue, content, and policy signals.
+- Applies sample-size thresholds before creating evidence-backed recommendations.
+- Uses the store's existing Grok text model to rank verified findings and write the management summary; Grok is not given customer identifiers and cannot introduce metrics.
+
+`services/ga4_service.py`
+- Optional read-only GA4 Data API connector for aggregate channel, device, and landing-page reports.
+- Uses a GA4 property ID and service account saved from the Intelligence page.
 
 ### Reusable Backfill Command
 
@@ -165,6 +177,8 @@ Core logical tables:
 - `generations` — publish history and text content used for duplicate checks.
 - `generation_errors` — provider/runtime errors.
 - `scheduled_jobs` — cron-like jobs, including `is_product_blog`.
+- `intelligence_runs` — historical aggregate analysis snapshots.
+- `intelligence_recommendations` — evidence, action, confidence, impact, effort, and lifecycle state for each finding.
 
 Behavior-specific DB modules:
 
@@ -173,6 +187,7 @@ Behavior-specific DB modules:
 - `db/prompts.py`
 - `db/generations.py`
 - `db/scheduled_jobs.py`
+- `db/intelligence.py`
 
 ### Scheduling
 
@@ -182,6 +197,7 @@ Behavior-specific DB modules:
 - Pulls due jobs every 60 seconds.
 - Calls `services.publish_service.run()`.
 - For product-blog jobs, it picks a random Shopify product before publishing.
+- Checks every 15 minutes for stores whose 24-hour customer-intelligence refresh is due.
 
 This file is the right starting point for scheduler bugs, missed runs, or cron behavior issues.
 
