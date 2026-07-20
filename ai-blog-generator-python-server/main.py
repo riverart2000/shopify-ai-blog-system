@@ -31,6 +31,7 @@ from routes.scheduler_routes import router as scheduler_router
 from routes.setup import router as setup_router
 from routes.landing_pages import router as landing_pages_router
 from routes.intelligence import router as intelligence_router
+from routes.intelligence_api import router as intelligence_api_router
 from security import AuthMiddleware, RootPathRedirectMiddleware, SecurityHeadersMiddleware, limiter
 
 # ---------------------------------------------------------------------------
@@ -160,6 +161,7 @@ app.include_router(setup_router)
 app.include_router(scheduler_router)
 app.include_router(landing_pages_router)
 app.include_router(intelligence_router)
+app.include_router(intelligence_api_router)
 
 _STATIC_DIR = _here / "static"
 _STATIC_DIR.mkdir(exist_ok=True)
