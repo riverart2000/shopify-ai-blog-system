@@ -28,6 +28,11 @@ type Summary = {
     channels?: Array<Record<string, string | number>>;
     devices?: Array<Record<string, string | number>>;
   };
+  wellness_quiz?: {
+    starts: number; completions: number; completion_rate: number;
+    recommendation_clickers: number; click_through_rate: number;
+    goals?: Array<{ goal: string; completions: number }>;
+  };
 };
 type IntelligenceData = {
   store_id: string;
@@ -149,6 +154,7 @@ export default function IntelligenceRoute() {
   const catalogue = summary.shopify?.catalog || {};
   const sources = summary.shopify?.sources || [];
   const ga4 = summary.ga4 || {};
+  const quiz = summary.wellness_quiz;
 
   return <s-page heading="Customer Intelligence">
     {!backendConfigured || error ? <s-section><Alert tone="error">{error || "Backend connection is unavailable."}</Alert></s-section> : null}
@@ -212,6 +218,15 @@ export default function IntelligenceRoute() {
           </div></div>
         </div>
       </s-section>
+
+      {quiz ? <s-section heading="Wellness Quiz intent signals">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 10 }}>
+          <Kpi label="Quiz starts" value={Number(quiz.starts || 0).toLocaleString("en-GB")} />
+          <Kpi label="Completed" value={Number(quiz.completions || 0).toLocaleString("en-GB")} detail={`${Number(quiz.completion_rate || 0).toFixed(1)}% completion`} />
+          <Kpi label="Recommendation clickers" value={Number(quiz.recommendation_clickers || 0).toLocaleString("en-GB")} detail={`${Number(quiz.click_through_rate || 0).toFixed(1)}% of completions`} />
+        </div>
+        {quiz.goals?.length ? <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>{quiz.goals.map(row => <span key={row.goal} style={{ background: "#f3f4f6", borderRadius: 999, padding: "5px 10px", fontSize: ".75rem", color: "#4b5563" }}>{row.goal.replaceAll("_", " ")}: {row.completions}</span>)}</div> : <p style={{ color: "#6b7280", fontSize: ".82rem", marginBottom: 0 }}>Intent segments will appear after visitors complete the quiz.</p>}
+      </s-section> : null}
     </> : <s-section><Alert tone="info">No analysis yet. Choose a period and run the first analysis to create the store baseline.</Alert></s-section>}
 
     <s-section heading="GA4 and automatic refresh">

@@ -45,6 +45,7 @@ def _summary(sessions: int = 1104) -> dict:
             "policies": {"shipping": False},
         },
         "ga4": {"connected": False, "status": "not configured"},
+        "wellness_quiz": {"starts": 0, "completions": 0, "completion_rate": 0, "recommendation_clickers": 0, "click_through_rate": 0},
     }
 
 
@@ -67,6 +68,17 @@ def test_small_samples_do_not_trigger_conversion_claims():
     assert "add_to_cart" not in keys
     assert "social_conversion" not in keys
     assert "homepage_conversion" not in keys
+
+
+def test_quiz_recommendations_require_useful_sample_sizes():
+    summary = _summary()
+    summary["wellness_quiz"] = {
+        "starts": 25, "completions": 5, "completion_rate": 20,
+        "recommendation_clickers": 0, "click_through_rate": 0,
+    }
+    keys = {item["metric_key"] for item in build_recommendations(summary)}
+    assert "wellness_quiz_completion" in keys
+    assert "wellness_quiz_result_clicks" not in keys
 
 
 @pytest.mark.asyncio

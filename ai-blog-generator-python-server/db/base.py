@@ -217,6 +217,48 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_run
 
 CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_store
     ON intelligence_recommendations(store_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS wellness_quiz_products (
+    store_id          TEXT NOT NULL,
+    product_id        TEXT NOT NULL,
+    handle            TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    product_url       TEXT NOT NULL DEFAULT '',
+    landing_page_url  TEXT NOT NULL DEFAULT '',
+    guide_url         TEXT NOT NULL DEFAULT '',
+    guide_title       TEXT NOT NULL DEFAULT '',
+    image_url         TEXT NOT NULL DEFAULT '',
+    price             REAL NOT NULL DEFAULT 0,
+    currency          TEXT NOT NULL DEFAULT 'GBP',
+    variant_id        TEXT NOT NULL DEFAULT '',
+    available         INTEGER NOT NULL DEFAULT 0,
+    goal_scores_json  TEXT NOT NULL DEFAULT '{}',
+    formats_json      TEXT NOT NULL DEFAULT '[]',
+    updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (store_id, product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wellness_quiz_products_store
+    ON wellness_quiz_products(store_id, available, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS wellness_quiz_events (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id             TEXT NOT NULL,
+    session_id           TEXT NOT NULL,
+    event_type           TEXT NOT NULL,
+    goal                 TEXT NOT NULL DEFAULT '',
+    answers_json         TEXT NOT NULL DEFAULT '{}',
+    recommendations_json TEXT NOT NULL DEFAULT '[]',
+    product_handle       TEXT NOT NULL DEFAULT '',
+    source_path          TEXT NOT NULL DEFAULT '',
+    created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wellness_quiz_events_store_created
+    ON wellness_quiz_events(store_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wellness_quiz_events_session
+    ON wellness_quiz_events(store_id, session_id, created_at);
 """
 
 # Columns added in v2 — wrapped in try/except since ALTER TABLE has no IF NOT EXISTS

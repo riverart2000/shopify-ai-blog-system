@@ -33,6 +33,24 @@ async def get_store(store_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+async def get_store_by_domain(domain: str) -> Optional[dict]:
+    """Resolve either a myshopify or storefront domain to its configured store."""
+    normalised = (domain or "").strip().lower().removeprefix("https://").removeprefix("http://").rstrip("/")
+    if not normalised:
+        return None
+    async with aiosqlite.connect(get_db_path()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM stores
+               WHERE lower(myshopify_domain)=? OR lower(custom_domain)=?
+               ORDER BY CASE WHEN lower(myshopify_domain)=? THEN 0 ELSE 1 END
+               LIMIT 1""",
+            (normalised, normalised, normalised),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def upsert_store(store: dict) -> None:
     store = {**store, "custom_domain": store.get("custom_domain", "")}
     async with aiosqlite.connect(get_db_path()) as db:
@@ -63,6 +81,7 @@ async def delete_store(store_id: str) -> None:
             "stores", "access_tokens", "store_settings",
             "models", "prompts", "scheduled_jobs",
             "social_posts", "intelligence_runs", "intelligence_recommendations",
+            "wellness_quiz_products", "wellness_quiz_events",
         ):
             col = "store_id" if tbl != "stores" else "id"
             await db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (store_id,))

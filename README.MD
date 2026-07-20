@@ -5,6 +5,8 @@ This repository contains two active applications:
 1. `ai-blog-generator-python-server` — the Python backend that manages store configuration, AI model routing, blog generation workflows, scheduling, review, and Shopify publishing.
 2. `ai-blog-generator-app` — the embedded Shopify React app that gives merchants an in-admin publishing experience and a theme app extension for product-page blog links.
 
+The embedded app also includes a native-storefront **Wellness Quiz & Routine Builder**. Its Shopify theme block renders and scores four questions without an iframe or an LLM request, then uses a cached catalogue prepared by the Python backend to recommend a three-step routine. Consent-aware anonymous quiz events are included in Customer Intelligence.
+
 The authoritative backend in this repository is the Python server. The repo contains the Python backend and the embedded Shopify app only.
 
 This file is written for coding agents. It is intended to answer three questions quickly:
@@ -91,6 +93,9 @@ Responsibilities:
 
 `routes/intelligence.py`
 - Customer Intelligence dashboard, manual analysis, GA4 read-only credentials, automation, and recommendation controls.
+
+`routes/wellness_quiz_api.py`
+- Product catalogue sync, public quiz bootstrap, anonymous event collection, and quiz reporting.
 
 ### Service Layer
 

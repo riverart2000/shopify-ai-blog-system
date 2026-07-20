@@ -1,0 +1,78 @@
+{% liquid
+  assign quiz_title = block.settings.heading | strip
+  assign quiz_intro = block.settings.introduction | strip
+%}
+
+<section
+  class="bl-wellness-quiz"
+  data-wellness-quiz
+  data-proxy-url="/apps/wellness-quiz"
+  data-show-guides="{{ block.settings.show_guides }}"
+  style="--bl-quiz-accent: {{ block.settings.accent_colour }}; --bl-quiz-surface: {{ block.settings.surface_colour }}; --bl-quiz-text: {{ block.settings.text_colour }};"
+  {{ block.shopify_attributes }}
+>
+  <div class="bl-wellness-quiz__shell">
+    <div class="bl-wellness-quiz__eyebrow">Personalised wellness</div>
+    <h2 class="bl-wellness-quiz__title">{{ quiz_title | default: 'Build your wellness routine' | escape }}</h2>
+    <p class="bl-wellness-quiz__intro">{{ quiz_intro | default: 'Answer four quick questions and discover a simple routine matched to your goals, preferences and budget.' | escape }}</p>
+    <div class="bl-wellness-quiz__app" data-quiz-app aria-live="polite">
+      <button class="bl-wellness-quiz__start" type="button" data-quiz-start>
+        {{ block.settings.start_label | default: 'Find my routine' | escape }}
+      </button>
+      <p class="bl-wellness-quiz__note">Takes about 45 seconds. No email required.</p>
+    </div>
+  </div>
+</section>
+
+{% schema %}
+{
+  "name": "Wellness quiz",
+  "target": "section",
+  "stylesheet": "wellness-quiz.css",
+  "javascript": "wellness-quiz.js",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Build your wellness routine"
+    },
+    {
+      "type": "textarea",
+      "id": "introduction",
+      "label": "Introduction",
+      "default": "Answer four quick questions and discover a simple routine matched to your goals, preferences and budget."
+    },
+    {
+      "type": "text",
+      "id": "start_label",
+      "label": "Button label",
+      "default": "Find my routine"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_guides",
+      "label": "Show related blog guides",
+      "default": true
+    },
+    {
+      "type": "color",
+      "id": "accent_colour",
+      "label": "Accent colour",
+      "default": "#315c4c"
+    },
+    {
+      "type": "color",
+      "id": "surface_colour",
+      "label": "Background colour",
+      "default": "#f5f1e8"
+    },
+    {
+      "type": "color",
+      "id": "text_colour",
+      "label": "Text colour",
+      "default": "#17251f"
+    }
+  ]
+}
+{% endschema %}

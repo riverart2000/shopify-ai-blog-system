@@ -10,6 +10,11 @@ description = "Generate, review, and publish AI-assisted Shopify blog articles f
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_content,write_content,read_files,write_files,read_products,write_products"
 
+[app_proxy]
+url = "/wellness-quiz"
+prefix = "apps"
+subpath = "wellness-quiz"
+
 [product.metafields.app.related_guide_title]
 name = "Related guide title"
 description = "Title of the related blog guide published by the app"

@@ -1,0 +1,250 @@
+.bl-wellness-quiz {
+  color: var(--bl-quiz-text, #17251f);
+  padding: clamp(18px, 4vw, 48px) 16px;
+}
+
+.bl-wellness-quiz__shell {
+  background:
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--bl-quiz-accent, #315c4c) 14%, transparent), transparent 32%),
+    var(--bl-quiz-surface, #f5f1e8);
+  border: 1px solid color-mix(in srgb, var(--bl-quiz-accent, #315c4c) 22%, transparent);
+  border-radius: 28px;
+  box-shadow: 0 18px 50px rgba(26, 46, 38, 0.08);
+  margin: 0 auto;
+  max-width: 1080px;
+  overflow: hidden;
+  padding: clamp(28px, 6vw, 68px);
+  position: relative;
+}
+
+.bl-wellness-quiz__eyebrow {
+  color: var(--bl-quiz-accent, #315c4c);
+  font-size: 0.75rem;
+  font-weight: 750;
+  letter-spacing: 0.13em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+
+.bl-wellness-quiz__title {
+  color: inherit;
+  font-size: clamp(2rem, 5vw, 4rem);
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+  margin: 0;
+  max-width: 800px;
+}
+
+.bl-wellness-quiz__intro {
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.6;
+  margin: 18px 0 26px;
+  max-width: 720px;
+  opacity: 0.76;
+}
+
+.bl-wellness-quiz__start,
+.bl-wellness-quiz__option,
+.bl-wellness-quiz__link,
+.bl-wellness-quiz__restart {
+  align-items: center;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 750;
+  justify-content: center;
+  text-decoration: none;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.bl-wellness-quiz__start,
+.bl-wellness-quiz__link--primary {
+  background: var(--bl-quiz-accent, #315c4c);
+  border: 1px solid var(--bl-quiz-accent, #315c4c);
+  color: #fff;
+  padding: 13px 22px;
+}
+
+.bl-wellness-quiz__start:hover,
+.bl-wellness-quiz__link--primary:hover {
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--bl-quiz-accent, #315c4c) 26%, transparent);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.bl-wellness-quiz__note,
+.bl-wellness-quiz__status {
+  font-size: 0.82rem;
+  margin: 10px 0 0;
+  opacity: 0.65;
+}
+
+.bl-wellness-quiz__progress {
+  background: rgba(23, 37, 31, 0.1);
+  border-radius: 99px;
+  height: 6px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.bl-wellness-quiz__progress span {
+  background: var(--bl-quiz-accent, #315c4c);
+  display: block;
+  height: 100%;
+  transition: width 220ms ease;
+}
+
+.bl-wellness-quiz__question {
+  font-size: clamp(1.45rem, 3vw, 2.15rem);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0 0 20px;
+}
+
+.bl-wellness-quiz__options {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.bl-wellness-quiz__option {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 37, 31, 0.14);
+  color: inherit;
+  justify-content: flex-start;
+  min-height: 58px;
+  padding: 13px 17px;
+  text-align: left;
+}
+
+.bl-wellness-quiz__option:hover,
+.bl-wellness-quiz__option:focus-visible {
+  background: #fff;
+  border-color: var(--bl-quiz-accent, #315c4c);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.bl-wellness-quiz__results-heading {
+  font-size: clamp(1.6rem, 3vw, 2.35rem);
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  margin: 0;
+}
+
+.bl-wellness-quiz__results-copy {
+  line-height: 1.55;
+  margin: 10px 0 24px;
+  max-width: 720px;
+  opacity: 0.74;
+}
+
+.bl-wellness-quiz__cards {
+  display: grid;
+  gap: 15px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.bl-wellness-quiz__card {
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(23, 37, 31, 0.12);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bl-wellness-quiz__image {
+  aspect-ratio: 4 / 3;
+  background: rgba(23, 37, 31, 0.06);
+  object-fit: cover;
+  width: 100%;
+}
+
+.bl-wellness-quiz__card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 17px;
+}
+
+.bl-wellness-quiz__step {
+  color: var(--bl-quiz-accent, #315c4c);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.bl-wellness-quiz__product-title {
+  font-size: 1.05rem;
+  line-height: 1.3;
+  margin: 7px 0 8px;
+}
+
+.bl-wellness-quiz__reason {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  margin: 0 0 12px;
+  opacity: 0.72;
+}
+
+.bl-wellness-quiz__price {
+  font-weight: 800;
+  margin: auto 0 13px;
+}
+
+.bl-wellness-quiz__actions {
+  display: grid;
+  gap: 8px;
+}
+
+.bl-wellness-quiz__link {
+  font-size: 0.84rem;
+  padding: 10px 14px;
+}
+
+.bl-wellness-quiz__link--secondary,
+.bl-wellness-quiz__restart {
+  background: transparent;
+  border: 1px solid rgba(23, 37, 31, 0.2);
+  color: inherit;
+}
+
+.bl-wellness-quiz__link--secondary:hover,
+.bl-wellness-quiz__restart:hover {
+  background: rgba(255, 255, 255, 0.8);
+  color: inherit;
+}
+
+.bl-wellness-quiz__restart {
+  margin-top: 18px;
+  padding: 9px 16px;
+}
+
+.bl-wellness-quiz__empty {
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 15px;
+  line-height: 1.55;
+  padding: 18px;
+}
+
+@media (max-width: 780px) {
+  .bl-wellness-quiz__options,
+  .bl-wellness-quiz__cards {
+    grid-template-columns: 1fr;
+  }
+
+  .bl-wellness-quiz__shell {
+    border-radius: 20px;
+    padding: 28px 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bl-wellness-quiz * {
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}

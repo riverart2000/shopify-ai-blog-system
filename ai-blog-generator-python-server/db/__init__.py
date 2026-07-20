@@ -2,7 +2,7 @@
 
 from .base import init_db, set_db_path, get_db_path, get_admin_password_hash, set_admin_password_hash
 from .stores import (
-    get_stores, get_store, upsert_store, delete_store,
+    get_stores, get_store, get_store_by_domain, upsert_store, delete_store,
     get_store_password_hash, set_store_password_hash,
     get_store_setting, set_store_settings, get_all_store_settings,
     get_cached_token, save_token,
@@ -34,13 +34,17 @@ from .intelligence import (
     get_latest_intelligence_run, get_intelligence_runs, get_run_recommendations,
     dismiss_recommendation, get_stores_due_for_intelligence,
 )
+from .wellness_quiz import (
+    replace_wellness_quiz_products, get_wellness_quiz_products,
+    record_wellness_quiz_event, get_wellness_quiz_summary,
+)
 
 __all__ = [
     # base
     "init_db", "set_db_path", "get_db_path",
     "get_admin_password_hash", "set_admin_password_hash",
     # stores
-    "get_stores", "get_store", "upsert_store", "delete_store",
+    "get_stores", "get_store", "get_store_by_domain", "upsert_store", "delete_store",
     "get_store_password_hash", "set_store_password_hash",
     "get_store_setting", "set_store_settings", "get_all_store_settings",
     "get_cached_token", "save_token",
@@ -67,4 +71,7 @@ __all__ = [
     "create_intelligence_run", "complete_intelligence_run", "fail_intelligence_run",
     "get_latest_intelligence_run", "get_intelligence_runs", "get_run_recommendations",
     "dismiss_recommendation", "get_stores_due_for_intelligence",
+    # wellness quiz
+    "replace_wellness_quiz_products", "get_wellness_quiz_products",
+    "record_wellness_quiz_event", "get_wellness_quiz_summary",
 ]

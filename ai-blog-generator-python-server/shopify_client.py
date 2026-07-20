@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -414,6 +415,55 @@ async def fetch_products(store: StoreConfig, limit: int = 250) -> list[ShopifyPr
         )
         for p in data.get("products", [])
     ]
+
+
+async def fetch_wellness_quiz_products(store: StoreConfig, limit: int = 250) -> list[dict]:
+    """Return the richer, current catalogue snapshot used by the Wellness Quiz."""
+    query = """
+      query WellnessQuizProducts($first: Int!) {
+        products(first: $first, sortKey: TITLE) {
+          nodes {
+            id legacyResourceId title handle status description tags productType totalInventory
+            onlineStoreUrl
+            featuredImage { url altText }
+            priceRangeV2 { minVariantPrice { amount currencyCode } }
+            variants(first: 1) { nodes { id legacyResourceId availableForSale } }
+            collections(first: 12) { nodes { title handle } }
+            guideTitle: metafield(namespace: "custom", key: "ai_blog_related_guide_title") { value }
+            guideUrl: metafield(namespace: "custom", key: "ai_blog_related_guide_url") { value }
+          }
+        }
+        pages(first: 250, query: "is_published:true") {
+          nodes { handle title isPublished }
+        }
+      }
+    """
+    data = await graphql_request(store, query, {"first": min(max(int(limit), 1), 250)})
+    products = list(((data.get("products") or {}).get("nodes") or []))
+    pages = list(((data.get("pages") or {}).get("nodes") or []))
+    storefront = (store.custom_domain or store.myshopify_domain).strip().rstrip("/")
+    if storefront and not storefront.startswith(("http://", "https://")):
+        storefront = f"https://{storefront}"
+    published_pages = [page for page in pages if storefront and page.get("isPublished") and page.get("handle")]
+    for product in products:
+        product_handle = str(product.get("handle") or "")
+        product_title = re.sub(r"\s+", " ", str(product.get("title") or "")).strip().lower()
+        match = next(
+            (page for page in published_pages if str(page.get("handle") or "") == f"{product_handle}-offer"),
+            None,
+        )
+        if match is None and product_title:
+            match = next(
+                (
+                    page for page in published_pages
+                    if re.sub(r"\s+", " ", str(page.get("title") or "")).strip().lower().startswith(product_title)
+                ),
+                None,
+            )
+        product["_landing_page_url"] = (
+            f"{storefront}/pages/{match.get('handle')}" if match else ""
+        )
+    return products
 
 
 async def _fetch_product_by_handle(

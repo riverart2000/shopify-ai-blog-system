@@ -204,6 +204,7 @@ def build_recommendations(summary: dict) -> list[dict]:
     policies = shopify.get("policies", {})
     sessions = _int(funnel.get("sessions"))
     purchases = _int(funnel.get("purchases"))
+    quiz = summary.get("wellness_quiz", {})
     recs: list[dict] = []
 
     def add(metric_key: str, category: str, severity: str, title: str, evidence: str,
@@ -285,6 +286,20 @@ def build_recommendations(summary: dict) -> list[dict]:
             "Publish destinations, dispatch times, delivery estimates, tracking and delay handling; link it from product pages, checkout reassurance and the footer.",
             impact="high", effort="low")
 
+    quiz_starts = _int(quiz.get("starts"))
+    quiz_completions = _int(quiz.get("completions"))
+    if quiz_starts >= 20 and _number(quiz.get("completion_rate")) < 40:
+        add("wellness_quiz_completion", "personalisation", "medium", "Simplify the Wellness Quiz journey",
+            f"{quiz_starts} visitors started the quiz and {quiz_completions} completed it ({_number(quiz.get('completion_rate')):.1f}%).",
+            "Review where visitors leave the quiz, shorten or clarify the weakest question, and compare completion over the next 14 days.",
+            confidence="high", impact="medium", effort="low")
+
+    if quiz_completions >= 10 and _number(quiz.get("click_through_rate")) < 20:
+        add("wellness_quiz_result_clicks", "personalisation", "medium", "Make quiz routines more persuasive",
+            f"{quiz_completions} visitors completed the quiz, but only {quiz.get('recommendation_clickers', 0)} clicked a recommendation ({_number(quiz.get('click_through_rate')):.1f}%).",
+            "Improve the routine explanations, product fit and price mix for the leading goal; keep the result to three clear steps and one primary action.",
+            confidence="high", impact="high", effort="medium")
+
     ga4 = summary.get("ga4", {})
     if not ga4.get("connected"):
         add("ga4_connection", "measurement", "medium", "Connect GA4 to unlock serious behaviour diagnosis",
@@ -357,7 +372,10 @@ async def run_analysis(store_id: str, period_days: int = 90, trigger_type: str =
             raise RuntimeError("Store configuration was not found")
         store = _store_config(store_row)
         settings = await db.get_all_store_settings(store_id)
-        shopify = await _collect_shopify(store, period_days)
+        shopify, wellness_quiz = await asyncio.gather(
+            _collect_shopify(store, period_days),
+            db.get_wellness_quiz_summary(store_id, period_days),
+        )
         ga4: dict = {"connected": False, "status": "not configured"}
         property_id = settings.get("ga4_property_id", "").strip()
         credentials_json = settings.get("ga4_service_account_json", "").strip()
@@ -372,6 +390,7 @@ async def run_analysis(store_id: str, period_days: int = 90, trigger_type: str =
         summary = {
             "store_id": store_id, "store_name": store.name, "period_days": period_days,
             "generated_at": int(time.time()), "shopify": shopify, "ga4": ga4,
+            "wellness_quiz": wellness_quiz,
             "privacy": "Aggregate store and analytics metrics only; no customer identifiers sent to Grok.",
         }
         recommendations = build_recommendations(summary)
