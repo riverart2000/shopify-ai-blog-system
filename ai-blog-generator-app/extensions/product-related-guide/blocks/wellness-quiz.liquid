@@ -12,12 +12,19 @@
   {{ block.shopify_attributes }}
 >
   <div class="bl-wellness-quiz__shell">
-    <div class="bl-wellness-quiz__eyebrow">Personalised wellness</div>
-    <h2 class="bl-wellness-quiz__title">{{ quiz_title | default: 'Build your wellness routine' | escape }}</h2>
-    <p class="bl-wellness-quiz__intro">{{ quiz_intro | default: 'Answer four quick questions and discover a simple routine matched to your goals, preferences and budget.' | escape }}</p>
+    <div class="bl-wellness-quiz__copy">
+      <div class="bl-wellness-quiz__eyebrow">Personalised wellness</div>
+      <h2 class="bl-wellness-quiz__title">{{ quiz_title | default: 'Build your wellness routine' | escape }}</h2>
+      <p class="bl-wellness-quiz__intro">{{ quiz_intro | default: 'Answer four quick questions and discover a simple routine matched to your goals, preferences and budget.' | escape }}</p>
+      <div class="bl-wellness-quiz__trust" aria-label="Quiz details">
+        <span>4 quick questions</span>
+        <span>Instant recommendations</span>
+      </div>
+    </div>
     <div class="bl-wellness-quiz__app" data-quiz-app aria-live="polite">
       <button class="bl-wellness-quiz__start" type="button" data-quiz-start>
-        {{ block.settings.start_label | default: 'Find my routine' | escape }}
+        <span>{{ block.settings.start_label | default: 'Find my routine' | escape }}</span>
+        <span class="bl-wellness-quiz__arrow" aria-hidden="true">→</span>
       </button>
       <p class="bl-wellness-quiz__note">Takes about 45 seconds. No email required.</p>
     </div>
