@@ -43,7 +43,3 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return jsonResponse({ ok: false, error: error instanceof Error ? error.message : "Quiz event failed." }, 400);
   }
 };
-
-export default function WellnessQuizProxyRoute() {
-  return null;
-}
