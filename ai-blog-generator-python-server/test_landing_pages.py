@@ -10,7 +10,11 @@ from services.landing_pages.social_publisher.rss_feed import (
     read_product_section,
     write_product_section,
 )
-from routes.landing_pages import landing_page_product_summary
+from routes.landing_pages import (
+    GeneratePromptsRequest,
+    _apply_store_grok_model,
+    landing_page_product_summary,
+)
 from services.landing_pages.product_prompts.models import BlogContent, Campaign, Product
 from services.landing_pages.product_prompts.prompting.grok import (
     GrokPromptGenerator,
@@ -129,6 +133,83 @@ def test_grok_persona_receives_all_product_and_blog_evidence() -> None:
     assert "Compact resistance trainer" in evidence
     assert "Building a consistent strength routine" in evidence
     assert "busy adults who need a quick workout" in evidence
+
+
+def test_landing_prompt_requests_use_grok_by_default() -> None:
+    request = GeneratePromptsRequest(product_url="https://store.test/products/item")
+    assert request.generator == "grok"
+
+
+def test_store_grok_model_is_reused_by_landing_generator() -> None:
+    settings = SimpleNamespace(
+        grok_api_key=None,
+        grok_base_url="",
+        grok_model="",
+        grok_timeout=300,
+    )
+    applied = _apply_store_grok_model(
+        settings,
+        {
+            "id": "model-1",
+            "store_id": "store-1",
+            "name": "Grok",
+            "provider": "openai",
+            "model_type": "text",
+            "model_name": "grok-latest",
+            "api_key": "secret",
+            "endpoint": "https://api.x.ai",
+            "extra_json": '{"timeout": 90}',
+            "priority": 0,
+            "is_active": 1,
+        },
+    )
+    assert applied is True
+    assert settings.grok_api_key == "secret"
+    assert settings.grok_base_url == "https://api.x.ai/v1"
+    assert settings.grok_model == "grok-4.3"
+    assert settings.grok_timeout == 90
+
+
+def test_grok_chat_includes_product_images_for_persona_evidence() -> None:
+    session = FakeSession(
+        [{"choices": [{"message": {"content": '{"ok": true}'}}]}]
+    )
+    settings = SimpleNamespace(
+        grok_api_key="secret",
+        grok_base_url="https://api.x.ai/v1",
+        grok_model="grok-4.3",
+        grok_timeout=90,
+    )
+    generator = GrokPromptGenerator(settings, session)
+
+    assert generator._chat("Analyse this product", ["https://cdn.test/product.jpg"]) == {
+        "ok": True
+    }
+    content = session.calls[0]["json"]["messages"][1]["content"]
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"] == "https://cdn.test/product.jpg"
+    assert content[-1] == {"type": "text", "text": "Analyse this product"}
+
+
+def test_strength_product_fallback_is_not_default_woman() -> None:
+    product = _product(
+        "Build Stronger Grip Daily with This Easy Hand Trainer",
+        "Improve grip strength for weightlifting and forearm training.",
+    )
+    persona = TemplatePromptGenerator(SimpleNamespace()).build_persona(
+        product, BlogContent()
+    )
+    assert persona.sex == "man"
+    assert persona.name == "David"
+
+
+def test_neutral_fallback_has_no_gender_default() -> None:
+    product = _product("Portable Wellness Carry Case", "Keeps daily items organised.")
+    persona = TemplatePromptGenerator(SimpleNamespace()).build_persona(
+        product, BlogContent()
+    )
+    assert persona.sex == "person"
+    assert persona.name == "Alex"
 
 
 def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: Path) -> None:

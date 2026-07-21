@@ -30,7 +30,7 @@ class Settings:
     # --- Grok / xAI (used by the optional LLM prompt backend) ---
     grok_api_key: Optional[str] = None
     grok_base_url: str = "https://api.x.ai/v1"
-    grok_model: str = "grok-4.5"
+    grok_model: str = "grok-4.3"
     grok_image_model: str = "grok-imagine-image"
     grok_image_quality_model: str = "grok-imagine-image-quality"
 
@@ -72,7 +72,7 @@ class Settings:
         return cls(
             grok_api_key=_get("GROK_API_KEY"),
             grok_base_url=_get("GROK_BASE_URL", "https://api.x.ai/v1"),
-            grok_model=_get("GROK_MODEL", "grok-4.5"),
+            grok_model=_get("GROK_MODEL", "grok-4.3"),
             grok_image_model=_get("GROK_IMAGE_MODEL", "grok-imagine-image"),
             grok_image_quality_model=_get(
                 "GROK_IMAGE_QUALITY_MODEL", "grok-imagine-image-quality"

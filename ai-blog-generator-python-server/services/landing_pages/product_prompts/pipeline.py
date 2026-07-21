@@ -37,7 +37,7 @@ class Pipeline:
         self,
         settings: Settings,
         fetcher_name: str = "web",
-        generator_name: str = "template",
+        generator_name: str = "grok",
         max_images: int = 3,
     ) -> None:
         self.settings = settings

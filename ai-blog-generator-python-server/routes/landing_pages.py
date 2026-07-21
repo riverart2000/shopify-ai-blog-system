@@ -8,6 +8,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+import db
+from providers import ModelRecord
+
 # Note: We're going to import from services.landing_pages
 from services.landing_pages.product_prompts.config import Settings
 from services.landing_pages.product_prompts.pipeline import Pipeline
@@ -22,8 +25,9 @@ router = APIRouter(
 
 class GeneratePromptsRequest(BaseModel):
     product_url: str
+    shop: str = ""
     fetcher: str = "web"
-    generator: str = "template"
+    generator: str = "grok"
 
 class GenerateSocialRequest(BaseModel):
     handle: str
@@ -41,6 +45,48 @@ class PublishLandingPageRequest(BaseModel):
 def get_settings():
     settings = Settings.load()
     return settings
+
+
+def _apply_store_grok_model(settings: Settings, row: dict) -> bool:
+    """Apply a store's existing xAI text-model record to landing pages."""
+    model = ModelRecord.from_dict(row)
+    api_key = model.resolved_api_key
+    if not api_key:
+        return False
+
+    endpoint = (model.endpoint or "https://api.x.ai").rstrip("/")
+    for suffix in ("/v1/chat/completions", "/chat/completions"):
+        if endpoint.endswith(suffix):
+            endpoint = endpoint[: -len(suffix)]
+            break
+    if endpoint == "https://api.x.ai":
+        endpoint += "/v1"
+
+    settings.grok_api_key = api_key
+    settings.grok_base_url = endpoint
+    configured_name = (model.model_name or "").strip()
+    settings.grok_model = (
+        "grok-4.3" if configured_name in ("", "grok-latest", "grok-4.3-latest")
+        else configured_name
+    )
+    timeout = model.extra.get("timeout")
+    if timeout:
+        settings.grok_timeout = int(timeout)
+    return True
+
+
+async def _configure_store_grok(settings: Settings, shop: str) -> bool:
+    """Reuse the Grok credentials already configured in the main blog system."""
+    store = await db.get_store_by_domain(shop)
+    if not store:
+        return False
+    rows = await db.get_active_text_models(store["id"])
+    for row in rows:
+        model_name = str(row.get("model_name") or "").lower()
+        endpoint = str(row.get("endpoint") or "").lower()
+        if "grok" in model_name or "api.x.ai" in endpoint:
+            return _apply_store_grok_model(settings, row)
+    return False
 
 def landing_pages_rss_url() -> str:
     configured = (os.environ.get("LANDING_PAGES_RSS_URL") or "").strip()
@@ -105,6 +151,8 @@ async def list_products():
 async def generate_prompts(req: GeneratePromptsRequest):
     """Run generate_prompts.py logic for a single product URL."""
     settings = get_settings()
+    if req.generator.lower() in ("grok", "xai", "llm") and not settings.grok_api_key:
+        await _configure_store_grok(settings, req.shop)
     
     def run_pipeline():
         pipeline = Pipeline(

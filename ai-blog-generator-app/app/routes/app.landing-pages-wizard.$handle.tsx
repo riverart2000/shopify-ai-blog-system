@@ -58,7 +58,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  await authenticate.admin(request);
+  const auth = await authenticate.admin(request);
+  const session = requireShopifySession((auth as { session?: unknown }).session);
   const handle = params.handle as string;
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
@@ -68,7 +69,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       const productUrl = formData.get("productUrl") as string;
       const res = await backendFetch("/api/landing-pages/generate-prompts", {
         method: "POST",
-        body: JSON.stringify({ product_url: productUrl })
+        body: JSON.stringify({ product_url: productUrl, shop: session.shop, generator: "grok" })
       });
       return { ok: true, intent, data: addLandingPageAssetPreviewUrls(res.data) };
     }

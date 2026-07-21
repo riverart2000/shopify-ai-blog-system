@@ -62,6 +62,11 @@ def _product_evidence(product: Product, blog: BlogContent | None) -> str:
                 + (first_sentences(blog.text or "", 1600) or "not supplied"),
             ]
         )
+    if product.image_urls:
+        lines.append(
+            "Product photography: attached to this request. Use it as supporting "
+            "evidence for product design, presentation and intended use."
+        )
     return "\n".join(lines)
 
 _PERSONA_PROMPT = """Profile the single IDEAL customer for the product below, so a
@@ -74,6 +79,9 @@ AUDIENCE CONSTRAINT: {audience_constraint}
 Derive every persona choice from the evidence. Product-title audience wording is
 binding. Do not use a generic wellness/beauty stereotype. Choose age, occupation,
 life stage, pain point and lifestyle because they fit the use case, price and copy.
+For a gender-neutral title, choose the most commercially likely primary buyer from
+the combined use cases, customer language and attached product photography; never
+default automatically to a woman or a man.
 If evidence does not support a narrow assumption, say so in the rationale rather
 than inventing certainty.
 
@@ -306,7 +314,7 @@ class GrokPromptGenerator(PromptGenerator):
             concepts=concept_lines,
             audience_constraint=audience_constraint(product, blog),
         )
-        return self._chat(prompt)
+        return self._chat(prompt, product.image_urls)
 
     def _enforce_persona(
         self, product: Product, blog: BlogContent, persona: ClientPersona
@@ -380,7 +388,7 @@ class GrokPromptGenerator(PromptGenerator):
             audience_constraint=audience_constraint(product, blog),
         )
         try:
-            data = self._chat(prompt)
+            data = self._chat(prompt, product.image_urls)
             age = data.get("age")
             persona = ClientPersona(
                 name=data.get("name", ""),
@@ -447,14 +455,25 @@ class GrokPromptGenerator(PromptGenerator):
             offer=campaign.badge_text() or "none",
             code=campaign.code or "none",
         )
-        return self._chat(prompt)
+        return self._chat(prompt, product.image_urls)
 
-    def _chat(self, user_prompt: str) -> dict:
+    def _chat(self, user_prompt: str, image_urls: Optional[List[str]] = None) -> dict:
+        images = [url for url in (image_urls or []) if url][:2]
+        user_content: Any = user_prompt
+        if images:
+            user_content = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": url, "detail": "high"},
+                }
+                for url in images
+            ]
+            user_content.append({"type": "text", "text": user_prompt})
         payload = {
             "model": self.settings.grok_model,
             "messages": [
                 {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": user_content},
             ],
             "temperature": 0.8,
             "response_format": {"type": "json_object"},

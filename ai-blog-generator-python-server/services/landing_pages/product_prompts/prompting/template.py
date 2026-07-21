@@ -92,6 +92,43 @@ def audience_constraint(product: Product, blog: BlogContent | None = None) -> st
     )
 
 
+def infer_fallback_persona_sex(
+    product: Product, blog: BlogContent | None = None
+) -> str:
+    """Choose a fallback depiction without a universal female default.
+
+    Explicit audience evidence remains authoritative. A small set of strong
+    strength-sport signals provides a useful emergency fallback; everything
+    else stays non-specific for Grok to resolve from the full evidence.
+    """
+    explicit = infer_target_sex(product, blog)
+    if explicit:
+        return explicit
+    text = " ".join(
+        [
+            product.title,
+            product.handle,
+            product.product_type or "",
+            " ".join(product.tags),
+            product.description_text or "",
+            blog.text if blog else "",
+        ]
+    ).lower()
+    strength_signals = (
+        "hand grip",
+        "grip strength",
+        "forearm",
+        "powerlifting",
+        "weightlifting",
+        "bodybuilding",
+        "muscle trainer",
+        "strength trainer",
+    )
+    if any(signal in text for signal in strength_signals):
+        return "man"
+    return "person"
+
+
 def _benefit_bullets(text: str, limit: int = 5) -> List[str]:
     """Heuristically pull short benefit-like phrases from description text."""
     if not text:
@@ -120,7 +157,7 @@ class TemplatePromptGenerator(PromptGenerator):
             text += " " + blog.text.lower()
 
         # Product-title evidence is binding; broader copy cannot override it.
-        sex = infer_target_sex(product, blog) or "woman"
+        sex = infer_fallback_persona_sex(product, blog)
 
         # Infer an age band from the concern.
         age = 38
@@ -142,7 +179,7 @@ class TemplatePromptGenerator(PromptGenerator):
         if not pain_point:
             pain_point = "looking for an easy, effective self-care upgrade"
 
-        name = "Sarah" if sex == "woman" else "David"
+        name = {"woman": "Sarah", "man": "David"}.get(sex, "Alex")
         explicit_audience = infer_target_sex(product, blog)
         if explicit_audience:
             rationale = (
