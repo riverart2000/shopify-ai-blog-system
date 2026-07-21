@@ -86,9 +86,18 @@ def audience_constraint(product: Product, blog: BlogContent | None = None) -> st
             f"MUST be '{sex}', and every person depicted must match. Product-title "
             "audience wording overrides generic description or blog wording."
         )
+    contextual = infer_fallback_persona_sex(product, blog)
+    if contextual in ("man", "woman"):
+        source = "men" if contextual == "man" else "women"
+        return (
+            f"BINDING PRIMARY COMMERCIAL AUDIENCE: the product's strongest use-case "
+            f"signals target {source}. The single ideal persona MUST be a "
+            f"'{contextual}'. This selects the primary marketing persona; it does "
+            "not claim that other customers cannot use the product."
+        )
     return (
-        "No explicit sex-specific audience was found. Choose a credible customer "
-        "from product evidence without relying on category stereotypes."
+        "No sex-specific primary audience was found. Choose a credible customer "
+        "from product evidence without applying a universal gender default."
     )
 
 

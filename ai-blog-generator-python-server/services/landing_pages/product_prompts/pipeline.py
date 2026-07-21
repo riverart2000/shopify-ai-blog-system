@@ -114,6 +114,7 @@ class Pipeline:
             persona=persona,
             campaign=self.campaign,
             landing_page_plan=plan,
+            generation_diagnostics=self.generator.generation_diagnostics(),
             main_image=main_image,
         )
         output_dir.mkdir(parents=True, exist_ok=True)

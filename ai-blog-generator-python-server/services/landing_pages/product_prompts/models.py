@@ -228,17 +228,19 @@ class ProductOutput:
     persona: ClientPersona = field(default_factory=ClientPersona)
     campaign: Campaign = field(default_factory=Campaign)
     landing_page_plan: LandingPagePlan = field(default_factory=LandingPagePlan)
+    generation_diagnostics: Dict[str, Any] = field(default_factory=dict)
     main_image: Optional[str] = None
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    schema_version: int = 3
+    schema_version: int = 4
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "generated_at": self.generated_at,
             "generator": self.generator,
+            "generation_diagnostics": self.generation_diagnostics,
             "product": self.product.to_dict(),
             "persona": self.persona.to_dict(),
             "campaign": self.campaign.to_dict(),

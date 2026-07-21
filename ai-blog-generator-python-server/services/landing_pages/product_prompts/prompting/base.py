@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import abc
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ..config import Settings
 from ..models import (
@@ -31,6 +31,18 @@ class PromptGenerator(abc.ABC):
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._generation_diagnostics: Dict[str, Any] = {
+            "status": "success",
+            "requested_generator": self.name,
+            "completed_by": self.name,
+            "model": "",
+            "fallback_used": False,
+            "message": "",
+        }
+
+    def generation_diagnostics(self) -> Dict[str, Any]:
+        """User-visible generation status, including any fallback reason."""
+        return dict(self._generation_diagnostics)
 
     @abc.abstractmethod
     def build_persona(self, product: Product, blog: BlogContent) -> ClientPersona:
@@ -89,4 +101,3 @@ class PromptGenerator(abc.ABC):
             plan.advice = "Default fallback funnel plan using the first three concepts."
             
         return persona, outputs, plan
-

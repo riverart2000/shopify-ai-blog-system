@@ -29,6 +29,8 @@ from services.landing_pages.product_prompts.prompting.template import (
 class FakeResponse:
     def __init__(self, payload: dict):
         self.payload = payload
+        self.status_code = 200
+        self.text = ""
 
     def json(self) -> dict:
         return self.payload
@@ -105,6 +107,10 @@ def test_grok_persona_conflict_is_rejected() -> None:
     assert persona.sex == "man"
     assert persona.name == "David"
     assert outputs == []
+    diagnostics = generator.generation_diagnostics()
+    assert diagnostics["status"] == "warning"
+    assert diagnostics["fallback_used"] is True
+    assert "contradicted" in diagnostics["message"]
 
 
 def test_grok_persona_receives_all_product_and_blog_evidence() -> None:
@@ -210,6 +216,28 @@ def test_neutral_fallback_has_no_gender_default() -> None:
     )
     assert persona.sex == "person"
     assert persona.name == "Alex"
+
+
+def test_strength_audience_constraint_is_binding_for_grok() -> None:
+    from services.landing_pages.product_prompts.prompting.template import audience_constraint
+
+    product = _product(
+        "Build Stronger Grip Daily with This Easy Hand Trainer",
+        "Improve grip strength and forearm performance for weightlifting.",
+    )
+    constraint = audience_constraint(product, BlogContent())
+    assert "BINDING PRIMARY COMMERCIAL AUDIENCE" in constraint
+    assert "MUST be a 'man'" in constraint
+
+
+def test_missing_grok_key_is_visible_in_diagnostics() -> None:
+    settings = SimpleNamespace(grok_api_key=None, grok_model="grok-4.3")
+    generator = GrokPromptGenerator(settings, object())
+    generator.generate_bundle(_product("Neutral Item"), BlogContent(), [], Campaign())
+    diagnostics = generator.generation_diagnostics()
+    assert diagnostics["status"] == "error"
+    assert diagnostics["completed_by"] == "template"
+    assert "no xAI API key" in diagnostics["message"]
 
 
 def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: Path) -> None:

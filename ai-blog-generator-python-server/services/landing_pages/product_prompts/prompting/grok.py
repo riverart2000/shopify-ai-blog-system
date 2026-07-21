@@ -24,7 +24,12 @@ from ..models import (
 from ..utils import first_sentences, get_logger
 from .base import PromptGenerator
 from .specs import aspect_for, dimensions_for, needs_person
-from .template import TemplatePromptGenerator, audience_constraint, infer_target_sex
+from .template import (
+    TemplatePromptGenerator,
+    audience_constraint,
+    infer_fallback_persona_sex,
+    infer_target_sex,
+)
 
 log = get_logger("prompting.grok")
 
@@ -234,6 +239,22 @@ class GrokPromptGenerator(PromptGenerator):
         self.session = session
         self._fallback = TemplatePromptGenerator(settings)
 
+    def _set_diagnostics(
+        self,
+        status: str,
+        completed_by: str,
+        fallback_used: bool,
+        message: str = "",
+    ) -> None:
+        self._generation_diagnostics = {
+            "status": status,
+            "requested_generator": self.name,
+            "completed_by": completed_by,
+            "model": getattr(self.settings, "grok_model", "grok-4.3"),
+            "fallback_used": fallback_used,
+            "message": message,
+        }
+
     # ------------------------------------------------------------------
     # Batched path: persona + all concepts in ONE API call.
     # ------------------------------------------------------------------
@@ -244,7 +265,14 @@ class GrokPromptGenerator(PromptGenerator):
         concepts: List[CreativeConcept],
         campaign: Campaign,
     ) -> Tuple[ClientPersona, List[ConceptOutput], Any]:
+        self._set_diagnostics("success", "grok", False)
         if not self.settings.grok_api_key:
+            self._set_diagnostics(
+                "error",
+                "template",
+                True,
+                "Grok could not run because no xAI API key was available for this store.",
+            )
             return super().generate_bundle(product, blog, concepts, campaign)
         try:
             data = self._call_bundle(product, blog, concepts, campaign)
@@ -255,6 +283,14 @@ class GrokPromptGenerator(PromptGenerator):
                 # so none of them are safe to reuse for people-focused imagery.
                 outputs = self._fallback.generate_all(
                     product, blog, concepts, persona, campaign
+                )
+                self._set_diagnostics(
+                    "warning",
+                    "template",
+                    True,
+                    "Grok returned a persona that contradicted the detected primary "
+                    "commercial audience. The conflicting result was rejected and "
+                    "the safe fallback was used.",
                 )
             else:
                 outputs = self._parse_bundle_concepts(
@@ -292,6 +328,12 @@ class GrokPromptGenerator(PromptGenerator):
                 "Grok batched generation failed (%s); falling back to per-concept.",
                 exc,
             )
+            self._set_diagnostics(
+                "error",
+                "template",
+                True,
+                f"Grok generation failed: {exc}",
+            )
             return super().generate_bundle(product, blog, concepts, campaign)
 
     def _call_bundle(self, product, blog, concepts, campaign) -> dict:
@@ -321,6 +363,9 @@ class GrokPromptGenerator(PromptGenerator):
     ) -> Tuple[ClientPersona, bool]:
         """Reject an LLM persona that contradicts explicit product evidence."""
         required = infer_target_sex(product, blog)
+        if not required:
+            contextual = infer_fallback_persona_sex(product, blog)
+            required = contextual if contextual in ("man", "woman") else ""
         supplied = str(persona.sex or "").strip().lower()
         supplied = {"male": "man", "female": "woman"}.get(supplied, supplied)
         if required and supplied != required:
@@ -487,6 +532,20 @@ class GrokPromptGenerator(PromptGenerator):
             json=payload,
             timeout=self.settings.grok_timeout,
         )
+        if getattr(resp, "status_code", 200) >= 400:
+            try:
+                error_body = resp.json()
+                detail = (
+                    (error_body.get("error") or {}).get("message")
+                    if isinstance(error_body, dict)
+                    else ""
+                )
+            except Exception:  # noqa: BLE001
+                detail = getattr(resp, "text", "")
+            raise RuntimeError(
+                f"xAI API HTTP {resp.status_code}: "
+                f"{str(detail or 'unknown API error')[:500]}"
+            )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
         return json.loads(content)

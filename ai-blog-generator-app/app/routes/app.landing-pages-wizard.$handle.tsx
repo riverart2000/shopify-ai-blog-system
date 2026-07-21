@@ -263,6 +263,24 @@ export default function LandingPageWizard() {
       {step >= 2 && data && (
         <s-section heading="Step 2: Review Content & Generate Images">
           <s-paragraph>Review the generated text for each concept before rendering images.</s-paragraph>
+
+          {data.generation_diagnostics?.status && data.generation_diagnostics.status !== "success" && (
+            <div style={{ marginBottom: "16px", padding: "14px", borderRadius: "8px", background: data.generation_diagnostics.status === "error" ? "#fff1f0" : "#fff8e6", border: `1px solid ${data.generation_diagnostics.status === "error" ? "#e57373" : "#e0a800"}`, color: "#4a1f1f" }}>
+              <div style={{ fontWeight: 700 }}>
+                {data.generation_diagnostics.status === "error" ? "Grok generation problem" : "Persona corrected automatically"}
+              </div>
+              <div style={{ marginTop: "5px" }}>{data.generation_diagnostics.message}</div>
+              <div style={{ marginTop: "5px", fontSize: "0.85rem" }}>
+                Requested: {data.generation_diagnostics.requested_generator} ({data.generation_diagnostics.model || "model not configured"}) · Completed by: {data.generation_diagnostics.completed_by}
+              </div>
+            </div>
+          )}
+
+          {data.generation_diagnostics?.status === "success" && (
+            <div style={{ marginBottom: "14px", color: "#4a4a4a", fontSize: "0.85rem" }}>
+              Generated successfully by Grok ({data.generation_diagnostics.model}).
+            </div>
+          )}
           
           <div style={{ marginBottom: "20px" }}>
             <div>
