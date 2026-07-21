@@ -58,7 +58,7 @@ async def _catalog_health(store: StoreConfig) -> dict:
       query IntelligenceProducts {
         products(first: 250) {
           nodes {
-            title status vendor productType totalInventory
+            title status vendor productType totalInventory description
             seo { title description }
             variants(first: 20) { nodes { compareAtPrice } }
           }
@@ -69,7 +69,16 @@ async def _catalog_health(store: StoreConfig) -> dict:
     products = ((data.get("products") or {}).get("nodes") or [])
     active = [item for item in products if item.get("status") == "ACTIVE"]
     missing_seo_titles = sum(not (item.get("seo") or {}).get("title") for item in products)
-    missing_seo_descriptions = sum(not (item.get("seo") or {}).get("description") for item in products)
+    custom_seo_descriptions = sum(
+        bool(str((item.get("seo") or {}).get("description") or "").strip())
+        for item in products
+    )
+    automatic_seo_descriptions = sum(
+        not str((item.get("seo") or {}).get("description") or "").strip()
+        and bool(str(item.get("description") or "").strip())
+        for item in products
+    )
+    missing_seo_descriptions = len(products) - custom_seo_descriptions - automatic_seo_descriptions
     templated_titles = sum(
         bool(re.search(r"\b(this|these)\b", item.get("title", ""), re.IGNORECASE))
         for item in products
@@ -87,6 +96,9 @@ async def _catalog_health(store: StoreConfig) -> dict:
         "draft_products": sum(item.get("status") == "DRAFT" for item in products),
         "missing_seo_titles": missing_seo_titles,
         "missing_seo_descriptions": missing_seo_descriptions,
+        "seo_descriptions_available": custom_seo_descriptions + automatic_seo_descriptions,
+        "custom_seo_descriptions": custom_seo_descriptions,
+        "automatic_seo_descriptions": automatic_seo_descriptions,
         "templated_titles": templated_titles,
         "invalid_vendors": invalid_vendors,
         "invalid_product_types": invalid_types,

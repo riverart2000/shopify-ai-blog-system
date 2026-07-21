@@ -12,7 +12,8 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 os.environ.setdefault("GROK_API_KEY", "test")
 
 import db
-from services.intelligence_service import build_recommendations
+import shopify_client
+from services.intelligence_service import _catalog_health, build_recommendations
 
 
 def _summary(sessions: int = 1104) -> dict:
@@ -79,6 +80,27 @@ def test_quiz_recommendations_require_useful_sample_sizes():
     keys = {item["metric_key"] for item in build_recommendations(summary)}
     assert "wellness_quiz_completion" in keys
     assert "wellness_quiz_result_clicks" not in keys
+
+
+@pytest.mark.asyncio
+async def test_catalog_health_accepts_shopify_description_fallback(monkeypatch):
+    async def fake_graphql_request(_store, _query):
+        return {
+            "products": {
+                "nodes": [
+                    {"title": "Custom", "status": "ACTIVE", "description": "", "seo": {"description": "Custom search snippet"}, "variants": {"nodes": []}},
+                    {"title": "Fallback", "status": "ACTIVE", "description": "Visible product copy", "seo": {"description": ""}, "variants": {"nodes": []}},
+                    {"title": "Missing", "status": "DRAFT", "description": "", "seo": {"description": ""}, "variants": {"nodes": []}},
+                ]
+            }
+        }
+
+    monkeypatch.setattr(shopify_client, "graphql_request", fake_graphql_request)
+    result = await _catalog_health(object())
+    assert result["seo_descriptions_available"] == 2
+    assert result["custom_seo_descriptions"] == 1
+    assert result["automatic_seo_descriptions"] == 1
+    assert result["missing_seo_descriptions"] == 1
 
 
 @pytest.mark.asyncio
