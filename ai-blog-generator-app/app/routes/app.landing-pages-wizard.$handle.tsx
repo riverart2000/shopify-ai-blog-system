@@ -264,7 +264,14 @@ export default function LandingPageWizard() {
           <s-paragraph>Review the generated text for each concept before rendering images.</s-paragraph>
           
           <div style={{ marginBottom: "20px" }}>
-             <strong>Ideal Client:</strong> {data.persona?.name}, {data.persona?.age} {data.persona?.sex}
+            <div>
+              <strong>Ideal Client:</strong> {data.persona?.name}, {data.persona?.age} {data.persona?.sex}
+            </div>
+            {data.persona?.rationale && (
+              <div style={{ marginTop: "6px", color: "#4a4a4a", lineHeight: 1.45 }}>
+                <strong>Why this persona:</strong> {data.persona.rationale}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: "20px", marginBottom: "20px", overflowX: "auto" }}>

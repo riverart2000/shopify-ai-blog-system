@@ -66,6 +66,7 @@ class ClientPersona:
     lifestyle: str = ""
     pain_point: str = ""
     description: str = ""
+    rationale: str = ""
 
     def visual_description(self) -> str:
         """A compact, image-model-friendly description of the person."""

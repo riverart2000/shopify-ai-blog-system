@@ -10,7 +10,7 @@ deterministic :class:`TemplatePromptGenerator`, so the pipeline never hard-fails
 from __future__ import annotations
 
 import json
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ..models import (
     BlogContent,
@@ -24,7 +24,7 @@ from ..models import (
 from ..utils import first_sentences, get_logger
 from .base import PromptGenerator
 from .specs import aspect_for, dimensions_for, needs_person
-from .template import TemplatePromptGenerator
+from .template import TemplatePromptGenerator, audience_constraint, infer_target_sex
 
 log = get_logger("prompting.grok")
 
@@ -35,12 +35,47 @@ _SYSTEM = (
     "claims unsupported by the provided context. You always return STRICT JSON."
 )
 
+
+def _product_evidence(product: Product, blog: BlogContent | None) -> str:
+    """Build labelled, balanced evidence instead of choosing one text source.
+
+    Product copy remains primary, while the linked article supplies the customer
+    problems, use cases and language that often make a persona more specific.
+    """
+    tags = ", ".join(tag for tag in product.tags if tag) or "not supplied"
+    price = " ".join(part for part in (product.price, product.currency) if part)
+    lines = [
+        f"Title: {product.title}",
+        f"Handle: {product.handle}",
+        f"Brand/vendor: {product.vendor or 'not supplied'}",
+        f"Product type: {product.product_type or 'not supplied'}",
+        f"Tags: {tags}",
+        f"Price: {price or 'not supplied'}",
+        "Product description: "
+        + (first_sentences(product.description_text or "", 2500) or "not supplied"),
+    ]
+    if blog:
+        lines.extend(
+            [
+                f"Linked guide title: {blog.title or 'not supplied'}",
+                "Linked guide customer/problem context: "
+                + (first_sentences(blog.text or "", 1600) or "not supplied"),
+            ]
+        )
+    return "\n".join(lines)
+
 _PERSONA_PROMPT = """Profile the single IDEAL customer for the product below, so a
 marketing image can depict a believable, specific person.
 
-PRODUCT TITLE: {title}
-BRAND: {brand}
-PRODUCT DETAILS: {details}
+PRODUCT EVIDENCE:
+{evidence}
+AUDIENCE CONSTRAINT: {audience_constraint}
+
+Derive every persona choice from the evidence. Product-title audience wording is
+binding. Do not use a generic wellness/beauty stereotype. Choose age, occupation,
+life stage, pain point and lifestyle because they fit the use case, price and copy.
+If evidence does not support a narrow assumption, say so in the rationale rather
+than inventing certainty.
 
 Return STRICT JSON with exactly these keys:
 {{
@@ -54,7 +89,8 @@ Return STRICT JSON with exactly these keys:
   "location": "short",
   "lifestyle": "short",
   "pain_point": "the specific problem this product solves for them",
-  "description": "1-2 sentence summary of who they are"
+  "description": "1-2 sentence summary of who they are",
+  "rationale": "1-2 sentences citing the product evidence behind sex, age, life stage and pain point"
 }}"""
 
 _CONCEPT_PROMPT = """Create ONE marketing creative for the product below.
@@ -62,7 +98,9 @@ _CONCEPT_PROMPT = """Create ONE marketing creative for the product below.
 PRODUCT TITLE: {title}
 BRAND: {brand}
 PRODUCT SUMMARY: {summary}
-KEY DETAILS: {details}
+PRODUCT EVIDENCE:
+{evidence}
+AUDIENCE CONSTRAINT: {audience_constraint}
 
 IDEAL CUSTOMER (depict this exact person if the concept includes a person):
 {persona}
@@ -108,7 +146,9 @@ several creative concepts, plus the ideal-customer profile.
 PRODUCT TITLE: {title}
 BRAND: {brand}
 PRODUCT SUMMARY: {summary}
-KEY DETAILS: {details}
+PRODUCT EVIDENCE:
+{evidence}
+AUDIENCE CONSTRAINT: {audience_constraint}
 
 PROMOTION TO FEATURE (if any): {offer}
 DISCOUNT CODE: {code}
@@ -119,12 +159,18 @@ CREATIVE CONCEPTS (produce one creative for EACH, in this order):
 {concepts}
 
 First, profile the single IDEAL customer for this product (a believable, specific
-person a marketing image can depict). Then produce one creative per concept.
+person a marketing image can depict). Derive the persona from the supplied evidence,
+not from generic category stereotypes. Age, occupation, life stage and pain point
+must fit the product's use case, price and customer language. If the evidence does
+not justify a narrow assumption, acknowledge that in the rationale. Then produce
+one creative per concept.
 Finally, design a focused sales funnel landing page for this product. Pick 3-5 of the
 best concepts that work together to encourage the customer to buy. Map them to a
 sales funnel structure (e.g. Hero/Hook, Agitation/Problem, Solution/Benefits, Social Proof, CTA).
 
 For each concept:
+- Treat the AUDIENCE CONSTRAINT as binding. Never contradict an explicit audience
+  word in the product title with the persona, imagery or copy.
 - If "include_person" is true, depict the ideal customer described in "persona".
   If false, keep it product/graphic focused with no person.
 - image_prompt must be DETAILED and PRECISE: subject, setting, composition/framing,
@@ -144,7 +190,8 @@ Return STRICT JSON with EXACTLY this shape:
     "name": "", "age": 42, "sex": "woman|man", "race": "concrete",
     "ethnicity": "", "appearance": "concrete visual description",
     "occupation": "", "location": "", "lifestyle": "",
-    "pain_point": "", "description": "1-2 sentence summary"
+    "pain_point": "", "description": "1-2 sentence summary",
+    "rationale": "evidence behind sex, age, life stage and pain point"
   }},
   "concepts": [
     {{
@@ -194,9 +241,17 @@ class GrokPromptGenerator(PromptGenerator):
         try:
             data = self._call_bundle(product, blog, concepts, campaign)
             persona = self._parse_persona(data.get("persona") or {})
-            outputs = self._parse_bundle_concepts(
-                data.get("concepts") or [], concepts, product, persona, blog, campaign
-            )
+            persona, corrected = self._enforce_persona(product, blog, persona)
+            if corrected:
+                # The batch concepts were authored around the rejected persona,
+                # so none of them are safe to reuse for people-focused imagery.
+                outputs = self._fallback.generate_all(
+                    product, blog, concepts, persona, campaign
+                )
+            else:
+                outputs = self._parse_bundle_concepts(
+                    data.get("concepts") or [], concepts, product, persona, blog, campaign
+                )
             
             from ..models import FunnelStage, LandingPagePlan
             lp_data = data.get("landing_page_plan") or {}
@@ -232,7 +287,6 @@ class GrokPromptGenerator(PromptGenerator):
             return super().generate_bundle(product, blog, concepts, campaign)
 
     def _call_bundle(self, product, blog, concepts, campaign) -> dict:
-        details = product.description_text or (blog.text if blog else "")
         concept_lines = "\n".join(
             "- {name}: {desc} | include_person={person} | aspect={aspect}".format(
                 name=c.name,
@@ -246,12 +300,30 @@ class GrokPromptGenerator(PromptGenerator):
             title=product.title,
             brand=product.vendor or "the brand",
             summary=first_sentences(product.description_text or "", 400),
-            details=first_sentences(details, 1200),
+            evidence=_product_evidence(product, blog),
             offer=campaign.badge_text() or "none",
             code=campaign.code or "none",
             concepts=concept_lines,
+            audience_constraint=audience_constraint(product, blog),
         )
         return self._chat(prompt)
+
+    def _enforce_persona(
+        self, product: Product, blog: BlogContent, persona: ClientPersona
+    ) -> Tuple[ClientPersona, bool]:
+        """Reject an LLM persona that contradicts explicit product evidence."""
+        required = infer_target_sex(product, blog)
+        supplied = str(persona.sex or "").strip().lower()
+        supplied = {"male": "man", "female": "woman"}.get(supplied, supplied)
+        if required and supplied != required:
+            log.warning(
+                "Rejected persona sex=%r for product %r; explicit audience requires %s",
+                persona.sex,
+                product.title,
+                required,
+            )
+            return self._fallback.build_persona(product, blog), True
+        return persona, False
 
     def _parse_persona(self, data: dict) -> ClientPersona:
         age = data.get("age")
@@ -267,6 +339,7 @@ class GrokPromptGenerator(PromptGenerator):
             lifestyle=data.get("lifestyle", "") or "",
             pain_point=data.get("pain_point", "") or "",
             description=data.get("description", "") or "",
+            rationale=data.get("rationale", "") or "",
         )
 
     def _parse_bundle_concepts(
@@ -302,16 +375,14 @@ class GrokPromptGenerator(PromptGenerator):
     def build_persona(self, product: Product, blog: BlogContent) -> ClientPersona:
         if not self.settings.grok_api_key:
             return self._fallback.build_persona(product, blog)
-        details = product.description_text or (blog.text if blog else "")
         prompt = _PERSONA_PROMPT.format(
-            title=product.title,
-            brand=product.vendor or "the brand",
-            details=first_sentences(details, 1000),
+            evidence=_product_evidence(product, blog),
+            audience_constraint=audience_constraint(product, blog),
         )
         try:
             data = self._chat(prompt)
             age = data.get("age")
-            return ClientPersona(
+            persona = ClientPersona(
                 name=data.get("name", ""),
                 age=int(age) if isinstance(age, (int, float, str)) and str(age).isdigit() else None,
                 sex=data.get("sex", ""),
@@ -323,7 +394,9 @@ class GrokPromptGenerator(PromptGenerator):
                 lifestyle=data.get("lifestyle", ""),
                 pain_point=data.get("pain_point", ""),
                 description=data.get("description", ""),
+                rationale=data.get("rationale", ""),
             )
+            return self._enforce_persona(product, blog, persona)[0]
         except Exception as exc:  # noqa: BLE001
             log.warning("Grok persona failed (%s); using heuristic persona.", exc)
             return self._fallback.build_persona(product, blog)
@@ -360,12 +433,12 @@ class GrokPromptGenerator(PromptGenerator):
     def _call_concept(
         self, product, blog, concept, persona, campaign, include_person, aspect
     ):
-        details = product.description_text or (blog.text if blog else "")
         prompt = _CONCEPT_PROMPT.format(
             title=product.title,
             brand=product.vendor or "the brand",
             summary=first_sentences(product.description_text or "", 400),
-            details=first_sentences(details, 900),
+            evidence=_product_evidence(product, blog),
+            audience_constraint=audience_constraint(product, blog),
             persona=persona.description or persona.visual_description(),
             concept_name=concept.name,
             concept_desc=concept.description or concept.name,

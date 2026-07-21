@@ -11,6 +11,15 @@ from services.landing_pages.social_publisher.rss_feed import (
     write_product_section,
 )
 from routes.landing_pages import landing_page_product_summary
+from services.landing_pages.product_prompts.models import BlogContent, Campaign, Product
+from services.landing_pages.product_prompts.prompting.grok import (
+    GrokPromptGenerator,
+    _product_evidence,
+)
+from services.landing_pages.product_prompts.prompting.template import (
+    TemplatePromptGenerator,
+    infer_target_sex,
+)
 
 
 class FakeResponse:
@@ -44,6 +53,82 @@ def publisher_with_payloads(payloads: list[dict]) -> LandingPagePublisher:
         storefront_domain="https://storefront.test/",
     )
     return publisher
+
+
+def _product(title: str, description: str = "") -> Product:
+    return Product(
+        url="https://store.test/products/item",
+        handle=title.lower().replace(" ", "-"),
+        title=title,
+        description_text=description,
+    )
+
+
+def test_persona_uses_explicit_mens_title_over_female_blog_copy() -> None:
+    product = _product(
+        "Mens Home Training Fitness Equipment",
+        "A home fitness solution discussed by men and women.",
+    )
+    blog = BlogContent(text="Sarah explains why women enjoy convenient home workouts.")
+    generator = TemplatePromptGenerator(SimpleNamespace())
+
+    persona = generator.build_persona(product, blog)
+
+    assert infer_target_sex(product, blog) == "man"
+    assert persona.sex == "man"
+    assert persona.name == "David"
+
+
+def test_persona_uses_explicit_womens_title_over_male_description() -> None:
+    product = _product("Women's Recovery Support", "Men also use recovery products.")
+    persona = TemplatePromptGenerator(SimpleNamespace()).build_persona(product, BlogContent())
+    assert persona.sex == "woman"
+
+
+def test_grok_persona_conflict_is_rejected() -> None:
+    product = _product("Mens Home Training Fitness Equipment")
+    generator = GrokPromptGenerator(SimpleNamespace(grok_api_key="test"), object())
+    generator._call_bundle = lambda *_args: {
+        "persona": {"name": "Sarah", "age": 38, "sex": "woman"},
+        "concepts": [],
+        "landing_page_plan": {},
+    }
+
+    persona, outputs, _plan = generator.generate_bundle(
+        product, BlogContent(), [], Campaign()
+    )
+
+    assert persona.sex == "man"
+    assert persona.name == "David"
+    assert outputs == []
+
+
+def test_grok_persona_receives_all_product_and_blog_evidence() -> None:
+    product = Product(
+        url="https://store.test/products/mens-trainer",
+        handle="mens-trainer",
+        title="Mens Home Trainer",
+        description_text="Compact resistance trainer for home workouts.",
+        vendor="BioLuxe Lab",
+        product_type="Fitness equipment",
+        tags=["men", "strength", "home gym"],
+        price="79.99",
+        currency="GBP",
+    )
+    blog = BlogContent(
+        title="Building a consistent strength routine",
+        text="Designed for busy adults who need a quick workout before work.",
+    )
+
+    evidence = _product_evidence(product, blog)
+
+    assert "Mens Home Trainer" in evidence
+    assert "Fitness equipment" in evidence
+    assert "men, strength, home gym" in evidence
+    assert "79.99 GBP" in evidence
+    assert "Compact resistance trainer" in evidence
+    assert "Building a consistent strength routine" in evidence
+    assert "busy adults who need a quick workout" in evidence
 
 
 def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: Path) -> None:
