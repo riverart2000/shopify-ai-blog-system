@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -17,6 +18,8 @@ from services.landing_pages.product_prompts.pipeline import Pipeline
 from services.landing_pages.social_publisher.pipeline import SocialPublisher
 from services.landing_pages.social_publisher.landing_page import LandingPagePublisher
 from services.landing_pages.social_publisher.rss_feed import read_product_section
+from services.landing_pages.video_service import LandingPageVideoService
+from services.landing_pages.product_prompts.utils import build_session, slugify
 
 router = APIRouter(
     prefix="/api/landing-pages",
@@ -42,9 +45,60 @@ class PublishLandingPageRequest(BaseModel):
     published: bool = False
     concept_filter: Optional[List[str]] = None
 
+class VideoScriptRequest(BaseModel):
+    handle: str
+    concept: str
+    shop: str = ""
+
+class GenerateVideoRequest(BaseModel):
+    handle: str
+    concept: str
+    shop: str = ""
+
+class UpdateVideoRequest(BaseModel):
+    script: Optional[dict] = None
+    posting_text: Optional[str] = None
+    approved: Optional[bool] = None
+
 def get_settings():
     settings = Settings.load()
     return settings
+
+
+def _product_json_path(settings: Settings, handle: str) -> Path:
+    return settings.output_dir / f"{slugify(handle)}.json"
+
+
+def _read_product_json(settings: Settings, handle: str) -> tuple[Path, dict]:
+    json_path = _product_json_path(settings, handle)
+    if not json_path.exists():
+        raise FileNotFoundError(f"No landing-page product data found for: {handle}")
+    return json_path, json.loads(json_path.read_text(encoding="utf-8"))
+
+
+def _write_product_json(json_path: Path, data: dict) -> None:
+    temporary_path = json_path.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    temporary_path.replace(json_path)
+
+
+def _find_creative_concept(data: dict, concept_slug: str) -> dict:
+    base_slug = re.sub(r"_v\d+$", "", concept_slug)
+    concepts = data.get("creative_concepts") or data.get("concepts") or []
+    for concept in concepts:
+        if slugify(str(concept.get("concept") or "")) == base_slug:
+            return concept
+    raise ValueError(f"Creative concept '{concept_slug}' is not present in the product data.")
+
+
+def _find_social_image(social_dir: Path, handle: str, concept: str) -> Optional[Path]:
+    for extension in (".jpg", ".jpeg", ".png", ".webp"):
+        candidate = social_dir / f"{handle}__{concept}{extension}"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _apply_store_grok_model(settings: Settings, row: dict) -> bool:
@@ -303,6 +357,140 @@ async def get_social_image(filename: str):
     
     return FileResponse(img_path)
 
+@router.get("/social/videos/{filename}")
+async def get_social_video(filename: str):
+    """Serve a generated marketing video from the social directory."""
+    settings = get_settings()
+    if filename != Path(filename).name or not filename.lower().endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Invalid video filename")
+    video_path = settings.project_root / "social" / filename
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Marketing video not found")
+    return FileResponse(video_path, media_type="video/mp4", filename=filename)
+
+@router.post("/videos/script")
+async def create_video_script(req: VideoScriptRequest):
+    """Ask Grok to create and persist a 6–12 second video plan."""
+    settings = get_settings()
+    await _configure_store_grok(settings, req.shop)
+    safe_handle = slugify(req.handle)
+    concept_slug = slugify(req.concept)
+    try:
+        json_path, data = _read_product_json(settings, safe_handle)
+        concept = _find_creative_concept(data, concept_slug)
+        social_dir = settings.project_root / "social"
+        txt_file = social_dir / f"{safe_handle}__{concept_slug}.txt"
+        social_text = txt_file.read_text(encoding="utf-8") if txt_file.exists() else str(
+            concept.get("social_text") or ""
+        )
+        service = LandingPageVideoService(
+            settings, build_session(settings.user_agent, settings.max_retries)
+        )
+        script = await run_in_threadpool(
+            service.create_script, data, concept, social_text
+        )
+        videos = data.setdefault("marketing_videos", {})
+        record = videos.get(concept_slug) if isinstance(videos.get(concept_slug), dict) else {}
+        record.update({
+            "concept": str(concept.get("concept") or req.concept),
+            "concept_slug": concept_slug,
+            "script": script,
+            "posting_text": script.get("posting_text") or social_text,
+            "status": "script_ready",
+            "approved": False,
+            "last_error": "",
+        })
+        # A new script invalidates any old render and approval for this concept.
+        for key in ("video_file", "video_version", "shopify_url", "shopify_file_id", "generated_at", "request_id"):
+            record.pop(key, None)
+        videos[concept_slug] = record
+        _write_product_json(json_path, data)
+        return {"success": True, "video": record}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@router.post("/videos/generate")
+async def generate_marketing_video(req: GenerateVideoRequest):
+    """Render a previously reviewed Grok script and persist the MP4."""
+    settings = get_settings()
+    await _configure_store_grok(settings, req.shop)
+    safe_handle = slugify(req.handle)
+    concept_slug = slugify(req.concept)
+    json_path: Optional[Path] = None
+    data: dict = {}
+    try:
+        json_path, data = _read_product_json(settings, safe_handle)
+        videos = data.get("marketing_videos") or {}
+        record = videos.get(concept_slug)
+        if not isinstance(record, dict) or not isinstance(record.get("script"), dict):
+            raise ValueError("Create and review the video script before generating the video.")
+        social_dir = settings.project_root / "social"
+        image_path = _find_social_image(social_dir, safe_handle, concept_slug)
+        if image_path is None:
+            raise FileNotFoundError(
+                f"No source social image was found for concept: {concept_slug}"
+            )
+        output_path = social_dir / f"{safe_handle}__{concept_slug}.mp4"
+        record["status"] = "generating"
+        record["last_error"] = ""
+        record["approved"] = False
+        _write_product_json(json_path, data)
+
+        service = LandingPageVideoService(
+            settings, build_session(settings.user_agent, settings.max_retries)
+        )
+        generated = await run_in_threadpool(
+            service.generate_video, record["script"], image_path, output_path
+        )
+        record.update(generated)
+        record.update({"status": "generated", "approved": False, "last_error": ""})
+        record.pop("shopify_url", None)
+        record.pop("shopify_file_id", None)
+        _write_product_json(json_path, data)
+        return {"success": True, "video": record}
+    except Exception as exc:
+        if json_path is not None and data:
+            videos = data.get("marketing_videos") or {}
+            record = videos.get(concept_slug)
+            if isinstance(record, dict):
+                record["status"] = "error"
+                record["last_error"] = str(exc)
+                _write_product_json(json_path, data)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+@router.put("/videos/{handle}/{concept}")
+async def update_marketing_video(handle: str, concept: str, req: UpdateVideoRequest):
+    """Save script/posting-text edits or approve a generated video."""
+    settings = get_settings()
+    safe_handle = slugify(handle)
+    concept_slug = slugify(concept)
+    try:
+        json_path, data = _read_product_json(settings, safe_handle)
+        videos = data.get("marketing_videos") or {}
+        record = videos.get(concept_slug)
+        if not isinstance(record, dict):
+            raise ValueError("Create the video script before editing or approving it.")
+        if req.script is not None:
+            duration = int(req.script.get("duration_seconds") or 0)
+            if not 6 <= duration <= 12:
+                raise ValueError("Video duration must remain between 6 and 12 seconds.")
+            if not str(req.script.get("video_prompt") or "").strip():
+                raise ValueError("The video generation prompt cannot be empty.")
+            record["script"] = req.script
+            if record.get("video_file"):
+                record["approved"] = False
+        if req.posting_text is not None:
+            record["posting_text"] = req.posting_text
+        if req.approved is not None:
+            if req.approved and not record.get("video_file"):
+                raise ValueError("Generate the video before approving it.")
+            record["approved"] = req.approved
+            record["status"] = "approved" if req.approved else "generated"
+        _write_product_json(json_path, data)
+        return {"success": True, "video": record}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
 @router.get("/social/{handle}")
 async def get_social_items(handle: str):
     """Get the generated social images and texts for a product."""
@@ -312,6 +500,14 @@ async def get_social_items(handle: str):
     social_dir = settings.project_root / "social"
     
     items = []
+    videos = {}
+    try:
+        _json_path, product_data = _read_product_json(settings, safe_handle)
+        raw_videos = product_data.get("marketing_videos") or {}
+        if isinstance(raw_videos, dict):
+            videos = raw_videos
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
     if social_dir.exists():
         image_files = sorted(
             path
@@ -330,7 +526,8 @@ async def get_social_items(handle: str):
                 "concept": concept_slug,
                 "image_file": img_file.name,
                 "image_version": img_file.stat().st_mtime_ns,
-                "text": text_content
+                "text": text_content,
+                "video": videos.get(concept_slug),
             })
     return {"success": True, "items": items}
 

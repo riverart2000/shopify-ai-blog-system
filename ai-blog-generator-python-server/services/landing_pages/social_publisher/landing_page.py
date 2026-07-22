@@ -4,6 +4,7 @@ import json
 import mimetypes
 import re
 import time
+from html import escape
 from pathlib import Path
 from typing import List, Optional
 
@@ -74,6 +75,20 @@ _PAGE_CSS = """
   width: 100%;
   height: auto;
   display: block;
+}
+.mkt-video-wrapper {
+  width: min(100%, 430px);
+  margin: 0 auto;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.14);
+  background: #000;
+}
+.mkt-video {
+  width: 100%;
+  max-height: 760px;
+  display: block;
+  background: #000;
 }
 .mkt-content {
   flex: 1;
@@ -216,8 +231,39 @@ class LandingPagePublisher:
         # the page can still be published. RSS continues with the complete list.
         landing_concept_data = self._select_landing_concepts(concept_data, selected_concepts)
 
+        # Approved videos are the only ones allowed onto the storefront or RSS.
+        # Reuse the stored Shopify URL on republish so the same MP4 is not uploaded twice.
+        video_data = []
+        videos = data.get("marketing_videos") or {}
+        if isinstance(videos, dict):
+            for concept_slug, record in videos.items():
+                if not isinstance(record, dict) or not record.get("approved"):
+                    continue
+                if self.concept_filter and concept_slug.strip().lower() not in self.concept_filter:
+                    continue
+                video_file = str(record.get("video_file") or "")
+                video_path = social_dir / video_file
+                if not video_file or not video_path.exists():
+                    raise RuntimeError(
+                        f"Approved video is missing for concept '{concept_slug}': {video_file or 'no filename'}"
+                    )
+                shopify_url = str(record.get("shopify_url") or "").strip()
+                if not shopify_url:
+                    file_id, shopify_url = self._upload_video(video_path)
+                    record["shopify_file_id"] = file_id
+                    record["shopify_url"] = shopify_url
+                video_data.append({
+                    "slug": concept_slug,
+                    "concept": str(record.get("concept") or concept_slug),
+                    "video_path": video_path,
+                    "cdn_url": shopify_url,
+                    "posting_text": str(record.get("posting_text") or ""),
+                    "duration_seconds": int(record.get("duration_seconds") or (record.get("script") or {}).get("duration_seconds") or 0),
+                    "poster_url": next((item["cdn_url"] for item in concept_data if item["slug"] == concept_slug), ""),
+                })
+
         # 3. Build HTML
-        html = self._build_html(product, campaign, landing_concept_data)
+        html = self._build_html(product, campaign, landing_concept_data, video_data)
 
         # 4. Create Page
         page_title = f"{product.get('title')} - Special Offer"
@@ -255,6 +301,7 @@ class LandingPagePublisher:
             product_title=str(product.get("title") or ""),
             landing_page_url=url,
             concepts=concept_data,
+            videos=video_data,
         )
         return {
             "page": {
@@ -374,7 +421,7 @@ class LandingPagePublisher:
             else:
                 log.info("✅ Added landing page CTA to blog post: %s", article_handle)
 
-    def _build_html(self, product: dict, campaign: dict, concept_data: list) -> str:
+    def _build_html(self, product: dict, campaign: dict, concept_data: list, video_data: Optional[list] = None) -> str:
         blocks = [_PAGE_CSS, "<div class='mkt-page'>"]
         
         # We will use the first concept (usually Lifestyle) as the hero
@@ -428,6 +475,28 @@ class LandingPagePublisher:
                             <a href="{product_url}" class="mkt-cta">Shop {product.get('title')}</a>
                         </div>
                     </div>
+                </div>
+            </div>
+            ''')
+
+        # APPROVED VIDEO SECTIONS
+        for video in video_data or []:
+            caption = escape(str(video.get("posting_text") or ""))
+            concept_name = escape(str(video.get("concept") or "Marketing video"))
+            video_url = escape(str(video.get("cdn_url") or ""), quote=True)
+            poster = escape(str(video.get("poster_url") or ""), quote=True)
+            poster_attr = f' poster="{poster}"' if poster else ""
+            blocks.append(f'''
+            <div class="mkt-section">
+                <div class="mkt-container" style="align-items: center; text-align: center;">
+                    <h2 class="mkt-subtitle">{concept_name}</h2>
+                    <div class="mkt-video-wrapper">
+                        <video class="mkt-video" controls playsinline preload="metadata"{poster_attr}>
+                            <source src="{video_url}" type="video/mp4">
+                        </video>
+                    </div>
+                    <p class="mkt-text" style="max-width: 760px;">{caption}</p>
+                    <a href="{product_url}" class="mkt-cta">Shop {escape(str(product.get('title') or 'Now'))}</a>
                 </div>
             </div>
             ''')
@@ -533,6 +602,107 @@ class LandingPagePublisher:
                 
         log.error("Timeout waiting for image to be READY.")
         return None
+
+    def _upload_video(self, video_path: Path) -> tuple[str, str]:
+        """Upload an MP4 to Shopify Files and return its stable ID and CDN URL."""
+        mime_type = "video/mp4"
+        staged_query = """
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets { url resourceUrl parameters { name value } }
+            userErrors { field message }
+          }
+        }
+        """
+        staged_variables = {
+            "input": [{
+                "filename": video_path.name,
+                "mimeType": mime_type,
+                "fileSize": str(video_path.stat().st_size),
+                "httpMethod": "POST",
+                "resource": "VIDEO",
+            }]
+        }
+        response = self.session.post(
+            self.endpoint,
+            json={"query": staged_query, "variables": staged_variables},
+            headers={"X-Shopify-Access-Token": self.token},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        targets = payload.get("data", {}).get("stagedUploadsCreate", {}).get("stagedTargets")
+        if not targets:
+            raise RuntimeError(self._user_error_message("stagedUploadsCreate", payload))
+        target = targets[0]
+
+        parameters = {item["name"]: item["value"] for item in target["parameters"]}
+        with video_path.open("rb") as video_file:
+            upload = self.session.post(
+                target["url"],
+                data=parameters,
+                files={"file": (video_path.name, video_file, mime_type)},
+            )
+        upload.raise_for_status()
+
+        create_query = """
+        mutation fileCreate($files: [FileCreateInput!]!) {
+          fileCreate(files: $files) {
+            files { id fileStatus }
+            userErrors { field message }
+          }
+        }
+        """
+        create_variables = {
+            "files": [{
+                "alt": video_path.stem,
+                "contentType": "VIDEO",
+                "originalSource": target["resourceUrl"],
+                "filename": video_path.name,
+                "duplicateResolutionMode": "REPLACE",
+            }]
+        }
+        create_response = self.session.post(
+            self.endpoint,
+            json={"query": create_query, "variables": create_variables},
+            headers={"X-Shopify-Access-Token": self.token},
+        )
+        create_response.raise_for_status()
+        create_payload = create_response.json()
+        files = create_payload.get("data", {}).get("fileCreate", {}).get("files")
+        if not files:
+            raise RuntimeError(self._user_error_message("fileCreate", create_payload))
+        file_id = str(files[0]["id"])
+
+        status_query = """
+        query getVideoFile($id: ID!) {
+          node(id: $id) {
+            ... on Video {
+              fileStatus
+              sources { url mimeType format }
+            }
+          }
+        }
+        """
+        for _ in range(60):
+            time.sleep(3)
+            status_response = self.session.post(
+                self.endpoint,
+                json={"query": status_query, "variables": {"id": file_id}},
+                headers={"X-Shopify-Access-Token": self.token},
+            )
+            status_response.raise_for_status()
+            node = status_response.json().get("data", {}).get("node") or {}
+            if node.get("fileStatus") == "FAILED":
+                raise RuntimeError(f"Shopify failed to process video {video_path.name}.")
+            if node.get("fileStatus") == "READY":
+                sources = node.get("sources") or []
+                mp4 = next(
+                    (source for source in sources if source.get("mimeType") == "video/mp4"),
+                    sources[0] if sources else None,
+                )
+                if mp4 and mp4.get("url"):
+                    return file_id, str(mp4["url"])
+        raise RuntimeError(f"Shopify did not finish processing video {video_path.name} within 3 minutes.")
 
     @staticmethod
     def _single_line(value: str, limit: int = 250) -> str:

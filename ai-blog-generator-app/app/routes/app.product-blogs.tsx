@@ -42,7 +42,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const products = context.products || [];
 
   // Find store id
-  const storesData = await backendFetch("/api/stores").catch(() => null);
+  const storesData = await backendFetch("/api/stores").catch(() => null) as { stores?: Array<{ id?: string }> } | null;
   const storeId = (storesData?.stores ?? [])[0]?.id || "";
 
   return {

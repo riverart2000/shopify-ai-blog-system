@@ -33,6 +33,7 @@ class Settings:
     grok_model: str = "grok-4.3"
     grok_image_model: str = "grok-imagine-image"
     grok_image_quality_model: str = "grok-imagine-image-quality"
+    grok_video_model: str = "grok-imagine-video"
 
     # --- Shopify Admin API (used by the shopify fetcher) ---
     myshopify_domain: Optional[str] = None
@@ -77,6 +78,7 @@ class Settings:
             grok_image_quality_model=_get(
                 "GROK_IMAGE_QUALITY_MODEL", "grok-imagine-image-quality"
             ),
+            grok_video_model=_get("GROK_VIDEO_MODEL", "grok-imagine-video"),
             myshopify_domain=_get("MYSHOPIFY_DOMAIN"),
             shopify_api_version=_get("SHOPIFY_API_VERSION", "2026-01"),
             shopify_access_token=_get("SHOPIFY_ACCESS_TOKEN"),

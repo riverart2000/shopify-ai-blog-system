@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-type PreviewKind = "product" | "social";
+type PreviewKind = "product" | "social" | "video";
 type JsonRecord = Record<string, unknown>;
 
 const BACKEND_KEY =
@@ -58,7 +58,7 @@ function previewUrl(kind: PreviewKind, filename: string): string {
   const signature = signatureFor(kind, filename);
   if (!signature) return "";
 
-  const route = kind === "social" ? "social-images" : "images";
+  const route = kind === "social" ? "social-images" : kind === "video" ? "social-videos" : "images";
   return `/app/landing-pages/${route}/${encodeURIComponent(filename)}?signature=${signature}`;
 }
 
@@ -117,9 +117,18 @@ export function addSocialImagePreviewUrls<T>(items: T): T {
       baseUrl && (typeof version === "string" || typeof version === "number")
         ? `${baseUrl}&version=${encodeURIComponent(String(version))}`
         : baseUrl;
+    const video = isRecord(item?.video) ? item.video : null;
+    const videoFilename = filenameFromPath(video?.video_file);
+    const videoBaseUrl = previewUrl("video", videoFilename);
+    const videoVersion = video?.video_version;
+    const videoPreviewUrl =
+      videoBaseUrl && (typeof videoVersion === "string" || typeof videoVersion === "number")
+        ? `${videoBaseUrl}&version=${encodeURIComponent(String(videoVersion))}`
+        : videoBaseUrl;
     return {
       ...item,
       preview_url: versionedUrl,
+      video: video ? { ...video, preview_url: videoPreviewUrl } : video,
     };
   }) as T;
 }

@@ -133,6 +133,55 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return { ok: true, intent };
     }
 
+    if (intent === "create_video_script") {
+      const concept = formData.get("concept") as string;
+      await backendFetch("/api/landing-pages/videos/script", {
+        method: "POST",
+        body: JSON.stringify({ handle, concept, shop: session.shop }),
+      });
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent, socialItems: addSocialImagePreviewUrls(fetchRes.items) };
+    }
+
+    if (intent === "generate_video") {
+      const concept = formData.get("concept") as string;
+      const payload = JSON.parse(formData.get("payload") as string);
+      await backendFetch(`/api/landing-pages/videos/${handle}/${concept}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          script: payload.script,
+          posting_text: payload.posting_text,
+        }),
+      });
+      await backendFetch("/api/landing-pages/videos/generate", {
+        method: "POST",
+        body: JSON.stringify({ handle, concept, shop: session.shop }),
+      });
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent, socialItems: addSocialImagePreviewUrls(fetchRes.items) };
+    }
+
+    if (intent === "update_video") {
+      const concept = formData.get("concept") as string;
+      const payload = JSON.parse(formData.get("payload") as string);
+      await backendFetch(`/api/landing-pages/videos/${handle}/${concept}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      return { ok: true, intent };
+    }
+
+    if (intent === "approve_video") {
+      const concept = formData.get("concept") as string;
+      const approved = formData.get("approved") === "true";
+      await backendFetch(`/api/landing-pages/videos/${handle}/${concept}`, {
+        method: "PUT",
+        body: JSON.stringify({ approved }),
+      });
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`);
+      return { ok: true, intent, socialItems: addSocialImagePreviewUrls(fetchRes.items) };
+    }
+
     if (intent === "publish") {
       const res = await backendFetch("/api/landing-pages/publish", {
         method: "POST",
@@ -178,7 +227,7 @@ export default function LandingPageWizard() {
           setStep(2);
         } else if (actionData.intent === "save_edits") {
           setData(actionData.data);
-        } else if (actionData.intent === "generate_social" || actionData.intent === "fetch_social") {
+        } else if (["generate_social", "fetch_social", "create_video_script", "generate_video", "approve_video"].includes(actionData.intent || "")) {
           if (actionData.socialItems) {
             setSocialItems(actionData.socialItems);
           }
@@ -213,6 +262,63 @@ export default function LandingPageWizard() {
     submit({ intent: "regenerate_social_item", concept }, { method: "post" });
   };
 
+  const handleCreateVideoScript = (concept: string) => {
+    setError(null);
+    submit({ intent: "create_video_script", concept }, { method: "post" });
+  };
+
+  const updateLocalVideo = (concept: string, updater: (video: any) => any) => {
+    setSocialItems((items) => items?.map((item) =>
+      item.concept === concept ? { ...item, video: updater(item.video || {}) } : item
+    ) || null);
+  };
+
+  const handleVideoScriptChange = (concept: string, field: string, value: any) => {
+    updateLocalVideo(concept, (video) => ({
+      ...video,
+      script: { ...(video.script || {}), [field]: value },
+      approved: false,
+    }));
+  };
+
+  const handleVideoPostingTextChange = (concept: string, value: string) => {
+    updateLocalVideo(concept, (video) => ({ ...video, posting_text: value }));
+  };
+
+  const handleSaveVideo = (item: any) => {
+    if (!item.video) return;
+    submit({
+      intent: "update_video",
+      concept: item.concept,
+      payload: JSON.stringify({
+        script: item.video.script,
+        posting_text: item.video.posting_text,
+      }),
+    }, { method: "post", navigate: false });
+  };
+
+  const handleGenerateVideo = (item: any) => {
+    if (!item.video?.script) return;
+    setError(null);
+    submit({
+      intent: "generate_video",
+      concept: item.concept,
+      payload: JSON.stringify({
+        script: item.video.script,
+        posting_text: item.video.posting_text,
+      }),
+    }, { method: "post" });
+  };
+
+  const handleApproveVideo = (item: any) => {
+    setError(null);
+    submit({
+      intent: "approve_video",
+      concept: item.concept,
+      approved: item.video?.approved ? "false" : "true",
+    }, { method: "post" });
+  };
+
   const handleUpdateSocialText = (concept: string, text: string) => {
     setError(null);
     // Update local state immediately for fast typing
@@ -236,7 +342,10 @@ export default function LandingPageWizard() {
   };
 
   return (
-    <s-page heading={`Landing Page Wizard: ${handle}`} backAction={{ content: "Back", onAction: () => navigate("/app/landing-pages") }}>
+    <s-page heading={`Landing Page Wizard: ${handle}`}>
+      <div style={{ marginBottom: "12px" }}>
+        <button onClick={() => navigate("/app/landing-pages")} style={{ border: 0, background: "transparent", color: "#005bd3", padding: 0, cursor: "pointer" }}>← Back to Landing Pages</button>
+      </div>
       {error && (
         <s-section>
           <div style={{ color: "#991b1b", background: "rgba(239,68,68,0.08)", padding: "14px", borderRadius: "12px", border: "1px solid rgba(239,68,68,0.3)" }}>
@@ -372,35 +481,135 @@ export default function LandingPageWizard() {
 
           {socialItems ? (
             <div style={{ display: "flex", flexDirection: "column", gap: "30px", marginTop: "20px", marginBottom: "30px" }}>
-              {socialItems.map((item, idx) => (
-                <div key={idx} style={{ display: "flex", gap: "20px", padding: "20px", border: "1px solid #e1e3e5", borderRadius: "12px", background: "#fcfcfc" }}>
-                  <div style={{ flex: "0 0 250px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <h4 style={{ margin: "0", fontSize: "1rem", color: "#202223" }}>{item.concept}</h4>
-                    {item.image_file && (
-                      <img 
-                        src={item.preview_url}
-                        alt={item.concept} 
-                        style={{ width: "100%", height: "250px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }} 
-                      />
+              {socialItems.map((item, idx) => {
+                const workingOnThis = isSubmitting && navigation.formData?.get("concept") === item.concept;
+                const currentIntent = navigation.formData?.get("intent");
+                const script = item.video?.script;
+                return (
+                  <div key={idx} style={{ padding: "20px", border: "1px solid #e1e3e5", borderRadius: "12px", background: "#fcfcfc" }}>
+                    <div style={{ display: "flex", gap: "20px", flexWrap: "wrap" }}>
+                      <div style={{ flex: "0 0 250px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                        <h4 style={{ margin: "0", fontSize: "1rem", color: "#202223" }}>{item.concept}</h4>
+                        {item.image_file && (
+                          <img
+                            src={item.preview_url}
+                            alt={item.concept}
+                            style={{ width: "100%", height: "250px", objectFit: "cover", borderRadius: "8px", border: "1px solid #ccc" }}
+                          />
+                        )}
+                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                          <button
+                            onClick={() => handleRegenerateSocialItem(item.concept)}
+                            disabled={isSubmitting}
+                            style={{ flex: "1 1 105px", padding: "7px 10px", background: "#ffffff", color: "#202223", border: "1px solid #8c9196", borderRadius: "6px", cursor: isSubmitting ? "not-allowed" : "pointer", fontSize: "0.82rem" }}
+                          >
+                            {workingOnThis && currentIntent === "regenerate_social_item" ? "Regenerating..." : "Regenerate Image"}
+                          </button>
+                          <button
+                            onClick={() => handleCreateVideoScript(item.concept)}
+                            disabled={isSubmitting}
+                            style={{ flex: "1 1 105px", padding: "7px 10px", background: "#202223", color: "#fff", border: "1px solid #202223", borderRadius: "6px", cursor: isSubmitting ? "not-allowed" : "pointer", fontSize: "0.82rem" }}
+                          >
+                            {workingOnThis && currentIntent === "create_video_script" ? "Writing Script..." : script ? "Rewrite Video Script" : "Create Video Script"}
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ flex: "1 1 320px" }}>
+                        <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold", fontSize: "0.85rem", color: "#202223" }}>Final Social Text</label>
+                        <textarea
+                          value={item.text}
+                          onChange={(e) => handleUpdateSocialText(item.concept, e.target.value)}
+                          style={{ width: "100%", height: "250px", padding: "12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "0.95rem", lineHeight: "1.4" }}
+                        />
+                      </div>
+                    </div>
+
+                    {item.video && (
+                      <div style={{ marginTop: "20px", paddingTop: "20px", borderTop: "1px solid #d1d5db" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "14px" }}>
+                          <div>
+                            <strong>Marketing video</strong>
+                            {script?.duration_seconds && <span style={{ marginLeft: "8px", color: "#4b5563" }}>{script.duration_seconds} seconds · Grok chose this length · 480p</span>}
+                          </div>
+                          <span style={{ padding: "4px 9px", borderRadius: "999px", background: item.video.approved ? "#dcfce7" : item.video.status === "error" ? "#fee2e2" : "#fef3c7", color: item.video.approved ? "#166534" : item.video.status === "error" ? "#991b1b" : "#92400e", fontSize: "0.78rem", fontWeight: 700 }}>
+                            {item.video.approved ? "Approved for publishing" : item.video.status === "error" ? "Generation failed" : item.video.video_file ? "Ready for approval" : "Script ready"}
+                          </span>
+                        </div>
+
+                        {item.video.last_error && (
+                          <div style={{ marginBottom: "14px", padding: "10px", borderRadius: "7px", background: "#fff1f0", color: "#991b1b", border: "1px solid #fecaca" }}>
+                            Exact Grok error: {item.video.last_error}
+                          </div>
+                        )}
+
+                        {item.video.preview_url && (
+                          <div style={{ maxWidth: "360px", marginBottom: "16px" }}>
+                            <video controls playsInline preload="metadata" poster={item.preview_url} src={item.video.preview_url} style={{ display: "block", width: "100%", maxHeight: "640px", background: "#000", borderRadius: "10px" }} />
+                            <a href={item.video.preview_url} download={item.video.video_file} style={{ display: "inline-block", marginTop: "8px", color: "#005bd3" }}>Download video</a>
+                          </div>
+                        )}
+
+                        {script && (
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px" }}>
+                            <div>
+                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Detailed Video Prompt</label>
+                              <textarea
+                                value={script.video_prompt || ""}
+                                onChange={(e) => handleVideoScriptChange(item.concept, "video_prompt", e.target.value)}
+                                onBlur={() => handleSaveVideo(item)}
+                                style={{ width: "100%", minHeight: "230px", padding: "11px", borderRadius: "8px", border: "1px solid #ccc", lineHeight: 1.45 }}
+                              />
+                            </div>
+                            <div>
+                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Shot-by-shot Script</label>
+                              <div style={{ minHeight: "230px", padding: "11px", borderRadius: "8px", border: "1px solid #ccc", background: "#fff", fontSize: "0.85rem", lineHeight: 1.45 }}>
+                                {(script.scenes || []).map((scene: any, sceneIndex: number) => (
+                                  <div key={sceneIndex} style={{ marginBottom: "12px" }}>
+                                    <strong>{scene.start_second}–{scene.end_second}s</strong>: {scene.visual_action}
+                                    {scene.camera && <div><strong>Camera:</strong> {scene.camera}</div>}
+                                    {scene.on_screen_text && <div><strong>On-screen:</strong> {scene.on_screen_text}</div>}
+                                    {scene.voiceover && <div><strong>Voiceover:</strong> {scene.voiceover}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Video Posting Text</label>
+                              <textarea
+                                value={item.video.posting_text || ""}
+                                onChange={(e) => handleVideoPostingTextChange(item.concept, e.target.value)}
+                                onBlur={() => handleSaveVideo(item)}
+                                style={{ width: "100%", minHeight: "105px", padding: "11px", borderRadius: "8px", border: "1px solid #ccc", lineHeight: 1.45 }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: "flex", gap: "10px", marginTop: "14px", flexWrap: "wrap" }}>
+                          {script && (
+                            <button
+                              onClick={() => handleGenerateVideo(item)}
+                              disabled={isSubmitting}
+                              style={{ padding: "9px 16px", background: "#005bd3", color: "#fff", border: 0, borderRadius: "7px", cursor: isSubmitting ? "not-allowed" : "pointer", fontWeight: 700 }}
+                            >
+                              {workingOnThis && currentIntent === "generate_video" ? "Generating Video (may take a few minutes)..." : item.video.video_file ? "Regenerate Video" : "Generate Video"}
+                            </button>
+                          )}
+                          {item.video.video_file && (
+                            <button
+                              onClick={() => handleApproveVideo(item)}
+                              disabled={isSubmitting}
+                              style={{ padding: "9px 16px", background: item.video.approved ? "#fff" : "#107c41", color: item.video.approved ? "#107c41" : "#fff", border: "1px solid #107c41", borderRadius: "7px", cursor: isSubmitting ? "not-allowed" : "pointer", fontWeight: 700 }}
+                            >
+                              {workingOnThis && currentIntent === "approve_video" ? "Saving..." : item.video.approved ? "Remove Approval" : "Approve Video"}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     )}
-                    <button
-                      onClick={() => handleRegenerateSocialItem(item.concept)}
-                      disabled={isSubmitting}
-                      style={{ padding: "6px 12px", background: "#ffffff", color: "#202223", border: "1px solid #8c9196", borderRadius: "6px", cursor: isSubmitting ? "not-allowed" : "pointer", fontSize: "0.85rem" }}
-                    >
-                      {isSubmitting && navigation.formData?.get("concept") === item.concept && navigation.formData?.get("intent") === "regenerate_social_item" ? "Regenerating..." : "Regenerate Image"}
-                    </button>
                   </div>
-                  <div style={{ flex: "1" }}>
-                    <label style={{ display: "block", marginBottom: "5px", fontWeight: "bold", fontSize: "0.85rem", color: "#202223" }}>Final Social Text</label>
-                    <textarea 
-                      value={item.text} 
-                      onChange={(e) => handleUpdateSocialText(item.concept, e.target.value)}
-                      style={{ width: "100%", height: "250px", padding: "12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "0.95rem", lineHeight: "1.4" }}
-                    />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div style={{ padding: "20px", textAlign: "center", color: "#6d7175" }}>
@@ -457,6 +666,9 @@ export default function LandingPageWizard() {
                   <div key={entry.guid} style={{ display: "flex", gap: "14px", padding: "12px", background: "#f6f6f7", borderRadius: "8px" }}>
                     {entry.image_url && (
                       <img src={entry.image_url} alt={entry.concept} style={{ width: "90px", height: "90px", objectFit: "cover", borderRadius: "6px" }} />
+                    )}
+                    {entry.video_url && (
+                      <video controls playsInline preload="metadata" src={entry.video_url} style={{ width: "90px", height: "140px", objectFit: "cover", borderRadius: "6px", background: "#000" }} />
                     )}
                     <div style={{ minWidth: 0 }}>
                       <strong>{entry.title}</strong>

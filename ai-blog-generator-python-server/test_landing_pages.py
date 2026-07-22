@@ -10,6 +10,7 @@ from services.landing_pages.social_publisher.rss_feed import (
     read_product_section,
     write_product_section,
 )
+from services.landing_pages.video_service import LandingPageVideoService
 from routes.landing_pages import (
     GeneratePromptsRequest,
     _apply_store_grok_model,
@@ -47,6 +48,23 @@ class FakeSession:
     def post(self, endpoint: str, **kwargs) -> FakeResponse:
         self.calls.append({"endpoint": endpoint, **kwargs})
         return FakeResponse(self.payloads.pop(0))
+
+
+class FakeDownloadResponse(FakeResponse):
+    def __init__(self, payload: dict, content: bytes = b""):
+        super().__init__(payload)
+        self.content = content
+
+
+class FakeVideoSession(FakeSession):
+    def __init__(self, post_payloads: list[dict], get_responses: list[FakeDownloadResponse]):
+        super().__init__(post_payloads)
+        self.get_responses = list(get_responses)
+        self.get_calls: list[dict] = []
+
+    def get(self, endpoint: str, **kwargs) -> FakeDownloadResponse:
+        self.get_calls.append({"endpoint": endpoint, **kwargs})
+        return self.get_responses.pop(0)
 
 
 def publisher_with_payloads(payloads: list[dict]) -> LandingPagePublisher:
@@ -437,3 +455,141 @@ def test_rss_product_section_is_replaced_without_duplicates(tmp_path: Path) -> N
     section = read_product_section(feed_path, "product-one")
     assert section["entry_count"] == 2
     assert section["entries"][0]["image_url"] == "https://cdn.test/lifestyle.jpg"
+
+
+def test_video_script_uses_grok_43_and_accepts_model_chosen_duration() -> None:
+    script = {
+        "duration_seconds": 11,
+        "hook": "Stop the scroll",
+        "campaign_goal": "Demonstrate the product",
+        "scenes": [{"start_second": 0, "end_second": 11, "visual_action": "Orbit"}],
+        "audio_direction": "Modern",
+        "final_cta": "Shop now",
+        "video_prompt": "An exact 11-second cinematic product sequence.",
+        "posting_text": "See it in action. #wellness",
+    }
+    session = FakeSession(
+        [{"choices": [{"message": {"content": __import__("json").dumps(script)}}]}]
+    )
+    settings = SimpleNamespace(
+        grok_api_key="secret",
+        grok_base_url="https://api.x.ai/v1",
+        grok_model="some-other-store-model",
+        grok_timeout=90,
+    )
+    service = LandingPageVideoService(settings, session)
+
+    result = service.create_script(
+        {"product": {"title": "Product"}, "persona": {}, "campaign": {}},
+        {"concept": "Lifestyle"},
+        "Original posting text",
+    )
+
+    assert result["duration_seconds"] == 11
+    assert result["model"] == "grok-4.3"
+    assert session.calls[0]["json"]["model"] == "grok-4.3"
+    assert "6-to-12-second" in session.calls[0]["json"]["messages"][1]["content"]
+
+
+def test_rss_includes_video_as_separate_duplicate_safe_entry(tmp_path: Path) -> None:
+    feed_path = tmp_path / "social" / "feed.xml"
+    concepts = [_concept("lifestyle", "Lifestyle", "https://cdn.test/lifestyle.jpg")]
+    videos = [{
+        "slug": "lifestyle",
+        "concept": "Lifestyle",
+        "cdn_url": "https://cdn.test/lifestyle.mp4",
+        "posting_text": "Watch the product in action.",
+    }]
+
+    first = write_product_section(
+        feed_path,
+        handle="product-video",
+        product_title="Product Video",
+        landing_page_url="https://store.test/pages/product-video",
+        concepts=concepts,
+        videos=videos,
+    )
+    second = write_product_section(
+        feed_path,
+        handle="product-video",
+        product_title="Product Video",
+        landing_page_url="https://store.test/pages/product-video",
+        concepts=concepts,
+        videos=videos,
+    )
+
+    assert first["entry_count"] == 2
+    assert second["entry_count"] == 2
+    assert second["replaced_count"] == 2
+    video_entry = next(item for item in second["entries"] if item["media_type"] == "video/mp4")
+    assert video_entry["guid"] == "landing-page:product-video:video:lifestyle"
+    assert video_entry["video_url"] == "https://cdn.test/lifestyle.mp4"
+    section = read_product_section(feed_path, "product-video")
+    assert section["entry_count"] == 2
+    assert section["entries"][1]["video_url"] == "https://cdn.test/lifestyle.mp4"
+
+
+def test_video_render_uses_creative_image_grok_video_and_480p(tmp_path: Path) -> None:
+    image_path = tmp_path / "product__lifestyle.jpg"
+    image_path.write_bytes(b"creative-image-bytes")
+    output_path = tmp_path / "product__lifestyle.mp4"
+    session = FakeVideoSession(
+        [{"request_id": "video-request-1"}],
+        [
+            FakeDownloadResponse({
+                "status": "done",
+                "model": "grok-imagine-video",
+                "video": {"url": "https://video.test/result.mp4", "duration": 9},
+            }),
+            FakeDownloadResponse({}, content=b"generated-mp4"),
+        ],
+    )
+    settings = SimpleNamespace(
+        grok_api_key="secret",
+        grok_base_url="https://api.x.ai/v1",
+        grok_video_model="grok-imagine-video",
+        grok_timeout=90,
+    )
+
+    result = LandingPageVideoService(settings, session).generate_video(
+        {"duration_seconds": 9, "video_prompt": "Exact nine-second product sequence"},
+        image_path,
+        output_path,
+    )
+
+    request = session.calls[0]["json"]
+    assert request["model"] == "grok-imagine-video"
+    assert request["duration"] == 9
+    assert request["resolution"] == "480p"
+    assert request["aspect_ratio"] == "9:16"
+    assert request["image"]["url"].startswith("data:image/jpeg;base64,")
+    assert output_path.read_bytes() == b"generated-mp4"
+    assert result["video_file"] == "product__lifestyle.mp4"
+
+
+def test_shopify_video_upload_uses_video_staging_and_returns_mp4(tmp_path: Path) -> None:
+    video_path = tmp_path / "creative.mp4"
+    video_path.write_bytes(b"mp4-data")
+    publisher = publisher_with_payloads(
+        [
+            {"data": {"stagedUploadsCreate": {"stagedTargets": [{
+                "url": "https://upload.test",
+                "resourceUrl": "https://staged.test/video",
+                "parameters": [],
+            }], "userErrors": []}}},
+            {},
+            {"data": {"fileCreate": {"files": [{"id": "gid://shopify/Video/1"}], "userErrors": []}}},
+            {"data": {"node": {"fileStatus": "READY", "sources": [
+                {"url": "https://cdn.test/creative.m3u8", "mimeType": "application/x-mpegURL", "format": "m3u8"},
+                {"url": "https://cdn.test/creative.mp4", "mimeType": "video/mp4", "format": "mp4"},
+            ]}}},
+        ]
+    )
+
+    file_id, video_url = publisher._upload_video(video_path)
+
+    assert file_id == "gid://shopify/Video/1"
+    assert video_url == "https://cdn.test/creative.mp4"
+    staged_input = publisher.session.calls[0]["json"]["variables"]["input"][0]
+    assert staged_input["resource"] == "VIDEO"
+    assert staged_input["fileSize"] == str(video_path.stat().st_size)

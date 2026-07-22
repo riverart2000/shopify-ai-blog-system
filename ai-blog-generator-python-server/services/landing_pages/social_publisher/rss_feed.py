@@ -52,13 +52,20 @@ def _set_channel_value(channel: ET.Element, name: str, value: str) -> None:
     element.text = value
 
 
-def _description_html(caption: str, landing_page_url: str, image_url: str) -> str:
+def _description_html(
+    caption: str, landing_page_url: str, media_url: str, media_type: str = "image/jpeg"
+) -> str:
     caption_html = "<br>".join(escape(caption.strip()).splitlines())
     parts = []
-    if image_url:
+    if media_url and media_type.startswith("video/"):
+        parts.append(
+            f'<p><video controls playsinline preload="metadata" '
+            f'src="{escape(media_url, quote=True)}"></video></p>'
+        )
+    elif media_url:
         parts.append(
             f'<p><a href="{escape(landing_page_url, quote=True)}">'
-            f'<img src="{escape(image_url, quote=True)}" alt="Marketing image"></a></p>'
+            f'<img src="{escape(media_url, quote=True)}" alt="Marketing image"></a></p>'
         )
     if caption_html:
         parts.append(f"<p>{caption_html}</p>")
@@ -75,6 +82,7 @@ def write_product_section(
     product_title: str,
     landing_page_url: str,
     concepts: Iterable[dict],
+    videos: Iterable[dict] = (),
 ) -> dict:
     """Replace one product's RSS items and return its verifiable section."""
     tree, channel = _load_feed(feed_path)
@@ -131,6 +139,51 @@ def write_product_section(
                 "link": landing_page_url,
                 "image_url": image_url,
                 "description": caption,
+                "media_type": "image/jpeg",
+            }
+        )
+
+    for video_data in videos:
+        concept_name = str(video_data.get("concept") or video_data.get("slug") or "Marketing video")
+        concept_slug = str(video_data.get("slug") or "marketing-video")
+        caption = str(video_data.get("posting_text") or "").strip()
+        video_url = str(video_data.get("cdn_url") or "").strip()
+        if not video_url:
+            continue
+        guid = f"{prefix}video:{concept_slug}"
+        title = f"{product_title} — {concept_name} video" if product_title else f"{concept_name} video"
+
+        item = ET.SubElement(channel, "item")
+        ET.SubElement(item, "title").text = title
+        ET.SubElement(item, "link").text = landing_page_url
+        ET.SubElement(item, "guid", {"isPermaLink": "false"}).text = guid
+        ET.SubElement(item, "pubDate").text = pub_date
+        ET.SubElement(item, "description").text = _description_html(
+            caption, landing_page_url, video_url, "video/mp4"
+        )
+        ET.SubElement(item, f"{{{LANDING_NS}}}productHandle").text = handle
+        ET.SubElement(item, f"{{{LANDING_NS}}}concept").text = concept_name
+        ET.SubElement(item, f"{{{LANDING_NS}}}mediaKind").text = "video"
+        ET.SubElement(
+            item,
+            "enclosure",
+            {"url": video_url, "length": "0", "type": "video/mp4"},
+        )
+        ET.SubElement(
+            item,
+            f"{{{MEDIA_NS}}}content",
+            {"url": video_url, "medium": "video", "type": "video/mp4"},
+        )
+        entries.append(
+            {
+                "guid": guid,
+                "title": title,
+                "concept": concept_name,
+                "link": landing_page_url,
+                "image_url": "",
+                "video_url": video_url,
+                "media_type": "video/mp4",
+                "description": caption,
             }
         )
 
@@ -168,13 +221,17 @@ def read_product_section(feed_path: Path, handle: str) -> dict:
         if not guid.startswith(prefix) and item_handle != handle:
             continue
         enclosure = item.find("enclosure")
+        media_type = enclosure.get("type", "") if enclosure is not None else ""
+        media_url = enclosure.get("url", "") if enclosure is not None else ""
         entries.append(
             {
                 "guid": guid,
                 "title": (item.findtext("title") or "").strip(),
                 "concept": (item.findtext(f"{{{LANDING_NS}}}concept") or "").strip(),
                 "link": (item.findtext("link") or "").strip(),
-                "image_url": enclosure.get("url", "") if enclosure is not None else "",
+                "image_url": media_url if media_type.startswith("image/") else "",
+                "video_url": media_url if media_type.startswith("video/") else "",
+                "media_type": media_type,
                 "description": (item.findtext("description") or "").strip(),
             }
         )
