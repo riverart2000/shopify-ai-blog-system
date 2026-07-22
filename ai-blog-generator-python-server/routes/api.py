@@ -29,6 +29,7 @@ from config import StoreConfig
 from providers import AllModelsFailedError
 from services import blog_scope, image_service, internal_links, llm_service, logo_service, title_service
 from services.quality_service import html_to_review_text, review_draft
+from services import system_events
 from utils import text_to_html
 
 router = APIRouter()
@@ -263,6 +264,75 @@ async def api_errors(request: Request, store_id: str = "", limit: int = 30):
             ) as _cur:
                 rows = [dict(r) for r in await _cur.fetchall()]
     return {"errors": rows}
+
+
+class SystemEventResolveRequest(BaseModel):
+    event_id: int
+    resolved: bool = True
+
+
+class SystemEventReportRequest(BaseModel):
+    level: str = "ERROR"
+    message: str
+    component: str = "shopify_admin_ui"
+    operation: str = ""
+    store_id: str = ""
+    correlation_id: str = ""
+    details: str = ""
+
+
+@router.get("/api/system-health")
+async def api_system_health(
+    request: Request,
+    limit: int = 100,
+    level: str = "",
+    component: str = "",
+    unresolved_only: bool = False,
+):
+    """Central persistent warnings/errors from the API and scheduler."""
+    _verify_backend_api_key(request)
+    events = await __import__("asyncio").to_thread(
+        system_events.list_events,
+        limit=min(max(limit, 1), 500),
+        level=level,
+        component=component,
+        unresolved_only=unresolved_only,
+    )
+    health_summary = await __import__("asyncio").to_thread(system_events.summary)
+    return {"summary": health_summary, "events": events}
+
+
+@router.post("/api/system-health/resolve")
+async def api_system_health_resolve(request: Request, payload: SystemEventResolveRequest):
+    _verify_backend_api_key(request)
+    updated = await __import__("asyncio").to_thread(
+        system_events.set_resolved, payload.event_id, payload.resolved
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="System event was not found")
+    return {"ok": True}
+
+
+@router.post("/api/system-health/report")
+async def api_system_health_report(request: Request, payload: SystemEventReportRequest):
+    """Accept authenticated reports from the Shopify admin frontend."""
+    _verify_backend_api_key(request)
+    level = payload.level.upper()
+    if level not in {"WARNING", "ERROR", "CRITICAL"}:
+        raise HTTPException(status_code=400, detail="level must be WARNING, ERROR, or CRITICAL")
+    if not payload.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    await __import__("asyncio").to_thread(
+        system_events.record_event,
+        level=level,
+        message=payload.message,
+        component=payload.component,
+        operation=payload.operation,
+        store_id=payload.store_id,
+        correlation_id=payload.correlation_id,
+        details=payload.details,
+    )
+    return {"ok": True}
 
 
 # --- Social Posts + Publer ---
@@ -1817,8 +1887,23 @@ async def run_product_blog_generation_task(
     task_key: str
 ):
     from services import publish_service
+    def report_progress(stage: str, message: str, level: str = "info") -> None:
+        task = state.product_blog_tasks.get(task_key)
+        if not task:
+            return
+        event = {
+            "timestamp": int(time.time()),
+            "stage": stage,
+            "level": level,
+            "message": message,
+        }
+        task.setdefault("timeline", []).append(event)
+        task["current_stage"] = stage
+        task["updated_at"] = time.time()
+
     try:
         state.product_blog_tasks[task_key]["status"] = "processing"
+        report_progress("processing", "Generation worker started.")
         result = await publish_service.run(
             store_id=store_id,
             prompt_text=prompt_text,
@@ -1827,16 +1912,30 @@ async def run_product_blog_generation_task(
             prompt_id=prompt_id_val,
             product_url=product_url,
             product_title=product_title,
+            progress_callback=report_progress,
         )
         state.product_blog_tasks[task_key].update({
             "status": "success",
             "article_id": str(result.article_id),
             "article_url": result.article_url,
             "title": result.title,
+            "image_count": result.image_count,
+            "warnings": result.warnings,
             "updated_at": time.time()
         })
     except Exception as exc:
-        logger.exception("Failed to generate blog for product %s in background", product_title)
+        report_progress("failed", f"{type(exc).__name__}: {exc}", "error")
+        logger.exception(
+            "Failed to generate blog for product %s in background: %s: %s",
+            product_title,
+            type(exc).__name__,
+            exc,
+            extra={
+                "operation": "product_blog_generation",
+                "store_id": store_id,
+                "correlation_id": task_key,
+            },
+        )
         state.product_blog_tasks[task_key].update({
             "status": "failed",
             "error": f"Generation failed: {str(exc)}",
@@ -1897,6 +1996,15 @@ async def api_product_blog_generate(
         "article_id": None,
         "article_url": None,
         "title": None,
+        "image_count": None,
+        "warnings": [],
+        "current_stage": "queued",
+        "timeline": [{
+            "timestamp": int(time.time()),
+            "stage": "queued",
+            "level": "info",
+            "message": "Product blog generation queued.",
+        }],
         "error": None,
         "updated_at": time.time()
     }
@@ -1938,6 +2046,10 @@ async def api_product_blog_generate_status(request: Request, store_id: str, prod
         "article_id": task.get("article_id"),
         "article_url": task.get("article_url"),
         "title": task.get("title"),
+        "image_count": task.get("image_count"),
+        "warnings": task.get("warnings", []),
+        "current_stage": task.get("current_stage", ""),
+        "timeline": task.get("timeline", []),
         "error": task.get("error")
     }
 

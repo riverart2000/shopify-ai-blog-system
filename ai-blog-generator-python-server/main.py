@@ -15,7 +15,7 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -34,6 +34,7 @@ from routes.intelligence import router as intelligence_router
 from routes.intelligence_api import router as intelligence_api_router
 from routes.wellness_quiz_api import router as wellness_quiz_api_router
 from security import AuthMiddleware, RootPathRedirectMiddleware, SecurityHeadersMiddleware, limiter
+from services.system_events import install_logging_handler
 
 # ---------------------------------------------------------------------------
 # .env loading — project dir then workspace root
@@ -116,6 +117,7 @@ async def lifespan(app: FastAPI):
 
     db.set_db_path(DB_PATH)
     await db.init_db()
+    install_logging_handler()
     state.config = state._bootstrap  # server/logging config from file; all else from DB per-request
 
     logger = logging.getLogger("ai_blog_server")
@@ -135,6 +137,28 @@ async def lifespan(app: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="AI Blog Generator", lifespan=lifespan, root_path=ROOT_PATH)
+
+
+@app.exception_handler(Exception)
+async def report_unhandled_exception(request, exc: Exception):
+    """Guarantee that otherwise-unhandled backend failures reach System Health."""
+    logger = logging.getLogger("ai_blog_server")
+    logger.error(
+        "Unhandled %s during %s %s: %s",
+        type(exc).__name__,
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=(type(exc), exc, exc.__traceback__),
+        extra={"operation": f"{request.method} {request.url.path}"},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"{type(exc).__name__}: {exc}",
+            "system_health": "/api/system-health",
+        },
+    )
 
 # Rate limiter state
 app.state.limiter = limiter

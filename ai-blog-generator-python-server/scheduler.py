@@ -68,6 +68,7 @@ import shopify_client
 from config import StoreConfig
 from services.quality_service import QualityGateError
 from services.intelligence_service import run_scheduled_scans
+from services.system_events import install_logging_handler
 
 _POLL_INTERVAL = 60  # seconds between ticks
 _DB_PATH = os.environ.get("DB_PATH", "data/ai_blog_server.db")
@@ -295,6 +296,7 @@ async def _tick() -> None:
 async def main() -> None:
     db.set_db_path(_DB_PATH)
     await db.init_db()
+    install_logging_handler()
     logger.info("Scheduler started | db=%s poll_interval=%ds", _DB_PATH, _POLL_INTERVAL)
 
     await _initialise_next_run_times()

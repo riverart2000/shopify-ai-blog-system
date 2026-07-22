@@ -1078,8 +1078,9 @@ class TestImageService:
             "https://img.example.com/hero-1.png",
             "https://img.example.com/hero-2.png",
             "https://img.example.com/hero-3.png",
+            "https://img.example.com/hero-4.png",
         ]
-        assert len(merged_urls) == 4
+        assert len(merged_urls) == 5
 
     async def test_use_product_featured_image_handles_missing_types_and_labels(self, tmp_db):
         from services import image_service
@@ -1101,9 +1102,10 @@ class TestImageService:
             "https://img.example.com/a.png",
             "https://img.example.com/b.png",
             "https://img.example.com/c.png",
+            "https://img.example.com/d.png",
         ]
-        assert merged_types == ["product", "generated", "generated", "generated"]
-        assert merged_labels == ["Product Image", "Generated", "Generated", "Generated"]
+        assert merged_types == ["product", "generated", "generated", "generated", "generated"]
+        assert merged_labels == ["Product Image", "Generated", "Generated", "Generated", "Generated"]
 
     async def test_generate_feature_image_falls_back_to_simpler_prompt(self, tmp_db):
         from services import image_service
@@ -2254,8 +2256,11 @@ class TestAuthedRoutes:
         assert resp.status_code == 200
         data = resp.json()
         assert data["image_urls"][0] == "https://cdn.shopify.com/product-main.png"
-        assert data["image_types"] == ["product", "infographic", "step_card", "checklist_card"]
-        assert len(data["image_urls"]) == 4
+        assert data["image_types"] == [
+            "product", "infographic", "step_card", "checklist_card", "hero_photo"
+        ]
+        assert len(data["image_urls"]) == 5
+        assert "https://img.example.com/hero.png" in data["image_urls"]
         typed_images_mock.assert_awaited_once()
         product_image_mock.assert_awaited_once()
 
@@ -2457,6 +2462,186 @@ class TestAuthedRoutes:
             "attachment": "ZmVhdHVyZWQ=",
             "filename": "featured_image.jpg",
         }
+
+    async def test_blog_image_upload_uses_staged_graphql_and_returns_shopify_cdn(self, tmp_db):
+        import shopify_client
+
+        store = StoreConfig(
+            id="s1",
+            name="Store One",
+            myshopify_domain="s1.myshopify.com",
+            client_id="cid",
+            client_secret="csec",
+            default_blog_handle="news",
+            default_author="Test Author",
+        )
+
+        class FakeResponse:
+            status_code = 201
+            content = b"source-image"
+            text = ""
+
+            def raise_for_status(self):
+                return None
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self.posts = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def get(self, *args, **kwargs):
+                return FakeResponse()
+
+            async def post(self, url, **kwargs):
+                self.posts.append((url, kwargs))
+                return FakeResponse()
+
+        graphql_results = [
+            {"stagedUploadsCreate": {"stagedTargets": [{
+                "url": "https://upload.test",
+                "resourceUrl": "https://staged.test/blog-image",
+                "parameters": [{"name": "key", "value": "value"}],
+            }], "userErrors": []}},
+            {"fileCreate": {"files": [{
+                "id": "gid://shopify/MediaImage/1",
+                "fileStatus": "READY",
+                "image": {"url": "https://cdn.shopify.com/blog-image.webp"},
+            }], "userErrors": []}},
+        ]
+
+        with patch("shopify_client._get_token", new_callable=AsyncMock, return_value="token"), \
+             patch("shopify_client._graphql", new_callable=AsyncMock, side_effect=graphql_results) as graphql_mock, \
+             patch("shopify_client.httpx.AsyncClient", side_effect=FakeClient), \
+             patch("services.image_optimizer.optimize_image", return_value=b"optimised-webp"):
+            url = await shopify_client.upload_image_to_shopify(
+                store,
+                "https://images.example.com/generated.png",
+                "product_guide_image_2.png",
+            )
+
+        assert url == "https://cdn.shopify.com/blog-image.webp"
+        assert graphql_mock.await_count == 2
+        staged_input = graphql_mock.await_args_list[0].args[4]["input"][0]
+        assert staged_input == {
+            "filename": "product_guide_image_2.webp",
+            "mimeType": "image/webp",
+            "httpMethod": "POST",
+            "resource": "IMAGE",
+        }
+        create_input = graphql_mock.await_args_list[1].args[4]["files"][0]
+        assert create_input["originalSource"] == "https://staged.test/blog-image"
+
+    async def test_product_blog_publish_stops_if_any_generated_image_is_lost(self, tmp_db):
+        import shopify_client
+
+        store = StoreConfig(
+            id="s1",
+            name="Store One",
+            myshopify_domain="s1.myshopify.com",
+            client_id="cid",
+            client_secret="csec",
+            default_blog_handle="news",
+            default_author="Test Author",
+        )
+        images = [
+            "https://img.example.com/product.png",
+            "https://img.example.com/info.png",
+            "https://img.example.com/steps.png",
+            "https://img.example.com/checklist.png",
+        ]
+
+        with patch(
+            "shopify_client.upload_image_to_shopify",
+            new_callable=AsyncMock,
+            side_effect=[
+                "https://cdn.shopify.com/product.webp",
+                "https://cdn.shopify.com/info.webp",
+                None,
+                "https://cdn.shopify.com/checklist.webp",
+            ],
+        ), pytest.raises(shopify_client.ShopifyError, match="image integrity check failed"):
+            await shopify_client.publish_article(
+                store=store,
+                blog_handle="inside-the-products",
+                title="Complete Product Guide",
+                content_html="<p>Introduction</p><p>Details</p>",
+                summary="Summary",
+                keywords=[],
+                hashtags=[],
+                author="Store Team",
+                image_url_list=images,
+                product_url="https://s1.myshopify.com/products/item",
+                product_title="Item",
+            )
+
+    async def test_background_product_blog_keeps_product_image_and_every_generation(self, tmp_db):
+        from services import publish_service
+
+        store_row = _make_store("s1", "Store One")
+        generated_images = [
+            "https://img.example.com/hero.png",
+            "https://img.example.com/info.png",
+            "https://img.example.com/steps.png",
+            "https://img.example.com/checklist.png",
+        ]
+        blog_data = {
+            "title": "Complete Product Guide",
+            "summary": "A practical and complete product guide.",
+            "content": "## Introduction\n\n" + ("Useful product guidance. " * 160),
+            "keywords": ["product guide"],
+            "hashtags": ["#productguide"],
+            "long_tail_keywords": ["complete product guide for beginners"],
+        }
+        publish_result = SimpleNamespace(
+            article_id="987",
+            article_url="https://s1.com/blogs/inside-the-products/complete-product-guide",
+            blog_handle="inside-the-products",
+        )
+
+        with patch("services.publish_service.db.get_store", new_callable=AsyncMock, return_value=store_row), \
+             patch("services.publish_service.blog_scope.resolve_blog_scope", new_callable=AsyncMock, return_value=SimpleNamespace(handle="inside-the-products")), \
+             patch("services.publish_service.blog_scope.apply_blog_scope", new_callable=AsyncMock, side_effect=lambda prompt, **kwargs: prompt), \
+             patch("services.publish_service.llm_service.generate_text", new_callable=AsyncMock, return_value=blog_data), \
+             patch("services.publish_service.shopify_client.fetch_product_details", new_callable=AsyncMock, return_value={
+                 "title": "Item", "description": "A useful product.", "tags": "wellness"
+             }), \
+             patch("services.publish_service.db.get_store_setting", new_callable=AsyncMock, return_value=""), \
+             patch("services.publish_service.shopify_client.fetch_product_image_data_uri", new_callable=AsyncMock, return_value="data:image/png;base64,cHJvZHVjdA=="), \
+             patch("services.publish_service.logo_service.stamp_infographic", new_callable=AsyncMock, return_value="data:image/webp;base64,c3RhbXBlZA=="), \
+             patch("services.publish_service.image_service.generate_typed_images", new_callable=AsyncMock, return_value=(
+                 generated_images,
+                 ["hero_photo", "infographic", "step_card", "checklist_card"],
+                 ["Hero Photo", "Infographic", "Step Card", "Checklist Card"],
+             )), \
+             patch("services.publish_service.review_draft", new_callable=AsyncMock, return_value=SimpleNamespace(publish_blocked=False)), \
+             patch("services.publish_service.internal_links.build_internal_links", new_callable=AsyncMock, return_value=[]), \
+             patch("services.publish_service.logo_service.stamp_pin", new_callable=AsyncMock, return_value=""), \
+             patch("services.publish_service.shopify_client.publish_article", new_callable=AsyncMock, return_value=publish_result) as publish_mock, \
+             patch("services.publish_service.db.log_generation", new_callable=AsyncMock):
+            result = await publish_service.run(
+                store_id="s1",
+                prompt_text="Write a complete product guide.",
+                blog_handle="inside-the-products",
+                author="Store Team",
+                product_url="https://s1.myshopify.com/products/item",
+                product_title="Item",
+            )
+
+        body_images = publish_mock.await_args.kwargs["image_url_list"]
+        assert body_images == [
+            "data:image/webp;base64,c3RhbXBlZA==",
+            "https://img.example.com/info.png",
+            "https://img.example.com/steps.png",
+            "https://img.example.com/checklist.png",
+            "https://img.example.com/hero.png",
+        ]
+        assert set(generated_images).issubset(body_images)
+        assert result.image_count == 5
 
     async def test_publish_blocks_low_quality_draft(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))
@@ -2773,6 +2958,36 @@ class TestShopifyClient:
              patch("shopify_client.get_access_scopes", new_callable=AsyncMock, return_value={"read_content"}):
             with pytest.raises(shopify_client.ShopifyError, match="write_content"):
                 await shopify_client.delete_article(store, 111, 222)
+
+
+class TestSystemEvents:
+    async def test_persists_redacts_summarises_and_resolves(self, tmp_path):
+        from services import system_events
+
+        event_db = tmp_path / "system-events.db"
+        with patch("services.system_events.get_db_path", return_value=str(event_db)):
+            system_events.record_event(
+                level="ERROR",
+                component="ai_blog_server.shopify",
+                operation="product_blog_generation",
+                store_id="store-one",
+                correlation_id="store-one:test-product",
+                message="Upload failed api_key=super-secret-value",
+                details="Authorization: Bearer another-secret\ndata:image/png;base64," + "A" * 120,
+            )
+
+            events = system_events.list_events(unresolved_only=True)
+            assert len(events) == 1
+            assert "super-secret-value" not in events[0]["message"]
+            assert "another-secret" not in events[0]["details"]
+            assert "[REDACTED]" in events[0]["message"]
+            assert "[IMAGE DATA REDACTED]" in events[0]["details"]
+
+            health = system_events.summary()
+            assert health["errors_24h"] == 1
+            assert health["unresolved"] == 1
+            assert system_events.set_resolved(events[0]["id"], True) is True
+            assert system_events.summary()["unresolved"] == 0
 
 
 class TestQualityService:

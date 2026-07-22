@@ -61,6 +61,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         articleUrl: result.article_url,
         articleId: result.article_id,
         title: result.title,
+        imageCount: result.image_count,
         message: result.message
       });
     } catch (e) {
@@ -85,6 +86,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         articleUrl: result.article_url,
         articleId: result.article_id,
         title: result.title,
+        imageCount: result.image_count,
+        warnings: result.warnings,
+        currentStage: result.current_stage,
+        timeline: result.timeline,
         error: result.error
       });
     } catch (e) {

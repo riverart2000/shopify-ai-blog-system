@@ -62,6 +62,9 @@ export default function ProductBlogsPage() {
     status: "idle" | "generating" | "success" | "failed";
     guideTitle?: string | null;
     guideUrl?: string | null;
+    imageCount?: number;
+    currentStage?: string;
+    warnings?: string[];
     error?: string;
   }>>({});
 
@@ -102,6 +105,9 @@ export default function ProductBlogsPage() {
       status: string;
       articleUrl?: string;
       title?: string;
+      imageCount?: number;
+      currentStage?: string;
+      warnings?: string[];
       error?: string;
     };
     if (!resData.ok) {
@@ -144,6 +150,8 @@ export default function ProductBlogsPage() {
         status?: string;
         articleUrl?: string;
         title?: string;
+        imageCount?: number;
+        warnings?: string[];
         error?: string;
         message?: string;
       };
@@ -159,9 +167,11 @@ export default function ProductBlogsPage() {
             status: "success",
             guideTitle: resData.title || p.title,
             guideUrl: resData.articleUrl,
+            imageCount: resData.imageCount,
+            warnings: resData.warnings,
           }
         }));
-        setLogs(prev => [...prev, `[Success] Published blog for "${p.title}": ${resData.articleUrl}`]);
+        setLogs(prev => [...prev, `[Success] Published blog for "${p.title}" with ${resData.imageCount ?? "all"} images: ${resData.articleUrl}`]);
         return true;
       }
 
@@ -180,14 +190,26 @@ export default function ProductBlogsPage() {
                 status: "success",
                 guideTitle: poll.title || p.title,
                 guideUrl: poll.articleUrl,
+                imageCount: poll.imageCount,
+                currentStage: "complete",
+                warnings: poll.warnings,
               }
             }));
-            setLogs(prev => [...prev, `[Success] Published blog for "${p.title}": ${poll.articleUrl}`]);
+            setLogs(prev => [...prev, `[Success] Published blog for "${p.title}" with ${poll.imageCount ?? "all"} images: ${poll.articleUrl}`]);
             return true;
           }
           if (poll.status === "failed") {
             throw new Error(poll.error || "Generation task failed");
           }
+          setProductStatuses(prev => ({
+            ...prev,
+            [p.id]: {
+              ...prev[p.id],
+              status: "generating",
+              currentStage: poll.currentStage || "processing",
+              warnings: poll.warnings,
+            },
+          }));
         } catch (pollErr: any) {
           // Keep trying if temporary status error, unless failed status reported
           const msg = pollErr.message || pollErr;
@@ -425,11 +447,20 @@ export default function ProductBlogsPage() {
                         <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#005ea5", fontWeight: 600 }}>
                           <span className="spinner" style={{ display: "inline-block", width: "12px", height: "12px", border: "2px solid #5c6ac4", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
                           Generating...
+                          {state.currentStage ? <span style={{ fontSize: "0.7rem", color: "#616e75", fontWeight: 500 }}>({state.currentStage})</span> : null}
                         </span>
                       ) : state.status === "success" ? (
-                        <span style={{ color: "#107c41", fontWeight: 600, background: "#dff6dd", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem" }}>
-                          Attached
-                        </span>
+                        <div style={{ display: "grid", gap: 4 }}>
+                          <div>
+                            <span style={{ color: "#107c41", fontWeight: 600, background: "#dff6dd", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem" }}>
+                              Attached
+                            </span>
+                            {state.imageCount != null ? <span style={{ marginLeft: 6, fontSize: "0.72rem", color: "#616e75" }}>{state.imageCount} images verified</span> : null}
+                          </div>
+                          {state.warnings?.map((warning, warningIndex) => (
+                            <span key={warningIndex} style={{ fontSize: "0.7rem", color: "#704700" }}>Warning: {warning}</span>
+                          ))}
+                        </div>
                       ) : state.status === "failed" ? (
                         <div style={{ display: "grid", gap: "4px" }}>
                           <span style={{ color: "#a42e2b", fontWeight: 600, background: "#fde7e9", padding: "2px 8px", borderRadius: "12px", fontSize: "0.75rem", width: "max-content" }}>

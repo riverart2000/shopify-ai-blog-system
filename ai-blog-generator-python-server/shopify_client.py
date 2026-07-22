@@ -5,6 +5,7 @@ Handles: token fetch/cache, fetching blogs, uploading images, publishing article
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import logging
 import re
@@ -595,13 +596,13 @@ async def upload_image_to_shopify(
     filename: str,
 ) -> Optional[str]:
     """
-    Upload an image (by URL or base64 data URI) to Shopify Files and return the
-    public CDN URL. Optimized to WebP and resized before uploading for faster load times.
-    Returns None on failure so the caller can continue without images.
+    Upload an image to Shopify Files using the supported staged GraphQL flow.
+
+    The old REST ``/files.json`` call returns HTTP 406 on current Shopify API
+    versions. Generated images must be copied to Shopify's CDN before the model's
+    temporary URL expires, otherwise articles retain broken or missing images.
     """
     from services.image_optimizer import optimize_image
-
-    url = f"{_base_url(store)}/files.json"
 
     # Always ensure output filename ends with .webp since we compress/optimize to WebP
     if not filename.lower().endswith(".webp"):
@@ -632,49 +633,131 @@ async def upload_image_to_shopify(
             # If fetch fails, we'll let Shopify fetch the original URL directly as fallback
             img_bytes = None
 
-    if img_bytes is not None:
-        # Upload as optimized webp attachment
-        b64_payload = base64.b64encode(img_bytes).decode()
-        payload = {
-            "file": {
-                "attachment": b64_payload,
-                "filename": filename,
-                "content_type": "image/webp",
-            }
-        }
-    else:
-        # Fallback to src if we couldn't fetch/optimize locally
-        payload = {
-            "file": {
-                "src": image_url,
-                "filename": filename,
-                "content_type": "image/webp",
-            }
-        }
     try:
         token = await _get_token(store)
-        async with httpx.AsyncClient(timeout=60) as client:
-            data = await _post(client, url, token, payload)
-        file_obj = data.get("file", {})
-        # Try several possible paths Shopify uses across API versions
-        cdn_url = (
-            file_obj.get("public_url")
-            or file_obj.get("src")
-            or (file_obj.get("image") or {}).get("src")
-            or (file_obj.get("preview_image") or {}).get("image", {}).get("src")
-        )
-        if cdn_url:
-            logger.debug("Uploaded image to Shopify CDN: %s", cdn_url)
-            return cdn_url
-        # Shopify sometimes processes async — fall back to original xAI URL
-        logger.warning(
-            "Shopify file upload returned no CDN URL (response: %s) — using source URL",
-            str(file_obj)[:200],
-        )
-        return image_url
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            original_source = image_url
+            if img_bytes is not None:
+                staged_query = """
+                mutation stageBlogImage($input: [StagedUploadInput!]!) {
+                  stagedUploadsCreate(input: $input) {
+                    stagedTargets { url resourceUrl parameters { name value } }
+                    userErrors { field message }
+                  }
+                }
+                """
+                staged_data = await _graphql(
+                    client,
+                    store,
+                    token,
+                    staged_query,
+                    {
+                        "input": [{
+                            "filename": filename,
+                            "mimeType": "image/webp",
+                            "httpMethod": "POST",
+                            "resource": "IMAGE",
+                        }]
+                    },
+                )
+                staged_result = staged_data.get("stagedUploadsCreate") or {}
+                staged_errors = staged_result.get("userErrors") or []
+                if staged_errors:
+                    messages = "; ".join(str(error.get("message") or "") for error in staged_errors)
+                    raise ShopifyError(f"Shopify staged image upload failed: {messages}")
+                targets = staged_result.get("stagedTargets") or []
+                if not targets:
+                    raise ShopifyError("Shopify returned no staged target for the blog image.")
+                target = targets[0]
+                upload_response = await client.post(
+                    target["url"],
+                    data={item["name"]: item["value"] for item in target.get("parameters") or []},
+                    files={"file": (filename, img_bytes, "image/webp")},
+                )
+                if upload_response.status_code not in (200, 201, 204):
+                    raise ShopifyError(
+                        f"Shopify staged image transfer returned {upload_response.status_code}: "
+                        f"{upload_response.text[:300]}"
+                    )
+                original_source = target["resourceUrl"]
+
+            create_query = """
+            mutation createBlogImage($files: [FileCreateInput!]!) {
+              fileCreate(files: $files) {
+                files {
+                  id
+                  fileStatus
+                  ... on MediaImage { image { url } }
+                }
+                userErrors { field message }
+              }
+            }
+            """
+            create_data = await _graphql(
+                client,
+                store,
+                token,
+                create_query,
+                {
+                    "files": [{
+                        "alt": filename.rsplit(".", 1)[0].replace("_", " "),
+                        "contentType": "IMAGE",
+                        "originalSource": original_source,
+                    }]
+                },
+            )
+            create_result = create_data.get("fileCreate") or {}
+            create_errors = create_result.get("userErrors") or []
+            if create_errors:
+                messages = "; ".join(str(error.get("message") or "") for error in create_errors)
+                raise ShopifyError(f"Shopify fileCreate failed: {messages}")
+            files = create_result.get("files") or []
+            if not files or not files[0].get("id"):
+                raise ShopifyError("Shopify fileCreate returned no image file ID.")
+            file_id = str(files[0]["id"])
+            initial_url = str(((files[0].get("image") or {}).get("url") or "")).strip()
+            if files[0].get("fileStatus") == "READY" and initial_url:
+                logger.info("Blog image stored on Shopify CDN: %s", initial_url[:100])
+                return initial_url
+
+            status_query = """
+            query getBlogImage($id: ID!) {
+              node(id: $id) {
+                ... on MediaImage {
+                  fileStatus
+                  fileErrors { message }
+                  image { url }
+                }
+              }
+            }
+            """
+            for _ in range(30):
+                await asyncio.sleep(1)
+                status_data = await _graphql(
+                    client, store, token, status_query, {"id": file_id}
+                )
+                node = status_data.get("node") or {}
+                status = str(node.get("fileStatus") or "")
+                if status == "READY" and (node.get("image") or {}).get("url"):
+                    cdn_url = str(node["image"]["url"])
+                    logger.info("Blog image stored on Shopify CDN: %s", cdn_url[:100])
+                    return cdn_url
+                if status == "FAILED":
+                    errors = "; ".join(
+                        str(error.get("message") or "") for error in node.get("fileErrors") or []
+                    )
+                    raise ShopifyError(
+                        f"Shopify failed to process blog image {filename}: {errors or 'unknown error'}"
+                    )
+            raise ShopifyError(
+                f"Shopify did not finish processing blog image {filename} within 30 seconds."
+            )
     except ShopifyError as exc:
-        logger.warning("Image upload to Shopify failed (using source URL): %s", exc)
-        return image_url
+        logger.error("Image upload to Shopify failed: %s", exc)
+        return None
+    except Exception as exc:  # noqa: BLE001 — product publish integrity check reports failure
+        logger.exception("Unexpected Shopify image upload failure for %s", filename)
+        return None
 
 
 async def update_article_image(
@@ -870,6 +953,14 @@ async def publish_article(
         cdn_url = await upload_image_to_shopify(store, img_url, filename)
         if cdn_url:
             image_cdn_urls.append(cdn_url)
+
+    if product_url.strip() and len(image_cdn_urls) != len(image_url_list):
+        raise ShopifyError(
+            "Product blog image integrity check failed: "
+            f"generated/prepared {len(image_url_list)} image(s), but only "
+            f"{len(image_cdn_urls)} reached Shopify Files. The article was not "
+            "published with missing images; check the exact upload error and retry."
+        )
 
     # Embed all CDN images in the body (skip data URIs — Shopify may strip them).
     # The first image is ALSO set as the article's featured image below.

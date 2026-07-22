@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import logging
 import re as _re
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Callable, Optional
 
 import db
 import shopify_client
@@ -29,6 +29,7 @@ class PipelineResult:
     keywords: list[str]
     hashtags: list[str]
     image_count: int
+    warnings: list[str] = field(default_factory=list)
 
 
 async def run(
@@ -42,13 +43,23 @@ async def run(
     product_title: str = "",
     scheduled_job_id: str = "",
     preselected_title_row: dict | None = None,
+    progress_callback: Callable[[str, str, str], None] | None = None,
 ) -> PipelineResult:
     """Full pipeline: generate text → generate images → publish → log.
 
     If product_url is provided the blog will be written specifically about that
-    product, the product's image will be used (no AI images), and a shop CTA
-    is appended to the content.
+    product, its Shopify image will be featured, every generated support image
+    will be retained, and a shop CTA is appended to the content.
     """
+    def progress(stage: str, message: str, level: str = "info") -> None:
+        if progress_callback:
+            try:
+                progress_callback(stage, message, level)
+            except Exception:
+                logger.debug("Product blog progress callback failed", exc_info=True)
+
+    pipeline_warnings: list[str] = []
+    progress("starting", "Loading store and product details.")
     store_row = await db.get_store(store_id)
     if not store_row:
         raise ValueError(f"Store not found: {store_id}")
@@ -131,6 +142,7 @@ async def run(
     )
 
     # --- Text generation (raises AllModelsFailedError on total failure) ---
+    progress("writing", "Grok is writing and structuring the product guide.")
     blog_data = await llm_service.generate_text(store_id, prompt_text, system_prompt)
     title = blog_data["title"]
     summary = blog_data["summary"]
@@ -142,6 +154,7 @@ async def run(
 
     # --- Image generation ---
     if resolved_product_url:
+        progress("images", "Preparing the Shopify product image and generating four supporting images.")
         # Use the product's own image; add logo badge only (no title bar)
         logo_b64 = await db.get_store_setting(store_id, "logo_data", "")
         product_handle = resolved_product_url.rstrip("/").split("/")[-1]
@@ -150,10 +163,28 @@ async def run(
         if data_uri:
             stamped_product_image = await logo_service.stamp_infographic(data_uri, logo_b64)
 
-        # Generate the other 3 typed support images
+        # Generate the typed support images. None are discarded: the product
+        # image is added to the set rather than replacing a paid generation.
         gen_urls, gen_types, gen_labels = await image_service.generate_typed_images(
             store_id, title, summary, prompt_text
         )
+
+        missing_types = [
+            image_type
+            for image_type in image_service.EXPECTED_TYPED_IMAGE_TYPES
+            if image_type not in set(gen_types)
+        ]
+        if missing_types:
+            warning = (
+                f"Only {len(gen_urls)} of {len(image_service.EXPECTED_TYPED_IMAGE_TYPES)} supporting images "
+                f"were generated. Missing: {', '.join(missing_types)}."
+            )
+            pipeline_warnings.append(warning)
+            progress("images", warning, "warning")
+        if not stamped_product_image:
+            warning = "The Shopify product image could not be downloaded or branded."
+            pipeline_warnings.append(warning)
+            progress("images", warning, "warning")
 
         merged_urls, _, _ = image_service.use_product_featured_image(
             stamped_product_image,
@@ -162,9 +193,12 @@ async def run(
             gen_labels,
         )
         image_urls = merged_urls
+        progress("images", f"Prepared {len(image_urls)} images; none of the successful generations were discarded.")
     else:
+        progress("images", "Generating the article image set.")
         image_urls = await image_service.generate_images(store_id, title, summary, prompt_text)
 
+    progress("quality", "Checking relevance, SEO, duplicate risk, claims, and image completeness.")
     quality_report = await review_draft(
         store_id=store_id,
         title=title,
@@ -239,6 +273,7 @@ async def run(
             logger.warning("Pin image build failed for store %s: %s", store_id, exc)
 
     # --- Publish to Shopify ---
+    progress("publishing", f"Uploading {len(image_urls)} images to Shopify Files and verifying every upload.")
     result = await shopify_client.publish_article(
         store=store,
         blog_handle=resolved_blog_handle,
@@ -283,6 +318,7 @@ async def run(
         "Pipeline complete | store=%s title=%r article_id=%s",
         store_id, title, result.article_id,
     )
+    progress("complete", f"Published successfully with {len(image_urls)} images.")
 
     return PipelineResult(
         article_id=str(result.article_id),
@@ -292,4 +328,5 @@ async def run(
         keywords=keywords,
         hashtags=hashtags,
         image_count=len(image_urls),
+        warnings=pipeline_warnings,
     )
