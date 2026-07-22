@@ -657,8 +657,6 @@ class LandingPagePublisher:
                 "alt": video_path.stem,
                 "contentType": "VIDEO",
                 "originalSource": target["resourceUrl"],
-                "filename": video_path.name,
-                "duplicateResolutionMode": "REPLACE",
             }]
         }
         create_response = self.session.post(

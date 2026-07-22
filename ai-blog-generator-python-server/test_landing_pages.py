@@ -593,3 +593,9 @@ def test_shopify_video_upload_uses_video_staging_and_returns_mp4(tmp_path: Path)
     staged_input = publisher.session.calls[0]["json"]["variables"]["input"][0]
     assert staged_input["resource"] == "VIDEO"
     assert staged_input["fileSize"] == str(video_path.stat().st_size)
+    create_input = publisher.session.calls[2]["json"]["variables"]["files"][0]
+    assert create_input == {
+        "alt": "creative",
+        "contentType": "VIDEO",
+        "originalSource": "https://staged.test/video",
+    }
