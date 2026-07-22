@@ -27,6 +27,8 @@ SHARED_GUIDE_NAMESPACE = "custom"
 SHARED_GUIDE_TITLE_KEY = "ai_blog_related_guide_title"
 SHARED_GUIDE_URL_KEY = "ai_blog_related_guide_url"
 SHARED_GUIDE_EXCERPT_KEY = "ai_blog_related_guide_excerpt"
+REVIEW_RATING_KEY = "ai_reviews_rating"
+REVIEW_COUNT_KEY = "ai_reviews_count"
 
 
 class ShopifyError(Exception):
@@ -1197,6 +1199,69 @@ async def _set_related_product_guide_metafields(
             message = err.get("message", "Shopify rejected the related guide metafield update.")
             parts.append(f"{field}: {message}" if field else message)
         raise ShopifyError("; ".join(parts))
+
+
+async def set_product_review_metafields(
+    store: StoreConfig, product_handle: str, average: float, count: int,
+    review_cache: dict | None = None,
+) -> None:
+    """Keep public Liquid/JSON-LD rating aggregates in sync with moderation."""
+    product = await _fetch_product_by_handle(store, product_handle, fields="id,handle,title")
+    if not product or not product.get("id"):
+        raise ShopifyError(f"No Shopify product found for review handle '{product_handle}'.")
+    owner_id = f"gid://shopify/Product/{product['id']}"
+    metafields = [
+        {
+            "ownerId": owner_id, "namespace": "custom", "key": REVIEW_RATING_KEY,
+            "type": "number_decimal", "value": f"{max(0.0, min(float(average), 5.0)):.2f}",
+        },
+        {
+            "ownerId": owner_id, "namespace": "custom", "key": REVIEW_COUNT_KEY,
+            "type": "number_integer", "value": str(max(0, int(count))),
+        },
+        {
+            "ownerId": owner_id, "namespace": "custom", "key": "ai_reviews_cache",
+            "type": "json", "value": json.dumps(review_cache or {}, ensure_ascii=False),
+        },
+    ]
+    mutation = """
+    mutation SetProductReviewAggregate($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { field message }
+      }
+    }
+    """
+    token = await _get_token(store)
+    async with httpx.AsyncClient(timeout=30) as client:
+        data = await _graphql(client, store, token, mutation, {"metafields": metafields})
+    errors = (data.get("metafieldsSet") or {}).get("userErrors") or []
+    if errors:
+        raise ShopifyError("; ".join(str(item.get("message") or "") for item in errors))
+
+
+async def set_store_review_cache(store: StoreConfig, review_cache: dict) -> None:
+    """Cache the public store-review summary on Shopify's AppInstallation."""
+    token = await _get_token(store)
+    query = "query ReviewAppInstallation { currentAppInstallation { id } }"
+    async with httpx.AsyncClient(timeout=30) as client:
+        installation_data = await _graphql(client, store, token, query, {})
+        installation_id = str((installation_data.get("currentAppInstallation") or {}).get("id") or "")
+        if not installation_id:
+            raise ShopifyError("Shopify did not return the current app installation ID for store review caching.")
+        mutation = """
+        mutation SetStoreReviewCache($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) { userErrors { field message } }
+        }
+        """
+        data = await _graphql(client, store, token, mutation, {
+            "metafields": [{
+                "ownerId": installation_id, "namespace": "reviews", "key": "store_cache",
+                "type": "json", "value": json.dumps(review_cache, ensure_ascii=False),
+            }]
+        })
+    errors = (data.get("metafieldsSet") or {}).get("userErrors") or []
+    if errors:
+        raise ShopifyError("; ".join(str(item.get("message") or "") for item in errors))
 
 
 async def _update_product_description_with_guide_link(

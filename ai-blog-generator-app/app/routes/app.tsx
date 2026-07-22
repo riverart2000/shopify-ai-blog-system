@@ -24,6 +24,7 @@ export default function App() {
         <s-link href="/app/social-posts">Social Posts</s-link>
         <s-link href="/app/landing-pages">Landing Pages</s-link>
         <s-link href="/app/wellness-quiz">Wellness Quiz</s-link>
+        <s-link href="/app/reviews">Reviews</s-link>
         <s-link href="/app/intelligence">Intelligence</s-link>
         <s-link href="/app/system-health">System Health</s-link>
         <s-link href="/app/history">History</s-link>

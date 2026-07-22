@@ -1,0 +1,14 @@
+{% liquid
+  assign rating_value = product.metafields.custom.ai_reviews_rating.value | default: 0
+  assign rating_count = product.metafields.custom.ai_reviews_count.value | default: 0
+  assign rounded_rating = rating_value | round
+%}
+{% if rating_count > 0 or request.design_mode %}
+  <a class="bl-review-stars" href="#bioluxe-reviews" {{ block.shopify_attributes }} aria-label="Rated {{ rating_value }} out of 5 from {{ rating_count }} reviews">
+    <span class="bl-review-stars__icons" aria-hidden="true">{% for star in (1..5) %}{% if star <= rounded_rating %}★{% else %}☆{% endif %}{% endfor %}</span>
+    <span class="bl-review-stars__count">{% if rating_count > 0 %}{{ rating_value }} from {{ rating_count }} {% if rating_count == 1 %}review{% else %}reviews{% endif %}{% else %}Review stars appear after the first approval{% endif %}</span>
+  </a>
+{% endif %}
+{% schema %}
+{"name":"Product rating stars","target":"section","stylesheet":"customer-reviews.css","enabled_on":{"templates":["product"]},"settings":[]}
+{% endschema %}

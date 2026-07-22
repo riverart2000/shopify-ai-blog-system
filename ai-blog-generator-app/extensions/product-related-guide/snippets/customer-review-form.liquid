@@ -1,0 +1,18 @@
+<form class="bl-review-form" data-review-form>
+  <div class="bl-review-form__grid">
+    <fieldset class="bl-review-form__wide">
+      <legend>Your rating</legend>
+      <div class="bl-review-form__rating" aria-label="Star rating">
+        {% for value in (1..5) reversed %}<input id="bl-rating-{{ block.id }}-{{ value }}" type="radio" name="rating" value="{{ value }}" required><label for="bl-rating-{{ block.id }}-{{ value }}" aria-label="{{ value }} stars">★</label>{% endfor %}
+      </div>
+    </fieldset>
+    <label><span>Your display name</span><input name="reviewer_name" minlength="2" maxlength="80" autocomplete="name" required></label>
+    <label><span>Your email <small>(never displayed)</small></span><input type="email" name="reviewer_email" maxlength="254" autocomplete="email" required></label>
+    <label class="bl-review-form__wide"><span>Review title</span><input name="review_title" minlength="2" maxlength="120" required></label>
+    <label class="bl-review-form__wide"><span>Your review</span><textarea name="review_body" minlength="10" maxlength="3000" required></textarea></label>
+    <label class="bl-review-form__wide"><span>Optional photograph <small>(JPEG, PNG or WebP; maximum 2 MB)</small></span><input type="file" accept="image/jpeg,image/png,image/webp"></label>
+    <label class="bl-review-form__honeypot" aria-hidden="true"><span>Website</span><input name="website" tabindex="-1" autocomplete="off"></label>
+    <label class="bl-review-form__wide bl-review-form__consent"><input type="checkbox" name="consent" value="1" required><span>I agree that BioLuxeLab may display my review, name and photograph. My email remains private.</span></label>
+    <div class="bl-review-form__wide"><button class="bl-reviews__button" type="submit">Submit review for approval</button></div>
+  </div>
+</form>

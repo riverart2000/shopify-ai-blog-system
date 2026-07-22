@@ -38,6 +38,11 @@ from .wellness_quiz import (
     replace_wellness_quiz_products, get_wellness_quiz_products,
     record_wellness_quiz_event, get_wellness_quiz_summary,
 )
+from .reviews import (
+    create_review, get_review, rate_limit_count, duplicate_count, list_reviews,
+    get_review_summary, get_admin_summary, moderate_review, delete_review,
+    export_reviews_csv,
+)
 
 __all__ = [
     # base
@@ -74,4 +79,8 @@ __all__ = [
     # wellness quiz
     "replace_wellness_quiz_products", "get_wellness_quiz_products",
     "record_wellness_quiz_event", "get_wellness_quiz_summary",
+    # reviews
+    "create_review", "get_review", "rate_limit_count", "duplicate_count",
+    "list_reviews", "get_review_summary", "get_admin_summary",
+    "moderate_review", "delete_review", "export_reviews_csv",
 ]

@@ -259,6 +259,54 @@ CREATE INDEX IF NOT EXISTS idx_wellness_quiz_events_store_created
 
 CREATE INDEX IF NOT EXISTS idx_wellness_quiz_events_session
     ON wellness_quiz_events(store_id, session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS reviews (
+    id                TEXT PRIMARY KEY,
+    store_id          TEXT NOT NULL,
+    review_type       TEXT NOT NULL DEFAULT 'product',
+    product_id        TEXT NOT NULL DEFAULT '',
+    product_handle    TEXT NOT NULL DEFAULT '',
+    product_title     TEXT NOT NULL DEFAULT '',
+    rating            INTEGER NOT NULL,
+    review_title      TEXT NOT NULL DEFAULT '',
+    review_body       TEXT NOT NULL,
+    reviewer_name     TEXT NOT NULL,
+    reviewer_email    TEXT NOT NULL DEFAULT '',
+    status            TEXT NOT NULL DEFAULT 'pending',
+    merchant_reply    TEXT NOT NULL DEFAULT '',
+    moderation_flags  TEXT NOT NULL DEFAULT '[]',
+    moderation_note   TEXT NOT NULL DEFAULT '',
+    photo_data        TEXT NOT NULL DEFAULT '',
+    photo_url         TEXT NOT NULL DEFAULT '',
+    verified_purchase INTEGER NOT NULL DEFAULT 0,
+    source             TEXT NOT NULL DEFAULT 'storefront',
+    source_path        TEXT NOT NULL DEFAULT '',
+    ip_hash            TEXT NOT NULL DEFAULT '',
+    created_at         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    published_at       INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_store_status_created
+    ON reviews(store_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_product_published
+    ON reviews(store_id, product_handle, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_rate_limit
+    ON reviews(store_id, ip_hash, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS review_audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id  TEXT NOT NULL,
+    store_id   TEXT NOT NULL,
+    action     TEXT NOT NULL,
+    details    TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_audit_review
+    ON review_audit(review_id, created_at DESC);
 """
 
 # Columns added in v2 — wrapped in try/except since ALTER TABLE has no IF NOT EXISTS

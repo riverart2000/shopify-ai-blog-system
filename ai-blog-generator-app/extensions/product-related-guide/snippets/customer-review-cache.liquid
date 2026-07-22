@@ -1,0 +1,15 @@
+{% if review_cache != blank and review_cache.summary != blank %}
+  {% assign cache_summary = review_cache.summary %}
+  <div class="bl-reviews__score">
+    <div class="bl-reviews__average">{% if cache_summary.count > 0 %}{{ cache_summary.average }}{% else %}—{% endif %}</div>
+    <div class="bl-reviews__stars" aria-hidden="true">{% assign rounded_cache_rating = cache_summary.average | round %}{% for star in (1..5) %}{% if star <= rounded_cache_rating %}★{% else %}☆{% endif %}{% endfor %}</div>
+    <div class="bl-reviews__count">{{ cache_summary.count }} {% if cache_summary.count == 1 %}review{% else %}reviews{% endif %}</div>
+  </div>
+  <div class="bl-reviews__distribution">
+    {% for star in (1..5) reversed %}
+      {% assign star_key = star | append: '' %}{% assign star_count = cache_summary.distribution[star_key] | default: 0 %}
+      {% if cache_summary.count > 0 %}{% assign star_width = star_count | times: 100.0 | divided_by: cache_summary.count %}{% else %}{% assign star_width = 0 %}{% endif %}
+      <button class="bl-reviews__bar" type="button" aria-label="Show {{ star }} star reviews"><span>{{ star }} ★</span><span class="bl-reviews__track"><span class="bl-reviews__fill" style="width:{{ star_width }}%"></span></span><span>{{ star_count }}</span></button>
+    {% endfor %}
+  </div>
+{% endif %}
