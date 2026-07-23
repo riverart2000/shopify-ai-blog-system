@@ -5,7 +5,7 @@
     <div class="bl-reviews__message" data-review-message hidden aria-live="polite"></div>
     {% render 'customer-review-form' %}
     <div class="bl-reviews__summary" data-review-summary aria-live="polite">{% render 'customer-review-cache', review_cache: review_cache %}</div>
-    <div class="bl-reviews__tools"><span class="bl-reviews__filter">Reviews about service, delivery and the BioLuxeLab experience</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
+    <div class="bl-reviews__tools"><span class="bl-reviews__filter">Site reviews and clearly labelled recommendations imported from Facebook</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
     <div class="bl-reviews__list" data-review-list>{% render 'customer-review-cards', review_cache: review_cache %}</div>
     <div class="bl-reviews__more"><button class="bl-reviews__button bl-reviews__button--secondary" type="button" data-review-more hidden>Load more reviews</button></div>
   </div>

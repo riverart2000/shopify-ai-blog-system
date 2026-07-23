@@ -8,16 +8,16 @@ type Review = {
   rating: number; review_title: string; review_body: string; reviewer_name: string;
   reviewer_email: string; status: string; merchant_reply: string; moderation_flags: string[];
   moderation_note: string; photo_data: string; photo_url: string; verified_purchase: boolean;
-  source: string; created_at: number; published_at?: number;
+  source: string; source_path: string; created_at: number; published_at?: number;
 };
 type ReviewData = {
   store_id: string; shop: string; total: number; reviews: Review[];
-  summary: { total: number; pending: number; published: number; not_published: number; awaiting_reply: number; average: number };
+  summary: { total: number; pending: number; published: number; not_published: number; awaiting_reply: number; facebook: number; average: number };
 };
 
 const EMPTY: ReviewData = {
   store_id: "", shop: "", total: 0, reviews: [],
-  summary: { total: 0, pending: 0, published: 0, not_published: 0, awaiting_reply: 0, average: 0 },
+  summary: { total: 0, pending: 0, published: 0, not_published: 0, awaiting_reply: 0, facebook: 0, average: 0 },
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -53,6 +53,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         method: "POST", body: JSON.stringify({ shop: context.session.shop }),
       });
       return { ok: true, message: String(result.message || "Shopify review cache refreshed.") };
+    }
+    if (intent === "import-facebook") {
+      const result = await reviewsBackendJson("/api/reviews/import-external", {
+        method: "POST",
+        body: JSON.stringify({
+          shop: context.session.shop,
+          source: "facebook",
+          reviewer_name: String(form.get("reviewer_name") || ""),
+          review_body: String(form.get("review_body") || ""),
+          recommendation: String(form.get("recommendation") || "recommends"),
+          source_url: String(form.get("source_url") || ""),
+          review_date: String(form.get("review_date") || ""),
+          confirmed_complete: form.get("confirmed_complete") === "1",
+        }),
+      });
+      return { ok: true, message: String(result.message || "Facebook recommendation imported.") };
     }
     if (intent === "moderate") {
       const result = await reviewsBackendJson("/api/reviews/moderate", {
@@ -121,12 +137,36 @@ export default function ReviewsAdmin() {
       </div>
     </s-section>
 
+    <s-section heading="Facebook recommendations">
+      <div style={{ display: "grid", gap: 14 }}>
+        <Alert tone="info">
+          Import genuine public recommendations from the BioLuxeLab Facebook Reviews page. They are labelled as Facebook recommendations, link to the original source and remain separate from the store&apos;s first-party star average.
+        </Alert>
+        <details style={{ border: "1px solid #d8dee4", borderRadius: 12, background: "white", padding: "12px 14px" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 750 }}>Import a Facebook review</summary>
+          <Form method="post" style={{ display: "grid", gap: 11, marginTop: 14, maxWidth: 760 }}>
+            <input type="hidden" name="intent" value="import-facebook" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 11 }}>
+              <label style={{ display: "grid", gap: 4, fontSize: ".8rem" }}><span>Reviewer&apos;s public name</span><input name="reviewer_name" required minLength={2} maxLength={80} style={input} /></label>
+              <label style={{ display: "grid", gap: 4, fontSize: ".8rem" }}><span>Facebook recommendation</span><select name="recommendation" style={input}><option value="recommends">Recommends BioLuxeLab</option><option value="does_not_recommend">Does not recommend BioLuxeLab</option></select></label>
+              <label style={{ display: "grid", gap: 4, fontSize: ".8rem" }}><span>Original review date</span><input type="date" name="review_date" style={input} /></label>
+            </div>
+            <label style={{ display: "grid", gap: 4, fontSize: ".8rem" }}><span>Original Facebook review link</span><input type="url" name="source_url" defaultValue="https://www.facebook.com/bioluxelab/reviews" required style={input} /></label>
+            <label style={{ display: "grid", gap: 4, fontSize: ".8rem" }}><span>Review text exactly as the customer wrote it</span><textarea name="review_body" required minLength={2} maxLength={3000} rows={4} style={{ ...input, resize: "vertical" }} /></label>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", color: "#4b5563", fontSize: ".8rem", lineHeight: 1.45 }}><input type="checkbox" name="confirmed_complete" value="1" required style={{ marginTop: 2 }} /><span>I confirm this is genuine public feedback and that I will import Facebook feedback consistently, including negative recommendations.</span></label>
+            <div><button type="submit" disabled={busy} style={{ ...button, background: "#1877f2", color: "white" }}>Import and publish Facebook review</button></div>
+          </Form>
+        </details>
+      </div>
+    </s-section>
+
     <s-section heading="Review totals">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 10 }}>
         <Metric label="All reviews" value={String(data.summary.total)} />
         <Metric label="Pending" value={String(data.summary.pending)} detail="Needs moderation" />
         <Metric label="Published" value={String(data.summary.published)} />
-        <Metric label="Average" value={data.summary.published ? `${data.summary.average.toFixed(1)} ★` : "—"} />
+        <Metric label="Site average" value={data.summary.published - data.summary.facebook > 0 ? `${data.summary.average.toFixed(1)} ★` : "—"} detail="Facebook kept separate" />
+        <Metric label="Facebook" value={String(data.summary.facebook)} detail="Imported recommendations" />
         <Metric label="Needs reply" value={String(data.summary.awaiting_reply)} />
       </div>
     </s-section>
@@ -142,18 +182,21 @@ export default function ReviewsAdmin() {
         {data.reviews.map(review => <article key={review.id} style={{ border: "1px solid #e5e7eb", borderLeft: `4px solid ${review.rating >= 4 ? "#16a34a" : review.rating === 3 ? "#d97706" : "#dc2626"}`, borderRadius: 12, padding: 16, background: "white" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <div style={{ color: "#d97706", letterSpacing: 1, fontWeight: 800 }}>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</div>
+              {review.source === "facebook"
+                ? <div style={{ color: "#1877f2", fontWeight: 800 }}>Facebook · {review.rating >= 4 ? "Recommends BioLuxeLab" : "Does not recommend BioLuxeLab"}</div>
+                : <div style={{ color: "#d97706", letterSpacing: 1, fontWeight: 800 }}>{"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}</div>}
               <h3 style={{ margin: "5px 0 2px", fontSize: "1rem" }}>{review.review_title}</h3>
               <div style={{ color: "#6b7280", fontSize: ".75rem" }}>{review.review_type === "product" ? review.product_title || review.product_handle : "BioLuxeLab store review"} · {formatDate(review.created_at)}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
               <span style={{ borderRadius: 999, padding: "4px 9px", background: "#f3f4f6", fontSize: ".7rem", fontWeight: 750, textTransform: "uppercase" }}>{review.status}</span>
+              {review.source === "facebook" ? <span style={{ borderRadius: 999, padding: "4px 9px", background: "#e7f0ff", color: "#145dbf", fontSize: ".7rem", fontWeight: 750 }}>Facebook source</span> : null}
               {review.verified_purchase ? <span style={{ borderRadius: 999, padding: "4px 9px", background: "#dcfce7", color: "#166534", fontSize: ".7rem", fontWeight: 750 }}>Verified purchase</span> : null}
               {review.moderation_flags.map(flag => <span key={flag} style={{ borderRadius: 999, padding: "4px 9px", background: "#fff7ed", color: "#9a3412", fontSize: ".7rem" }}>{flag.replaceAll("_", " ")}</span>)}
             </div>
           </div>
           <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.55, color: "#374151" }}>{review.review_body}</p>
-          <div style={{ color: "#4b5563", fontSize: ".8rem" }}><strong>{review.reviewer_name}</strong> · <span title="Private customer email">{review.reviewer_email}</span></div>
+          <div style={{ color: "#4b5563", fontSize: ".8rem" }}><strong>{review.reviewer_name}</strong>{review.reviewer_email ? <> · <span title="Private customer email">{review.reviewer_email}</span></> : null}{review.source === "facebook" && review.source_path ? <> · <a href={review.source_path} target="_blank" rel="noreferrer">View original on Facebook</a></> : null}</div>
           {review.photo_data || review.photo_url ? <img src={review.photo_url || review.photo_data} alt="Customer-submitted review" style={{ marginTop: 12, width: 150, maxHeight: 150, objectFit: "cover", borderRadius: 10, border: "1px solid #e5e7eb" }} /> : null}
 
           <Form method="post" style={{ marginTop: 14, display: "grid", gap: 9 }}>

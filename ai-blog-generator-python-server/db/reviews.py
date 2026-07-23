@@ -25,6 +25,7 @@ def _decode(row: aiosqlite.Row) -> dict:
 async def create_review(store_id: str, data: dict) -> dict:
     review_id = str(uuid.uuid4())
     now = int(time.time())
+    created_at = int(data.get("created_at") or now)
     async with aiosqlite.connect(get_db_path()) as conn:
         await conn.execute(
             """INSERT INTO reviews
@@ -41,7 +42,7 @@ async def create_review(store_id: str, data: dict) -> dict:
                 data.get("reviewer_name", ""), data.get("reviewer_email", ""),
                 json.dumps(data.get("moderation_flags", []), ensure_ascii=False),
                 data.get("photo_data", ""), data.get("source", "storefront"),
-                data.get("source_path", ""), data.get("ip_hash", ""), now, now,
+                data.get("source_path", ""), data.get("ip_hash", ""), created_at, now,
             ),
         )
         await conn.execute(
@@ -50,6 +51,21 @@ async def create_review(store_id: str, data: dict) -> dict:
         )
         await conn.commit()
     return await get_review(store_id, review_id) or {}
+
+
+async def external_review_duplicate_count(
+    store_id: str, source: str, reviewer_name: str, review_body: str
+) -> int:
+    """Prevent the same external review being manually imported more than once."""
+    async with aiosqlite.connect(get_db_path()) as conn:
+        async with conn.execute(
+            """SELECT COUNT(*) FROM reviews
+               WHERE store_id=? AND source=?
+                 AND lower(reviewer_name)=lower(?) AND review_body=?""",
+            (store_id, source, reviewer_name, review_body),
+        ) as cur:
+            row = await cur.fetchone()
+    return int(row[0] or 0) if row else 0
 
 
 async def get_review(store_id: str, review_id: str) -> dict | None:
@@ -135,27 +151,37 @@ async def list_reviews(
 
 
 async def get_review_summary(store_id: str, product_handle: str = "", review_type: str = "") -> dict:
-    clauses = ["store_id=?", "status='published'"]
+    base_clauses = ["store_id=?", "status='published'"]
     values: list[object] = [store_id]
     if product_handle:
-        clauses.append("product_handle=?")
+        base_clauses.append("product_handle=?")
         values.append(product_handle)
     if review_type:
-        clauses.append("review_type=?")
+        base_clauses.append("review_type=?")
         values.append(review_type)
-    where = " AND ".join(clauses)
+    base_where = " AND ".join(base_clauses)
+    rating_where = f"{base_where} AND source='storefront'"
     async with aiosqlite.connect(get_db_path()) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute(
-            f"SELECT COUNT(*) count, COALESCE(AVG(rating),0) average FROM reviews WHERE {where}",  # noqa: S608
+            f"SELECT COUNT(*) count, COALESCE(AVG(rating),0) average FROM reviews WHERE {rating_where}",  # noqa: S608
             values,
         ) as cur:
             aggregate = await cur.fetchone()
         async with conn.execute(
-            f"SELECT rating, COUNT(*) count FROM reviews WHERE {where} GROUP BY rating",  # noqa: S608
+            f"SELECT rating, COUNT(*) count FROM reviews WHERE {rating_where} GROUP BY rating",  # noqa: S608
             values,
         ) as cur:
             distribution_rows = await cur.fetchall()
+        async with conn.execute(
+            f"""SELECT
+                  SUM(CASE WHEN source!='storefront' THEN 1 ELSE 0 END) external_count,
+                  SUM(CASE WHEN source='facebook' THEN 1 ELSE 0 END) facebook_count,
+                  COUNT(*) total_count
+                FROM reviews WHERE {base_where}""",  # noqa: S608
+            values,
+        ) as cur:
+            source_counts = await cur.fetchone()
     distribution = {str(star): 0 for star in range(1, 6)}
     for row in distribution_rows:
         distribution[str(row["rating"])] = int(row["count"])
@@ -163,6 +189,9 @@ async def get_review_summary(store_id: str, product_handle: str = "", review_typ
         "count": int(aggregate["count"] or 0),
         "average": round(float(aggregate["average"] or 0), 2),
         "distribution": distribution,
+        "external_count": int(source_counts["external_count"] or 0),
+        "facebook_count": int(source_counts["facebook_count"] or 0),
+        "total_count": int(source_counts["total_count"] or 0),
     }
 
 
@@ -176,7 +205,8 @@ async def get_admin_summary(store_id: str) -> dict:
                  SUM(CASE WHEN status='published' THEN 1 ELSE 0 END) published,
                  SUM(CASE WHEN status IN ('rejected','spam','hidden') THEN 1 ELSE 0 END) not_published,
                  SUM(CASE WHEN status='published' AND merchant_reply='' THEN 1 ELSE 0 END) awaiting_reply,
-                 COALESCE(AVG(CASE WHEN status='published' THEN rating END),0) average
+                 SUM(CASE WHEN source='facebook' THEN 1 ELSE 0 END) facebook,
+                 COALESCE(AVG(CASE WHEN status='published' AND source='storefront' THEN rating END),0) average
                FROM reviews WHERE store_id=?""",
             (store_id,),
         ) as cur:
@@ -186,6 +216,7 @@ async def get_admin_summary(store_id: str) -> dict:
         "published": int(row["published"] or 0),
         "not_published": int(row["not_published"] or 0),
         "awaiting_reply": int(row["awaiting_reply"] or 0),
+        "facebook": int(row["facebook"] or 0),
         "average": round(float(row["average"] or 0), 2),
     }
 
@@ -251,7 +282,7 @@ async def export_reviews_csv(store_id: str) -> str:
         "id", "review_type", "product_handle", "product_title", "rating",
         "review_title", "review_body", "reviewer_name", "reviewer_email",
         "status", "verified_purchase", "merchant_reply", "photo_url",
-        "source", "created_at", "published_at",
+        "source", "source_path", "created_at", "published_at",
     ]
     writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
     writer.writeheader()

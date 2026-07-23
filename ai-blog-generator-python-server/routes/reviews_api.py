@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -58,6 +59,18 @@ class ReviewCacheSyncRequest(BaseModel):
     shop: str = ""
 
 
+class ExternalReviewImportRequest(BaseModel):
+    store_id: str = ""
+    shop: str = ""
+    source: Literal["facebook"] = "facebook"
+    reviewer_name: str = Field(min_length=2, max_length=80)
+    review_body: str = Field(min_length=2, max_length=3000)
+    recommendation: Literal["recommends", "does_not_recommend"] = "recommends"
+    source_url: str = Field(min_length=12, max_length=1000)
+    review_date: str = Field(default="", max_length=10)
+    confirmed_complete: bool = False
+
+
 async def _store_for(store_id: str = "", shop: str = "") -> dict:
     if store_id.strip():
         return await _resolve_generation_store(store_id)
@@ -80,14 +93,16 @@ def _store_config(row: dict) -> StoreConfig:
 
 
 def _public_review(item: dict) -> dict:
-    return {
+    public = {
         key: item.get(key)
         for key in (
             "id", "review_type", "product_handle", "product_title", "rating",
             "review_title", "review_body", "reviewer_name", "merchant_reply",
-            "photo_url", "verified_purchase", "created_at", "published_at",
+            "photo_url", "verified_purchase", "source", "created_at", "published_at",
         )
     }
+    public["source_url"] = item.get("source_path", "") if item.get("source") == "facebook" else ""
+    return public
 
 
 async def _shopify_cache(store: dict, review_type: str, product_handle: str = "") -> dict:
@@ -201,6 +216,70 @@ async def review_submit(request: Request, payload: ReviewSubmitRequest):
     })
     logger.info("Review submitted id=%s type=%s product=%s flags=%s", item.get("id"), payload.review_type, product_handle, flags)
     return {"ok": True, "review_id": item.get("id"), "message": "Thank you. Your review was submitted for approval."}
+
+
+@router.post("/import-external")
+async def review_import_external(request: Request, payload: ExternalReviewImportRequest):
+    """Import a genuine public recommendation without blending it into site ratings."""
+    _verify_backend_api_key(request)
+    if not payload.confirmed_complete:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm that every Facebook recommendation is being imported, including negative feedback.",
+        )
+    store = await _store_for(payload.store_id, payload.shop)
+    sid = str(store["id"])
+    name = review_service.clean_text(payload.reviewer_name, 80)
+    body = review_service.clean_text(payload.review_body, 3000, multiline=True)
+    if len(name) < 2 or len(body) < 2:
+        raise HTTPException(status_code=400, detail="Reviewer name and Facebook review text are required.")
+    try:
+        source_url = review_service.validate_facebook_review_url(payload.source_url)
+    except review_service.ReviewValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    created_at = int(time.time())
+    if payload.review_date:
+        try:
+            created_at = int(datetime.strptime(payload.review_date, "%Y-%m-%d").replace(tzinfo=UTC).timestamp())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Facebook review date must be YYYY-MM-DD.") from exc
+        if created_at > int(time.time()) + 86400:
+            raise HTTPException(status_code=400, detail="Facebook review date cannot be in the future.")
+    if await db.external_review_duplicate_count(sid, "facebook", name, body):
+        raise HTTPException(status_code=409, detail="This Facebook review has already been imported.")
+    recommends = payload.recommendation == "recommends"
+    item = await db.create_review(sid, {
+        "review_type": "store",
+        "rating": 5 if recommends else 1,
+        "review_title": "Recommended on Facebook" if recommends else "Facebook recommendation",
+        "review_body": body,
+        "reviewer_name": name,
+        "reviewer_email": "",
+        "source": "facebook",
+        "source_path": source_url,
+        "created_at": created_at,
+        "moderation_flags": [],
+    })
+    await db.moderate_review(
+        sid, item["id"], status="published",
+        moderation_note="Imported from the public BioLuxeLab Facebook Reviews page.",
+    )
+    try:
+        await shopify_client.set_store_review_cache(
+            _store_config(store), await _shopify_cache(store, "store")
+        )
+    except Exception as exc:
+        await db.delete_review(sid, item["id"])
+        logger.exception("Facebook review import rolled back after Shopify cache failure")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Facebook review was not imported because Shopify cache sync failed: {type(exc).__name__}: {exc}",
+        ) from exc
+    return {
+        "ok": True,
+        "review_id": item["id"],
+        "message": "Facebook recommendation imported and published to the store review block.",
+    }
 
 
 @router.post("/moderate")

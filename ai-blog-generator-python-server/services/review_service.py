@@ -6,6 +6,7 @@ import hashlib
 import io
 import os
 import re
+from urllib.parse import urlparse
 
 from PIL import Image, UnidentifiedImageError
 
@@ -38,6 +39,22 @@ def validate_email(value: object) -> str:
     if not EMAIL_RE.fullmatch(email):
         raise ReviewValidationError("Enter a valid email address. It will never be displayed publicly.")
     return email
+
+
+def validate_facebook_review_url(value: object) -> str:
+    url = clean_text(value, 1000)
+    try:
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise ReviewValidationError("Enter a valid Facebook review URL.") from exc
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not (
+        hostname == "facebook.com" or hostname.endswith(".facebook.com")
+    ):
+        raise ReviewValidationError(
+            "The original review link must be an https://facebook.com URL."
+        )
+    return url
 
 
 def moderation_flags(title: str, body: str, name: str) -> list[str]:
@@ -82,4 +99,3 @@ def normalize_photo(data_uri: str) -> str:
         raise ReviewValidationError("The uploaded file is not a readable image.") from exc
     optimized = optimize_image(raw, max_width=1600, max_height=1600)
     return "data:image/webp;base64," + base64.b64encode(optimized).decode("ascii")
-

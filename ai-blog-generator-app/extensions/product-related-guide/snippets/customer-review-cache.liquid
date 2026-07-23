@@ -3,7 +3,7 @@
   <div class="bl-reviews__score">
     <div class="bl-reviews__average">{% if cache_summary.count > 0 %}{{ cache_summary.average }}{% else %}—{% endif %}</div>
     <div class="bl-reviews__stars" aria-hidden="true">{% assign rounded_cache_rating = cache_summary.average | round %}{% for star in (1..5) %}{% if star <= rounded_cache_rating %}★{% else %}☆{% endif %}{% endfor %}</div>
-    <div class="bl-reviews__count">{{ cache_summary.count }} {% if cache_summary.count == 1 %}review{% else %}reviews{% endif %}</div>
+    <div class="bl-reviews__count">{{ cache_summary.count }} site {% if cache_summary.count == 1 %}review{% else %}reviews{% endif %}{% if cache_summary.facebook_count > 0 %} · {{ cache_summary.facebook_count }} Facebook {% if cache_summary.facebook_count == 1 %}recommendation{% else %}recommendations{% endif %}{% endif %}</div>
   </div>
   <div class="bl-reviews__distribution">
     {% for star in (1..5) reversed %}
