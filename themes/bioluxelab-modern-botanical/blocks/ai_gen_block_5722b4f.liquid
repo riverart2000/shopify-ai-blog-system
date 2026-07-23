@@ -1,0 +1,523 @@
+{% doc %}
+  @prompt
+    Add social share buttons at the end of every blog post/article template. The buttons should include Facebook, X/Twitter, WhatsApp, and a copy link option. Style them to look clean and premium, fitting a health and wellness brand. The buttons should share the current article's URL and title.
+{% enddoc %}
+{% assign ai_gen_id = block.id | replace: '_', '' | downcase %}
+
+{% style %}
+  .ai-social-share-{{ ai_gen_id }} {
+    display: block;
+    width: {{ block.settings.desktop_width_percent }}%;
+    max-width: 100%;
+    margin: 0 auto;
+    padding: {{ block.settings.spacing_top }}px 0 {{ block.settings.spacing_bottom }}px;
+  }
+
+  .ai-social-share-container-{{ ai_gen_id }} {
+    display: flex;
+    flex-direction: column;
+    gap: {{ block.settings.gap }}px;
+    align-items: {{ block.settings.alignment }};
+  }
+
+  .ai-social-share-heading-{{ ai_gen_id }} {
+    margin: 0;
+    font-size: {{ block.settings.heading_size }}px;
+    color: {{ block.settings.heading_color }};
+    font-weight: 500;
+  }
+
+  .ai-social-share-buttons-{{ ai_gen_id }} {
+    display: flex;
+    gap: {{ block.settings.button_gap }}px;
+    flex-wrap: wrap;
+    justify-content: {{ block.settings.alignment }};
+  }
+
+  .ai-social-share-button-{{ ai_gen_id }} {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: {{ block.settings.button_padding }}px {{ block.settings.button_padding | times: 1.5 }}px;
+    background-color: {{ block.settings.button_background }};
+    color: {{ block.settings.button_text_color }};
+    border: {{ block.settings.button_border_width }}px solid {{ block.settings.button_border_color }};
+    border-radius: {{ block.settings.button_border_radius }}px;
+    text-decoration: none;
+    font-size: {{ block.settings.button_font_size }}px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+
+  .ai-social-share-button-{{ ai_gen_id }}:hover {
+    background-color: {{ block.settings.button_hover_background }};
+    color: {{ block.settings.button_hover_text_color }};
+    border-color: {{ block.settings.button_hover_border_color }};
+    transform: translateY(-2px);
+  }
+
+  .ai-social-share-button-{{ ai_gen_id }} svg {
+    width: {{ block.settings.icon_size }}px;
+    height: {{ block.settings.icon_size }}px;
+    flex-shrink: 0;
+  }
+
+  .ai-social-share-button-text-{{ ai_gen_id }} {
+    {% if block.settings.show_labels == false %}
+      display: none;
+    {% endif %}
+  }
+
+  .ai-social-share-copied-{{ ai_gen_id }} {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: {{ block.settings.notification_background }};
+    color: {{ block.settings.notification_text_color }};
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .ai-social-share-copied-{{ ai_gen_id }}.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  @media screen and (max-width: 749px) {
+    .ai-social-share-container-{{ ai_gen_id }} {
+      align-items: center;
+    }
+
+    .ai-social-share-buttons-{{ ai_gen_id }} {
+      justify-content: center;
+    }
+
+    .ai-social-share-button-text-{{ ai_gen_id }} {
+      {% if block.settings.hide_labels_mobile %}
+        display: none;
+      {% endif %}
+    }
+  }
+{% endstyle %}
+
+<social-share-{{ ai_gen_id }} class="ai-social-share-{{ ai_gen_id }}" {{ block.shopify_attributes }}>
+  <div class="ai-social-share-container-{{ ai_gen_id }}">
+    {% if block.settings.heading != blank %}
+      <h3 class="ai-social-share-heading-{{ ai_gen_id }}">{{ block.settings.heading }}</h3>
+    {% endif %}
+
+    <div class="ai-social-share-buttons-{{ ai_gen_id }}">
+      {% if block.settings.show_facebook %}
+        <a
+          href="https://www.facebook.com/sharer/sharer.php?u={{ article.url | default: page.url | url_encode }}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="ai-social-share-button-{{ ai_gen_id }}"
+          aria-label="Share on Facebook"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+          </svg>
+          <span class="ai-social-share-button-text-{{ ai_gen_id }}">Facebook</span>
+        </a>
+      {% endif %}
+
+      {% if block.settings.show_twitter %}
+        <a
+          href="https://twitter.com/intent/tweet?url={{ article.url | default: page.url | url_encode }}&text={{ article.title | default: page.title | url_encode }}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="ai-social-share-button-{{ ai_gen_id }}"
+          aria-label="Share on X (Twitter)"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+          </svg>
+          <span class="ai-social-share-button-text-{{ ai_gen_id }}">X</span>
+        </a>
+      {% endif %}
+
+      {% if block.settings.show_whatsapp %}
+        <a
+          href="https://wa.me/?text={{ article.title | default: page.title | url_encode }}%20{{ article.url | default: page.url | url_encode }}"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="ai-social-share-button-{{ ai_gen_id }}"
+          aria-label="Share on WhatsApp"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>
+          </svg>
+          <span class="ai-social-share-button-text-{{ ai_gen_id }}">WhatsApp</span>
+        </a>
+      {% endif %}
+
+      {% if block.settings.show_copy_link %}
+        <button
+          type="button"
+          class="ai-social-share-button-{{ ai_gen_id }}"
+          data-copy-link
+          aria-label="Copy link"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+          <span class="ai-social-share-button-text-{{ ai_gen_id }}">Copy link</span>
+        </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="ai-social-share-copied-{{ ai_gen_id }}" data-notification>
+    {{ block.settings.copy_notification_text }}
+  </div>
+</social-share-{{ ai_gen_id }}>
+
+<script>
+  (function() {
+    class SocialShare{{ ai_gen_id }} extends HTMLElement {
+      constructor() {
+        super();
+      }
+
+      connectedCallback() {
+        this.copyButton = this.querySelector('[data-copy-link]');
+        this.notification = this.querySelector('[data-notification]');
+        
+        if (this.copyButton) {
+          this.copyButton.addEventListener('click', this.handleCopyLink.bind(this));
+        }
+      }
+
+      handleCopyLink() {
+        const url = window.location.href;
+        
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(() => {
+            this.showNotification();
+          }).catch(() => {
+            this.fallbackCopyToClipboard(url);
+          });
+        } else {
+          this.fallbackCopyToClipboard(url);
+        }
+      }
+
+      fallbackCopyToClipboard(text) {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+          document.execCommand('copy');
+          this.showNotification();
+        } catch (err) {
+          console.error('Failed to copy:', err);
+        }
+        
+        document.body.removeChild(textArea);
+      }
+
+      showNotification() {
+        if (!this.notification) return;
+        
+        this.notification.classList.add('active');
+        
+        setTimeout(() => {
+          this.notification.classList.remove('active');
+        }, 3000);
+      }
+    }
+
+    customElements.define('social-share-{{ ai_gen_id }}', SocialShare{{ ai_gen_id }});
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Article social share",
+  "tag": null,
+  "settings": [
+    {
+      "type": "header",
+      "content": "Content"
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Share this article"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_labels",
+      "label": "Show button labels",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "hide_labels_mobile",
+      "label": "Hide labels on mobile",
+      "default": true
+    },
+    {
+      "type": "header",
+      "content": "Social platforms"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_facebook",
+      "label": "Show Facebook",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_twitter",
+      "label": "Show X (Twitter)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_whatsapp",
+      "label": "Show WhatsApp",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_copy_link",
+      "label": "Show copy link",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "copy_notification_text",
+      "label": "Copy notification text",
+      "default": "Link copied to clipboard!"
+    },
+    {
+      "type": "header",
+      "content": "Layout"
+    },
+    {
+      "type": "select",
+      "id": "alignment",
+      "label": "Alignment",
+      "options": [
+        {
+          "value": "flex-start",
+          "label": "Left"
+        },
+        {
+          "value": "center",
+          "label": "Center"
+        },
+        {
+          "value": "flex-end",
+          "label": "Right"
+        }
+      ],
+      "default": "center"
+    },
+    {
+      "type": "range",
+      "id": "desktop_width_percent",
+      "label": "Desktop width",
+      "min": 50,
+      "max": 100,
+      "step": 5,
+      "unit": "%",
+      "default": 100
+    },
+    {
+      "type": "range",
+      "id": "spacing_top",
+      "label": "Spacing top",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "unit": "px",
+      "default": 40
+    },
+    {
+      "type": "range",
+      "id": "spacing_bottom",
+      "label": "Spacing bottom",
+      "min": 0,
+      "max": 100,
+      "step": 5,
+      "unit": "px",
+      "default": 40
+    },
+    {
+      "type": "range",
+      "id": "gap",
+      "label": "Gap between heading and buttons",
+      "min": 8,
+      "max": 40,
+      "step": 4,
+      "unit": "px",
+      "default": 20
+    },
+    {
+      "type": "range",
+      "id": "button_gap",
+      "label": "Gap between buttons",
+      "min": 4,
+      "max": 24,
+      "step": 2,
+      "unit": "px",
+      "default": 12
+    },
+    {
+      "type": "header",
+      "content": "Heading style"
+    },
+    {
+      "type": "range",
+      "id": "heading_size",
+      "label": "Heading size",
+      "min": 12,
+      "max": 32,
+      "step": 2,
+      "unit": "px",
+      "default": 16
+    },
+    {
+      "type": "color",
+      "id": "heading_color",
+      "label": "Heading color",
+      "default": "#1a2e1c"
+    },
+    {
+      "type": "header",
+      "content": "Button style"
+    },
+    {
+      "type": "range",
+      "id": "button_padding",
+      "label": "Button padding",
+      "min": 8,
+      "max": 24,
+      "step": 2,
+      "unit": "px",
+      "default": 12
+    },
+    {
+      "type": "range",
+      "id": "button_font_size",
+      "label": "Button font size",
+      "min": 12,
+      "max": 18,
+      "step": 1,
+      "unit": "px",
+      "default": 14
+    },
+    {
+      "type": "range",
+      "id": "icon_size",
+      "label": "Icon size",
+      "min": 16,
+      "max": 32,
+      "step": 2,
+      "unit": "px",
+      "default": 20
+    },
+    {
+      "type": "range",
+      "id": "button_border_radius",
+      "label": "Button border radius",
+      "min": 0,
+      "max": 50,
+      "step": 2,
+      "unit": "px",
+      "default": 8
+    },
+    {
+      "type": "range",
+      "id": "button_border_width",
+      "label": "Button border width",
+      "min": 0,
+      "max": 4,
+      "step": 1,
+      "unit": "px",
+      "default": 1
+    },
+    {
+      "type": "header",
+      "content": "Button colors"
+    },
+    {
+      "type": "color",
+      "id": "button_background",
+      "label": "Background",
+      "default": "#f0ede6"
+    },
+    {
+      "type": "color",
+      "id": "button_text_color",
+      "label": "Text",
+      "default": "#1a6b3c"
+    },
+    {
+      "type": "color",
+      "id": "button_border_color",
+      "label": "Border",
+      "default": "#1a6b3c"
+    },
+    {
+      "type": "color",
+      "id": "button_hover_background",
+      "label": "Hover background",
+      "default": "#1a6b3c"
+    },
+    {
+      "type": "color",
+      "id": "button_hover_text_color",
+      "label": "Hover text",
+      "default": "#f0ede6"
+    },
+    {
+      "type": "color",
+      "id": "button_hover_border_color",
+      "label": "Hover border",
+      "default": "#1a6b3c"
+    },
+    {
+      "type": "header",
+      "content": "Notification"
+    },
+    {
+      "type": "color",
+      "id": "notification_background",
+      "label": "Background",
+      "default": "#1a6b3c"
+    },
+    {
+      "type": "color",
+      "id": "notification_text_color",
+      "label": "Text",
+      "default": "#f0ede6"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Article social share"
+    }
+  ]
+}
+{% endschema %}

@@ -1,0 +1,292 @@
+/*
+ * ------------------------------------------------------------
+ * IMPORTANT: The contents of this file are auto-generated.
+ *
+ * This file may be updated by the Shopify admin theme editor
+ * or related systems. Please exercise caution as any changes
+ * made to this file may be overwritten.
+ * ------------------------------------------------------------
+ */
+{
+  "sections": {
+    "main": {
+      "type": "main-blog",
+      "blocks": {
+        "ai_gen_block_1310aff_8rfWUD": {
+          "type": "ai_gen_block_1310aff",
+          "name": "Blog hub links",
+          "settings": {
+            "heading": "Explore Our Wellness Hubs",
+            "heading_size": 32,
+            "heading_alignment": "center",
+            "heading_color": "#c9a227",
+            "max_width": 1200,
+            "desktop_width_percent": 100,
+            "columns_desktop": 3,
+            "columns_tablet": 2,
+            "columns_mobile": "1",
+            "card_spacing": 30,
+            "card_padding": 30,
+            "card_min_height": 150,
+            "card_border_radius": 12,
+            "card_border_width": 1,
+            "card_background": "#0f1a12",
+            "card_border_color": "#1a6b3c",
+            "card_text_color": "#f0ede6",
+            "card_title_size": 18,
+            "hover_lift": 4,
+            "card_hover_background": "#1a6b3c",
+            "card_hover_border_color": "#c9a227",
+            "card_hover_text_color": "#f0ede6",
+            "card_shadow_x": 0,
+            "card_shadow_y": 4,
+            "card_shadow_blur": 12,
+            "card_shadow_color": "#00000033",
+            "blog_1_enabled": true,
+            "blog_1_title": "Inside the Products",
+            "blog_1_url": "shopify://blogs/inside-the-products",
+            "blog_2_enabled": true,
+            "blog_2_title": "Stress, Mindfulness & Mental Wellness Hub",
+            "blog_2_url": "shopify://blogs/stress-mindfulness-mental-wellness-hub",
+            "blog_3_enabled": true,
+            "blog_3_title": "Home Fitness & Mobility Hub",
+            "blog_3_url": "shopify://blogs/home-fitness-mobility-hub",
+            "blog_4_enabled": true,
+            "blog_4_title": "Pain Relief & Posture Fix Hub",
+            "blog_4_url": "shopify://blogs/pain-relief-posture-fix-hub",
+            "blog_5_enabled": true,
+            "blog_5_title": "Sleep & Recovery Hub",
+            "blog_5_url": "shopify://blogs/sleep-recovery-hub",
+            "blog_6_enabled": true,
+            "blog_6_title": "The Ultimate Health & Wellness Resource",
+            "blog_6_url": "shopify://blogs/the-ultimate-health-wellness-resource"
+          },
+          "blocks": {}
+        },
+        "static-blog-post-card": {
+          "type": "_blog-post-card",
+          "static": true,
+          "settings": {
+            "alignment": "left"
+          },
+          "blocks": {
+            "image": {
+              "type": "_blog-post-image",
+              "static": true,
+              "settings": {
+                "height": "large",
+                "border": "none",
+                "border_width": 1,
+                "border_opacity": 100,
+                "border_radius": 0
+              },
+              "blocks": {}
+            },
+            "heading": {
+              "type": "_heading",
+              "name": "t:names.title",
+              "static": true,
+              "settings": {
+                "type_preset": "h4",
+                "font": "var(--font-body--family)",
+                "font_size": "",
+                "line_height": "normal",
+                "letter_spacing": "normal",
+                "case": "none",
+                "wrap": "pretty",
+                "color": "var(--color-foreground)",
+                "text": "",
+                "read_only": true,
+                "alignment": "left",
+                "show_alignment": false,
+                "padding-block-start": 0,
+                "padding-block-end": 10,
+                "padding-inline-start": 0,
+                "padding-inline-end": 0
+              },
+              "blocks": {}
+            },
+            "blog-post-details": {
+              "type": "_blog-post-info-text",
+              "name": "t:names.details",
+              "static": true,
+              "settings": {
+                "show_date": false,
+                "show_author": false,
+                "type_preset": "",
+                "alignment": "left",
+                "show_alignment": false,
+                "padding-block-start": 0,
+                "padding-block-end": 0
+              },
+              "blocks": {}
+            },
+            "content": {
+              "type": "_blog-post-description",
+              "static": true,
+              "settings": {
+                "type_preset": "rte",
+                "font": "var(--font-body--family)",
+                "font_size": "1rem",
+                "line_height": "normal",
+                "letter_spacing": "normal",
+                "case": "none",
+                "wrap": "pretty",
+                "color": "var(--color-foreground)",
+                "padding-block-start": 16,
+                "padding-block-end": 0
+              },
+              "blocks": {}
+            }
+          },
+          "block_order": []
+        }
+      },
+      "block_order": [
+        "ai_gen_block_1310aff_8rfWUD"
+      ],
+      "settings": {
+        "color_scheme": "",
+        "padding-block-start": 0,
+        "padding-block-end": 48
+      }
+    },
+    "blocks_6NmhJY": {
+      "type": "_blocks",
+      "blocks": {
+        "ai_gen_block_5722b4f_KR4pWE": {
+          "type": "ai_gen_block_5722b4f",
+          "settings": {
+            "heading": "Share this article",
+            "show_labels": true,
+            "hide_labels_mobile": true,
+            "show_facebook": true,
+            "show_twitter": true,
+            "show_whatsapp": true,
+            "show_copy_link": true,
+            "copy_notification_text": "Link copied to clipboard!",
+            "alignment": "center",
+            "desktop_width_percent": 100,
+            "spacing_top": 40,
+            "spacing_bottom": 40,
+            "gap": 20,
+            "button_gap": 12,
+            "heading_size": 16,
+            "heading_color": "#1a2e1c",
+            "button_padding": 12,
+            "button_font_size": 14,
+            "icon_size": 20,
+            "button_border_radius": 8,
+            "button_border_width": 1,
+            "button_background": "#f0ede6",
+            "button_text_color": "#1a6b3c",
+            "button_border_color": "#1a6b3c",
+            "button_hover_background": "#1a6b3c",
+            "button_hover_text_color": "#f0ede6",
+            "button_hover_border_color": "#1a6b3c",
+            "notification_background": "#1a6b3c",
+            "notification_text_color": "#f0ede6"
+          },
+          "blocks": {}
+        }
+      },
+      "block_order": [
+        "ai_gen_block_5722b4f_KR4pWE"
+      ],
+      "name": "Article social share",
+      "settings": {
+        "content_direction": "column",
+        "vertical_on_mobile": true,
+        "horizontal_alignment": "flex-start",
+        "vertical_alignment": "center",
+        "align_baseline": false,
+        "horizontal_alignment_flex_direction_column": "flex-start",
+        "vertical_alignment_flex_direction_column": "center",
+        "gap": 12,
+        "section_width": "page-width",
+        "section_height": "",
+        "section_height_custom": 50,
+        "color_scheme": "",
+        "background_media": "none",
+        "video_position": "cover",
+        "background_image_position": "cover",
+        "border": "none",
+        "border_width": 1,
+        "border_opacity": 100,
+        "border_radius": 0,
+        "toggle_overlay": false,
+        "overlay_color": "#00000026",
+        "overlay_style": "solid",
+        "gradient_direction": "to top",
+        "padding-block-start": 0,
+        "padding-block-end": 0
+      }
+    },
+    "17791229005f238af3": {
+      "type": "_blocks",
+      "settings": {
+        "content_direction": "column",
+        "vertical_on_mobile": true,
+        "horizontal_alignment": "flex-start",
+        "vertical_alignment": "center",
+        "align_baseline": false,
+        "horizontal_alignment_flex_direction_column": "flex-start",
+        "vertical_alignment_flex_direction_column": "center",
+        "gap": 12,
+        "section_width": "page-width",
+        "section_height": "",
+        "section_height_custom": 50,
+        "color_scheme": "",
+        "background_media": "none",
+        "video_position": "cover",
+        "background_image_position": "cover",
+        "border": "none",
+        "border_width": 1,
+        "border_opacity": 100,
+        "border_radius": 0,
+        "toggle_overlay": false,
+        "overlay_color": "#00000026",
+        "overlay_style": "solid",
+        "gradient_direction": "to top",
+        "padding-block-start": 0,
+        "padding-block-end": 0
+      }
+    },
+    "17791230911591916b": {
+      "type": "_blocks",
+      "settings": {
+        "content_direction": "column",
+        "vertical_on_mobile": true,
+        "horizontal_alignment": "flex-start",
+        "vertical_alignment": "center",
+        "align_baseline": false,
+        "horizontal_alignment_flex_direction_column": "flex-start",
+        "vertical_alignment_flex_direction_column": "center",
+        "gap": 12,
+        "section_width": "page-width",
+        "section_height": "",
+        "section_height_custom": 50,
+        "color_scheme": "",
+        "background_media": "none",
+        "video_position": "cover",
+        "background_image_position": "cover",
+        "border": "none",
+        "border_width": 1,
+        "border_opacity": 100,
+        "border_radius": 0,
+        "toggle_overlay": false,
+        "overlay_color": "#00000026",
+        "overlay_style": "solid",
+        "gradient_direction": "to top",
+        "padding-block-start": 0,
+        "padding-block-end": 0
+      }
+    }
+  },
+  "order": [
+    "main",
+    "blocks_6NmhJY",
+    "17791229005f238af3",
+    "17791230911591916b"
+  ]
+}
