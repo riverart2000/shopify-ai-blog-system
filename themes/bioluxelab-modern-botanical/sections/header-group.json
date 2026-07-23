@@ -11,6 +11,35 @@
   "type": "header",
   "name": "Header",
   "sections": {
+    "announcement_bar_modern": {
+      "type": "header-announcements",
+      "blocks": {
+        "announcement_delivery": {
+          "type": "_announcement",
+          "settings": {
+            "text": "Free UK delivery · Secure checkout · Thoughtfully curated",
+            "link": "",
+            "font": "var(--font-body--family)",
+            "font_size": "0.75rem",
+            "weight": "500",
+            "letter_spacing": "loose",
+            "case": "uppercase"
+          },
+          "blocks": {}
+        }
+      },
+      "block_order": [
+        "announcement_delivery"
+      ],
+      "settings": {
+        "speed": 5,
+        "section_width": "full-width",
+        "color_scheme": "scheme-5",
+        "divider_width": 0,
+        "padding-block-start": 9,
+        "padding-block-end": 9
+      }
+    },
     "header_section": {
       "type": "header",
       "blocks": {
@@ -33,7 +62,7 @@
             "menu": "main-menu",
             "color_scheme": "scheme-1",
             "type_font_primary_size": "0.875rem",
-            "menu_font_style": "inverse",
+            "menu_font_style": "body",
             "type_font_primary_link": "body",
             "type_case_primary_link": "none",
             "menu_style": "featured_products",
@@ -56,18 +85,18 @@
         "show_search": true,
         "search_position": "right",
         "search_row": "top",
-        "show_country": true,
+        "show_country": false,
         "country_selector_style": true,
-        "show_language": true,
+        "show_language": false,
         "localization_font": "heading",
         "localization_font_size": "0.875rem",
         "localization_position": "right",
         "localization_row": "top",
         "section_width": "page-width",
-        "section_height": "standard",
+        "section_height": "compact",
         "enable_sticky_header": "always",
-        "divider_width": 0,
-        "divider_size": "page-width",
+        "divider_width": 1,
+        "divider_size": "full-width",
         "border_width": 0,
         "color_scheme_top": "scheme-1",
         "color_scheme_bottom": "",
@@ -82,6 +111,7 @@
     }
   },
   "order": [
+    "announcement_bar_modern",
     "header_section"
   ]
 }
