@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 
 import db
 import providers
@@ -44,6 +45,32 @@ def _parse_title_array(raw: str) -> list[dict]:
         if isinstance(item, dict) and item.get("title"):
             item["title"] = clean_title(item["title"])
     return data
+
+
+def _normalise_title(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (value or "").lower()))
+
+
+def _title_similarity(left: str, right: str) -> float:
+    a, b = _normalise_title(left), _normalise_title(right)
+    return SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+
+
+async def _remove_overlapping_titles(store_id: str, candidates: list[dict]) -> tuple[list[dict], int]:
+    """Exclude model titles that overlap generated history or the current pool."""
+    history = await db.get_generation_title_index(store_id, limit=2000)
+    pool = await db.get_title_pool(store_id, include_used=True, limit=2000)
+    existing = [str(row.get("title") or "") for row in history + pool]
+    accepted: list[dict] = []
+    rejected = 0
+    for candidate in candidates:
+        title = str(candidate.get("title") or "").strip()
+        comparisons = existing + [str(item.get("title") or "") for item in accepted]
+        if not title or any(_title_similarity(title, previous) >= 0.82 for previous in comparisons):
+            rejected += 1
+            continue
+        accepted.append(candidate)
+    return accepted, rejected
 
 
 async def fetch_titles(store_id: str) -> dict:
@@ -110,10 +137,20 @@ async def fetch_titles(store_id: str) -> dict:
             "error": f"Could not parse response: {exc}",
         }
 
+    titles, rejected = await _remove_overlapping_titles(store_id, titles)
     added = await db.add_titles(store_id, titles)
     pool_count = await db.count_title_pool(store_id)
-    logger.info("Titles for store %s: %d added, pool now %d", store_id, added, pool_count)
-    return {"added": added, "pool_count": pool_count, "error": None}
+    logger.info(
+        "Titles for store %s: %d added, %d rejected for overlap, pool now %d",
+        store_id, added, rejected, pool_count,
+    )
+    error = None
+    if not added and rejected:
+        error = (
+            f"The model returned {rejected} title{'s' if rejected != 1 else ''}, but every one "
+            "was too similar to an existing or queued title. No duplicate title was added."
+        )
+    return {"added": added, "pool_count": pool_count, "error": error, "rejected_overlap": rejected}
 
 
 async def pop_blog_title(store_id: str) -> dict | None:

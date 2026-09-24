@@ -4,6 +4,7 @@ import pytest
 
 import db
 from shopify_client import ShopifyArticle, _build_article_html
+from services import blog_scope, title_service
 from services.seo_growth import orchestrator
 from services.seo_growth import repair
 from services.seo_growth.managed_content import (
@@ -64,8 +65,90 @@ def test_article_audit_flags_public_keyword_dump_and_uncited_claims():
     summary, issues = audit_articles([article])
     keys = {item["key"].split(":", 1)[0] for item in issues}
     assert "article-unmanaged-keyword-blocks" in keys
-    assert "article-health-citations" in keys
+    assert "article-claim-group" in keys
     assert summary["visible_keyword_blocks"] == 1
+    health_issue = next(item for item in issues if item["key"] == "article-claim-group:research")
+    assert "study found" in health_issue["evidence"].lower()
+    assert "cures fatigue" in health_issue["evidence"].lower()
+
+
+def test_article_audit_does_not_misclassify_ordinary_treat_and_prevent_language():
+    article = _article(
+        1, "Everyday wellbeing",
+        "<p>Treat sleep as protected time. A balanced breakfast can prevent a mid-morning dip. "
+        "This moisturiser is a welcome treat for your skin.</p>",
+    )
+    summary, issues = audit_articles([article])
+    assert summary["health_claim_warnings"] == 0
+    assert not any(item["key"].startswith("article-claim-group:") for item in issues)
+
+
+def test_article_audit_does_not_flag_medical_safety_disclaimers_as_claims():
+    article = _article(
+        1, "Safety notes",
+        "<p>This is not a miracle cure and is not intended to diagnose a condition. "
+        "This isn’t about miracle cures. This doesn’t mean aromatherapy is a cure-all. "
+        "If you have a diagnosed joint condition, ask a qualified healthcare professional.</p>",
+    )
+    summary, issues = audit_articles([article])
+    assert summary["health_claim_warnings"] == 0
+    assert not any(item["key"].startswith("article-claim-group:") for item in issues)
+
+
+def test_article_audit_accepts_research_wording_with_adjacent_source_link():
+    article = _article(
+        1, "Walking research",
+        '<p>A study found an association between regular walking and wellbeing '
+        '<a href="https://pubmed.ncbi.nlm.nih.gov/123456/">in this paper</a>.</p>',
+    )
+    summary, issues = audit_articles([article])
+    assert summary["health_claim_warnings"] == 0
+    assert not any(item["key"].startswith("article-claim-group:") for item in issues)
+
+
+def test_article_overlap_is_grouped_instead_of_emitting_pairwise_noise():
+    body = "<p>" + ("Useful recovery guidance. " * 180) + "</p>"
+    articles = [
+        _article(1, "Beginner Home Biohacking Performance Guide", body),
+        _article(2, "Beginner Home Biohacking Daily Performance Guide", body),
+        _article(3, "Home Biohacking Performance Guide", body),
+    ]
+    summary, issues = audit_articles(articles)
+    overlaps = [item for item in issues if item["key"].startswith("article-overlap-group:")]
+    assert summary["overlap_groups"] == 1
+    assert len(overlaps) == 1
+    assert len(overlaps[0]["metrics"]["urls"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_generation_prompt_always_includes_claim_and_hidden_seo_guardrails():
+    prompt = await blog_scope.apply_blog_scope("Write a useful guide.")
+    assert "Never say or imply" in prompt
+    assert "Never invent a citation" in prompt
+    assert "hidden SEO text" in prompt
+
+
+@pytest.mark.asyncio
+async def test_title_generator_rejects_overlap_with_full_generation_history(tmp_path):
+    previous_path = db.get_db_path()
+    db.set_db_path(str(tmp_path / "title-history.db"))
+    try:
+        await db.init_db()
+        await db.log_generation(
+            store_id="title-store", store_name="Store", blog_handle="wellness",
+            prompt_id="prompt", prompt_text="Write", title="Beginner Home Biohacking Energy Guide",
+            summary="Summary", content_text="Content", keywords=[], hashtags=[], image_count=1,
+        )
+        accepted, rejected = await title_service._remove_overlapping_titles("title-store", [
+            {"title": "Beginner Home Biohacking Energy Guide 2026"},
+            {"title": "How Evening Light Changes a Bedroom Wind-Down Routine"},
+        ])
+        assert rejected == 1
+        assert [item["title"] for item in accepted] == [
+            "How Evening Light Changes a Bedroom Wind-Down Routine",
+        ]
+    finally:
+        db.set_db_path(previous_path)
 
 
 def test_managed_keyword_cleanup_is_exact_and_preserves_article_copy():
@@ -127,6 +210,27 @@ def test_product_audit_distinguishes_shopify_fallback_from_missing_content():
     assert any(item["key"] == "product-seo-fallback:1" for item in issues)
     merchant_issue = next((item for item in issues if item["key"] == "merchant-fields:1"), None)
     assert merchant_issue is None
+
+
+def test_product_audit_does_not_call_related_products_effectively_identical():
+    def product(product_id: str, title: str, handle: str) -> dict:
+        return {
+            "id": f"gid://shopify/Product/{product_id}", "legacyResourceId": product_id,
+            "title": title, "handle": handle, "status": "ACTIVE", "vendor": "BioLuxeLab",
+            "productType": "Recovery", "description": "Full product description",
+            "onlineStoreUrl": f"https://bioluxelab.com/products/{handle}",
+            "seo": {"title": title, "description": "Complete SEO description"},
+            "featuredImage": {"url": "hero.jpg", "altText": title},
+            "variants": {"nodes": [{"barcode": f"12345678{product_id}"}]},
+        }
+
+    products = [
+        product("1", "Dense Foam Roller for Deep Tissue Massage", "dense-foam-roller"),
+        product("2", "Grooved EPP Foam Roller for Muscle Recovery", "grooved-epp-roller"),
+    ]
+    summary, issues = audit_products(products, "https://bioluxelab.com")
+    assert summary["duplicate_title_groups"] == 0
+    assert not any(item["key"].startswith("product-duplicate:") for item in issues)
 
 
 @pytest.mark.asyncio

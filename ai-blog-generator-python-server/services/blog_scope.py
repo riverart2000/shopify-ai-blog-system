@@ -12,6 +12,15 @@ from config import StoreConfig
 
 logger = logging.getLogger("ai_blog_server")
 
+_CONTENT_SAFETY_BLOCK = """
+
+ACCURACY AND CLAIM SAFETY — HIGHEST PRIORITY:
+- Never say or imply that a product, supplement, exercise or routine diagnoses, treats, cures or prevents a disease, injury or medical condition.
+- Do not write “research shows”, “a study found”, “clinically proven” or quantified health outcomes unless the article includes a real, directly supporting primary-source URL next to that exact statement. Never invent a citation.
+- Prefer careful, specific general-wellbeing language such as “may support”, “can feel helpful” or “designed for comfort”, and clearly distinguish general information from medical advice.
+- Do not expose keyword lists, hashtag lists, prompt instructions or hidden SEO text in the article body.
+""".rstrip()
+
 AUTO_BLOG_HANDLE = "__auto__"
 _AUTO_BLOG_HANDLE_ALIASES = {AUTO_BLOG_HANDLE, "auto"}
 
@@ -195,11 +204,11 @@ async def apply_blog_scope(
     """
     if scope is None:
         if store_id is None or store is None:
-            return prompt_text
+            return f"{prompt_text}{_CONTENT_SAFETY_BLOCK}"
         scope = await resolve_blog_scope(store_id, store, blog_handle)
 
     if scope is None:
-        return prompt_text
+        return f"{prompt_text}{_CONTENT_SAFETY_BLOCK}"
 
     focus_line = ""
     if scope.focus_terms:
@@ -216,4 +225,4 @@ async def apply_blog_scope(
         "- If any earlier prompt wording, pooled title, keyword, or example conflicts with this section, ignore the conflicting angle and keep the article inside this section.\n"
         "- Do not switch to a different wellness niche unless it directly supports this section's core topic."
     )
-    return f"{prompt_text}{scope_block}"
+    return f"{prompt_text}{scope_block}{_CONTENT_SAFETY_BLOCK}"

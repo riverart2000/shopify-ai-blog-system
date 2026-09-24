@@ -13,7 +13,7 @@ from .models import (
 )
 from .prompts import get_prompts, upsert_prompt, delete_prompt
 from .generations import (
-    log_generation, get_recent_generations, log_model_error, get_recent_errors,
+    log_generation, get_recent_generations, get_generation_title_index, log_model_error, get_recent_errors,
     get_recent_runs_for_job,
 )
 from .scheduled_jobs import (
@@ -75,7 +75,7 @@ __all__ = [
     # prompts
     "get_prompts", "upsert_prompt", "delete_prompt",
     # generations
-    "log_generation", "get_recent_generations", "log_model_error", "get_recent_errors",
+    "log_generation", "get_recent_generations", "get_generation_title_index", "log_model_error", "get_recent_errors",
     "get_recent_runs_for_job",
     # scheduled jobs
     "get_scheduled_jobs", "get_all_active_jobs", "get_due_jobs",

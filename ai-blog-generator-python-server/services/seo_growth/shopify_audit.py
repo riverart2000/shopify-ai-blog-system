@@ -8,18 +8,12 @@ from bs4 import BeautifulSoup
 
 import shopify_client
 from config import StoreConfig
+from services.content_claims import find_claims, text_with_link_targets
 from .managed_content import RULE_KEY, has_managed_keyword_blocks
 
 
 _SEO_LABEL = re.compile(r"\b(?:seo\s+)?(?:keywords?|hashtags?)\s*:\s*", re.IGNORECASE)
 _HASHTAG_RUN = re.compile(r"(?:#[A-Za-z][\w-]*\s*){4,}")
-_HEALTH_CLAIM = re.compile(
-    r"\b(?:treats?|cures?|prevents?|clinically proven|study (?:shows?|found)|research (?:shows?|proves?))\b",
-    re.IGNORECASE,
-)
-_CITATION = re.compile(r"https?://|doi\.org|pubmed|\[[0-9]+\]", re.IGNORECASE)
-
-
 def _words(value: str) -> set[str]:
     return {
         word for word in re.findall(r"[a-z0-9]+", (value or "").lower())
@@ -34,9 +28,10 @@ def _similarity(left: str, right: str) -> float:
 
 def audit_articles(articles: list[shopify_client.ShopifyArticle]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
-    duplicate_pairs: set[tuple[int, int]] = set()
+    duplicate_pairs: list[tuple[int, int, float]] = []
     managed_block_articles: list[shopify_client.ShopifyArticle] = []
     unmanaged_keyword_articles: list[shopify_client.ShopifyArticle] = []
+    claim_articles: list[tuple[shopify_client.ShopifyArticle, list[Any]]] = []
     for article in articles:
         soup = BeautifulSoup(article.body_html or "", "html.parser")
         text = soup.get_text(" ", strip=True)
@@ -64,34 +59,117 @@ def audit_articles(articles: list[shopify_client.ShopifyArticle]) -> tuple[dict[
                 "action": "Expand it only if Search Console shows demand; otherwise merge it into a stronger related guide or leave it unchanged.",
                 "page_url": page, "source": "shopify", "metrics": {"word_count": word_count},
             })
-        if _HEALTH_CLAIM.search(text) and not _CITATION.search(article.body_html or ""):
-            issues.append({
-                "key": f"article-health-citations:{article.id}", "category": "quality",
-                "severity": "high", "score": 88,
-                "title": f"Verify health claims in ‘{article.title}’",
-                "evidence": "Health or research language was detected, but no visible URL, DOI or numbered citation was found.",
-                "action": "Have a human verify each claim, link to primary evidence and soften or remove unsupported therapeutic wording.",
-                "page_url": page, "source": "shopify", "metrics": {"article_id": article.id},
-            })
+        claim_findings = [
+            finding for finding in find_claims(text_with_link_targets(article.body_html or ""))
+            if finding.kind in {"medical_claim", "clinical_claim"} or not finding.cited
+        ]
+        if claim_findings:
+            claim_articles.append((article, claim_findings))
 
-    for index, left in enumerate(articles):
-        for right in articles[index + 1:]:
+    for left_index, left in enumerate(articles):
+        for right_index in range(left_index + 1, len(articles)):
+            right = articles[right_index]
             similarity = _similarity(left.title, right.title)
             if similarity < 0.72:
                 continue
-            pair = tuple(sorted((left.id, right.id)))
-            if pair in duplicate_pairs:
+            duplicate_pairs.append((left_index, right_index, similarity))
+
+    # Collapse pairwise matches into connected title families. One repetitive
+    # family should produce one useful opportunity, not dozens of cards.
+    adjacency: dict[int, set[int]] = {}
+    pair_similarity: dict[tuple[int, int], float] = {}
+    for left_index, right_index, similarity in duplicate_pairs:
+        adjacency.setdefault(left_index, set()).add(right_index)
+        adjacency.setdefault(right_index, set()).add(left_index)
+        pair_similarity[(left_index, right_index)] = similarity
+
+    overlap_groups: list[list[int]] = []
+    visited: set[int] = set()
+    for start in sorted(adjacency):
+        if start in visited:
+            continue
+        stack = [start]
+        group: list[int] = []
+        while stack:
+            current = stack.pop()
+            if current in visited:
                 continue
-            duplicate_pairs.add(pair)
-            issues.append({
-                "key": f"article-overlap:{pair[0]}:{pair[1]}", "category": "cannibalisation",
-                "severity": "medium", "score": 72,
-                "title": "Review two articles with strongly overlapping titles",
-                "evidence": f"‘{left.title}’ and ‘{right.title}’ have {similarity:.0%} title-term overlap.",
-                "action": "Use Search Console query data to decide whether to differentiate their intent or consolidate into the stronger URL. Do not redirect automatically.",
-                "page_url": left.article_url, "source": "shopify",
-                "metrics": {"similarity": round(similarity, 3), "other_url": right.article_url},
+            visited.add(current)
+            group.append(current)
+            stack.extend(adjacency.get(current, set()) - visited)
+        if len(group) > 1:
+            overlap_groups.append(sorted(group))
+
+    for group in overlap_groups:
+        group_articles = [articles[index] for index in group]
+        urls = [article.article_url for article in group_articles]
+        titles = [article.title for article in group_articles]
+        similarities = [
+            similarity for (left_index, right_index), similarity in pair_similarity.items()
+            if left_index in group and right_index in group
+        ]
+        max_similarity = max(similarities, default=0.0)
+        sample = "; ".join(f"‘{title}’" for title in titles[:4])
+        if len(titles) > 4:
+            sample += f"; and {len(titles) - 4} more"
+        group_ids = ":".join(str(article.id) for article in group_articles)
+        issues.append({
+            "key": f"article-overlap-group:{group_ids}", "category": "cannibalisation",
+            "severity": "medium", "score": 72,
+            "title": f"Review {len(group_articles)} articles with overlapping title intent",
+            "evidence": f"The related title group reaches {max_similarity:.0%} term overlap: {sample}.",
+            "action": "Use Search Console query and conversion data to decide whether each page serves a distinct intent. Consolidate only where the evidence supports it; do not redirect automatically.",
+            "page_url": urls[0], "source": "shopify",
+            "metrics": {"urls": urls, "titles": titles, "max_similarity": round(max_similarity, 3)},
+        })
+
+    claim_groups = [
+        (
+            "research",
+            "Verify unsupported research wording",
+            "Add a directly supporting primary-source URL beside each accurate statement, or soften/remove the statement. Never invent a citation.",
+            lambda finding: finding.kind == "research_claim" and not finding.cited,
+        ),
+        (
+            "medical",
+            "Review potential product or routine medical claims",
+            "Have a human verify the exact wording and soften or remove unsupported diagnosis, treatment, cure or prevention claims.",
+            lambda finding: finding.kind in {"medical_claim", "clinical_claim"},
+        ),
+    ]
+    for group_key, title, action, predicate in claim_groups:
+        affected_pages: list[dict[str, Any]] = []
+        for article, findings in claim_articles:
+            matching = [finding for finding in findings if predicate(finding)]
+            if not matching:
+                continue
+            affected_pages.append({
+                "article_id": article.id,
+                "title": article.title,
+                "url": article.article_url,
+                "findings": [finding.as_dict() for finding in matching[:10]],
             })
+        if not affected_pages:
+            continue
+        samples: list[str] = []
+        for page_data in affected_pages[:3]:
+            first_finding = page_data["findings"][0]
+            samples.append(f"‘{page_data['title']}’: “{first_finding['excerpt']}”")
+        issues.append({
+            "key": f"article-claim-group:{group_key}", "category": "quality",
+            "severity": "high", "score": 88 if group_key == "research" else 90,
+            "title": f"{title} in {len(affected_pages):,} articles",
+            "evidence": (
+                f"The audit found exact sentence-level matches in {len(affected_pages):,} published articles. "
+                f"Examples: {'; '.join(samples)}."
+            ),
+            "action": action,
+            "page_url": affected_pages[0]["url"], "source": "shopify",
+            "metrics": {
+                "affected_count": len(affected_pages),
+                "affected_pages": affected_pages,
+            },
+        })
 
     if managed_block_articles:
         count = len(managed_block_articles)
@@ -143,8 +221,8 @@ def audit_articles(articles: list[shopify_client.ShopifyArticle]) -> tuple[dict[
         "visible_keyword_blocks": len(managed_block_articles) + len(unmanaged_keyword_articles),
         "managed_keyword_blocks": len(managed_block_articles),
         "unmanaged_keyword_blocks": len(unmanaged_keyword_articles),
-        "health_claim_warnings": sum(issue["key"].startswith("article-health-citations:") for issue in issues),
-        "overlap_groups": len(duplicate_pairs),
+        "health_claim_warnings": len(claim_articles),
+        "overlap_groups": len(overlap_groups),
     }, issues
 
 
@@ -206,7 +284,7 @@ def audit_products(products: list[dict[str, Any]], storefront: str) -> tuple[dic
                 "page_url": page, "source": "shopify", "metrics": {"automatic_fallback": True},
             })
 
-    duplicate_groups: list[list[dict[str, Any]]] = []
+    duplicate_groups: list[tuple[list[dict[str, Any]], bool, float]] = []
     seen_pairs: set[tuple[str, str]] = set()
     for index, left in enumerate(active):
         left_words = _words(str(left.get("title") or ""))
@@ -216,23 +294,29 @@ def audit_products(products: list[dict[str, Any]], storefront: str) -> tuple[dic
                 len(left_words & right_words) / min(len(left_words), len(right_words))
                 if left_words and right_words else 0
             )
-            if containment < 0.72 or len(left_words & right_words) < 3:
+            jaccard = _similarity(str(left.get("title") or ""), str(right.get("title") or ""))
+            exact = bool(left_words) and left_words == right_words
+            if not exact and (containment < 0.90 or jaccard < 0.75 or len(left_words & right_words) < 4):
                 continue
             pair = tuple(sorted((str(left.get("id") or ""), str(right.get("id") or ""))))
             if pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
-            duplicate_groups.append([left, right])
-    for group in duplicate_groups:
+            duplicate_groups.append(([left, right], exact, jaccard))
+    for group, exact, similarity in duplicate_groups:
         titles = [str(item.get("title") or "") for item in group]
         urls = [str(item.get("onlineStoreUrl") or f"{storefront}/products/{item.get('handle', '')}") for item in group]
         issues.append({
             "key": "product-duplicate:" + ":".join(sorted(str(item.get("legacyResourceId") or item.get("id")) for item in group)),
-            "category": "cannibalisation", "severity": "high", "score": 90,
-            "title": "Differentiate products with effectively identical titles",
-            "evidence": f"{len(group)} active products share most of the shorter title's significant terms: " + "; ".join(titles),
-            "action": "Confirm search demand first, then give each variant a distinct customer intent or consolidate it. No automatic redirects will be made.",
-            "page_url": urls[0], "source": "shopify", "metrics": {"urls": urls},
+            "category": "cannibalisation", "severity": "high" if exact else "medium",
+            "score": 90 if exact else 66,
+            "title": "Resolve duplicate product titles" if exact else "Review two unusually similar product titles",
+            "evidence": (
+                "The active products have the same significant title terms: " if exact
+                else f"The active product titles have {similarity:.0%} term overlap: "
+            ) + "; ".join(titles),
+            "action": "Check Search Console demand and confirm the products are genuinely distinct before changing titles. No automatic rename or redirect will be made.",
+            "page_url": urls[0], "source": "shopify", "metrics": {"urls": urls, "similarity": round(similarity, 3)},
         })
     return {
         "products": len(products), "active_products": len(active),

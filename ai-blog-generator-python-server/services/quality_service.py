@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Optional
 
 import db
+from services.content_claims import find_claims
 
 _quality_log = logging.getLogger("ai_blog_server.quality")
 
@@ -43,8 +44,7 @@ _FAQ_RE = re.compile(
 )
 _SENTENCE_RE = re.compile(r"[^.!?]+[.!?]?")
 _TRUST_CLAIM_RE = re.compile(
-    r"\b(cure|cures|cured|treats?|prevents?|diagnose|diagnoses|guaranteed|guarantees|"
-    r"clinically proven|fda approved|no side effects|risk[- ]free|miracle|instant results?)\b",
+    r"\b(guaranteed|guarantees|fda approved|no side effects|risk[- ]free|miracle|instant results?)\b",
     re.IGNORECASE,
 )
 _ABSOLUTE_CLAIM_RE = re.compile(
@@ -579,7 +579,14 @@ def evaluate_draft(
         )
 
     _RELEVANCE_HINT = "Target: ≥50% of key prompt terms appear in the article · 25–49% (warn) · <25% (fail)"
-    prompt_terms = _important_terms(prompt_text)
+    # Generator policy blocks are appended to the prompt for Grok, but they are
+    # not article subject matter and must not dilute the relevance score.
+    relevance_prompt = re.split(
+        r"\n\n(?:SECTION SCOPE|ACCURACY AND CLAIM SAFETY)\s+—\s+HIGHEST PRIORITY:",
+        prompt_text,
+        maxsplit=1,
+    )[0]
+    prompt_terms = _important_terms(relevance_prompt)
     if prompt_terms:
         normalized_combined = _normalize_text(f"{title}\n{summary}\n{content}")
         prompt_hits = [term for term in prompt_terms if f" {term} " in f" {normalized_combined} "]
@@ -776,26 +783,35 @@ def evaluate_draft(
             hint=_SEO_HINT,
         )
 
-    _TRUST_HINT = "Target: no medical/legal guarantee claims (cure, guaranteed, FDA approved, etc.) · no sweeping absolutes"
+    _TRUST_HINT = "Target: no medical treatment claims, unsupported research statements, legal guarantees, or sweeping absolutes"
     trust_hits = sorted({match.group(0).strip() for match in _TRUST_CLAIM_RE.finditer(combined_text)})
+    claim_findings = [
+        finding for finding in find_claims(f"{summary}\n{content}")
+        if finding.kind in {"medical_claim", "clinical_claim"} or not finding.cited
+    ]
     absolute_hits = sorted({match.group(0).strip() for match in _ABSOLUTE_CLAIM_RE.finditer(combined_text)})
-    if trust_hits:
+    high_risk_claims = [finding for finding in claim_findings if finding.risk == "high"]
+    if trust_hits or high_risk_claims:
+        details = trust_hits[:4]
+        details.extend(f"{finding.trigger}: {finding.excerpt}" for finding in high_risk_claims[:2])
         score -= _add_check(
             checks,
             key="trust_safety",
             label="Trust & Claim Safety",
             status="fail",
-            message=f"Risky or regulated claims detected: {', '.join(trust_hits[:4])}. Soften or substantiate them.",
+            message=f"Risky or unsupported claim language detected: {'; '.join(details)}. Soften it or add a direct primary source where appropriate.",
             impact=18,
             hint=_TRUST_HINT,
         )
-    elif absolute_hits:
+    elif claim_findings or absolute_hits:
+        details = [f"{finding.trigger}: {finding.excerpt}" for finding in claim_findings[:2]]
+        details.extend(absolute_hits[:4])
         score -= _add_check(
             checks,
             key="trust_safety",
             label="Trust & Claim Safety",
             status="warn",
-            message=f"Absolute claims detected: {', '.join(absolute_hits[:4])}. Use more careful wording.",
+            message=f"Wording needs review: {'; '.join(details)}. Use more careful, evidence-led language.",
             impact=8,
             hint=_TRUST_HINT,
         )
@@ -868,6 +884,7 @@ async def review_draft(
     current_title = _normalize_text(title)
     current_summary = _normalize_text(summary)
     rows = await db.get_recent_generations(store_id=store_id, limit=history_limit)
+    title_rows = await db.get_generation_title_index(store_id=store_id, limit=2000)
 
     best_row: Optional[dict] = None
     best_similarity = 0.0
@@ -889,22 +906,28 @@ async def review_draft(
                 ]
             )
         )[:6000]
-        title_similarity = _similarity(current_title, _normalize_text(row.get("title", "")))
         summary_similarity = _similarity(current_summary, _normalize_text(row.get("summary", "")))
         text_similarity = _similarity(current_text, existing_text)
-        if title_similarity > best_title_similarity:
-            best_title_similarity = title_similarity
-            best_title_row = row
         if summary_similarity > best_summary_similarity:
             best_summary_similarity = summary_similarity
             best_summary_row = row
         combined_similarity = max(
             text_similarity,
-            (text_similarity * 0.60) + (title_similarity * 0.25) + (summary_similarity * 0.15),
+            (text_similarity * 0.75) + (summary_similarity * 0.25),
         )
         if combined_similarity > best_similarity:
             best_similarity = combined_similarity
             best_row = row
+
+    for row in title_rows:
+        if exclude_article_url and row.get("article_url") == exclude_article_url:
+            continue
+        if exclude_article_id and str(row.get("article_id") or "") == exclude_article_id:
+            continue
+        title_similarity = _similarity(current_title, _normalize_text(row.get("title", "")))
+        if title_similarity > best_title_similarity:
+            best_title_similarity = title_similarity
+            best_title_row = row
 
     _TITLE_ORIG_HINT = "Target: <82% similarity to any recent title"
     if best_title_row and best_title_similarity >= 0.94:

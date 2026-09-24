@@ -36,6 +36,11 @@ type Opportunity = {
   search_query: string; source: string; status: string; metrics: Record<string, unknown>;
 };
 
+type AffectedPage = {
+  title: string; url: string;
+  findings: Array<{ trigger?: string; excerpt?: string; kind?: string; cited?: boolean }>;
+};
+
 type Backlink = {
   id: string; domain: string; prospect_url: string; contact_name: string;
   contact_email: string; target_url: string; outreach_angle: string;
@@ -262,6 +267,23 @@ function stageLabel(value: string) {
   return value.replaceAll("_", " ").replace(/^./, letter => letter.toUpperCase());
 }
 
+function affectedPages(metrics: Record<string, unknown>): AffectedPage[] {
+  const rows = metrics?.affected_pages;
+  if (!Array.isArray(rows)) return [];
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== "object") return [];
+    const candidate = row as Record<string, unknown>;
+    const findings = Array.isArray(candidate.findings)
+      ? candidate.findings.filter(finding => finding && typeof finding === "object") as AffectedPage["findings"]
+      : [];
+    return [{
+      title: String(candidate.title || "Affected article"),
+      url: String(candidate.url || ""),
+      findings,
+    }];
+  });
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%", boxSizing: "border-box", border: "1px solid #c9cccf", borderRadius: 8,
   padding: "9px 11px", font: "inherit", background: "white",
@@ -399,6 +421,7 @@ export default function SeoGrowthPage() {
         <div style={{ display: "grid", gap: 12 }}>
           {data.opportunities.map((item, index) => {
             const colour = item.severity === "high" ? "#dc2626" : item.severity === "medium" ? "#d97706" : "#16a34a";
+            const pages = affectedPages(item.metrics);
             return <article key={item.id} style={{ border: "1px solid #e5e7eb", borderLeft: `4px solid ${colour}`, borderRadius: 12, padding: 16, background: "white" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <h3 style={{ margin: 0, fontSize: "1rem" }}>{((data.opportunity_page - 1) * data.opportunity_page_size) + index + 1}. {item.title}</h3>
@@ -409,6 +432,17 @@ export default function SeoGrowthPage() {
               </div>
               <div style={{ lineHeight: 1.5, fontSize: ".875rem" }}><strong>Evidence:</strong> {item.evidence}</div>
               <div style={{ lineHeight: 1.5, fontSize: ".875rem", color: "#4b5563", marginTop: 6 }}><strong>Recommended action:</strong> {item.action}</div>
+              {pages.length ? <details style={{ marginTop: 10, border: "1px solid #e5e7eb", borderRadius: 9, padding: "8px 10px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: ".82rem" }}>Show all {pages.length.toLocaleString("en-GB")} affected articles and exact sentences</summary>
+                <div style={{ maxHeight: 420, overflowY: "auto", marginTop: 8 }}><ul style={{ margin: 0, paddingLeft: 20, display: "grid", gap: 9 }}>
+                  {pages.map((page, pageIndex) => <li key={`${page.url}-${pageIndex}`} style={{ fontSize: ".8rem", lineHeight: 1.45 }}>
+                    {page.url ? <a href={page.url} target="_blank" rel="noreferrer">{page.title}</a> : <strong>{page.title}</strong>}
+                    {page.findings.map((finding, findingIndex) => <div key={`${finding.trigger}-${findingIndex}`} style={{ color: "#4b5563", marginTop: 2 }}>
+                      <strong>{finding.trigger || finding.kind || "Match"}:</strong> {finding.excerpt || "Exact excerpt unavailable."}
+                    </div>)}
+                  </li>)}
+                </ul></div>
+              </details> : null}
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                 {item.page_url ? <a href={item.page_url} target="_blank" rel="noreferrer" style={{ color: "#005bd3", fontSize: ".82rem" }}>Open affected page ↗</a> : <span />}
                 <Form method="post" style={{ display: "flex", gap: 6 }}>

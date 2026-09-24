@@ -76,6 +76,22 @@ async def get_recent_generations(
     return result
 
 
+async def get_generation_title_index(
+    store_id: str,
+    limit: int = 2000,
+) -> list[dict]:
+    """Return a lightweight title history for store-wide duplicate checks."""
+    async with aiosqlite.connect(get_db_path()) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, article_id, title, article_url, created_at FROM generations "
+            "WHERE store_id=? AND trim(title)<>'' ORDER BY created_at DESC LIMIT ?",
+            (store_id, max(1, int(limit))),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
 async def get_recent_runs_for_job(job_id: str, limit: int = 10) -> list[dict]:
     """Return the most recent published generations for a specific scheduled job."""
     async with aiosqlite.connect(get_db_path()) as db:
