@@ -50,6 +50,11 @@ _logger = logging.getLogger("ai_blog_server")
 # }
 product_blog_tasks: dict[str, dict] = {}
 
+# Keys: "store_id:job_id". Product-blog reconciliation never invokes an AI
+# model; the state is kept separately from paid generation jobs so the UI can
+# poll a long Shopify catalogue scan without timing out.
+product_blog_sync_tasks: dict[str, dict] = {}
+
 
 async def reload_config() -> None:
     """No-op: all store/model/prompt config is now loaded per-request from DB."""

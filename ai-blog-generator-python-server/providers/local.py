@@ -27,7 +27,6 @@ class OllamaProvider(TextProvider):
         sys = system_prompt or extra.get("system_prompt") or _DEFAULT_SYSTEM
         temperature = float(extra.get("temperature", 0.7))
         timeout = float(extra.get("timeout", 180))
-        max_retries = int(extra.get("max_retries", 1))
 
         user_prompt = _build_user_prompt(prompt, prompt_ending)
         payload = {
@@ -41,7 +40,7 @@ class OllamaProvider(TextProvider):
         }
 
         last_error: Optional[Exception] = None
-        attempts = max_retries + 1
+        attempts = 1
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             for attempt in range(attempts):

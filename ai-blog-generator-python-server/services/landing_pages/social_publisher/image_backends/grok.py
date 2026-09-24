@@ -14,6 +14,8 @@ from __future__ import annotations
 import base64
 from typing import List, Optional
 
+import requests
+
 from services.landing_pages.product_prompts.utils import get_logger
 
 from .base import GeneratedImage, ImageBackend
@@ -31,13 +33,18 @@ _FIDELITY_CLAUSE = (
     "keep it that colour - do NOT darken it or turn it black. Keep the shape, "
     "proportions, logo and branding identical. Do not redesign, restyle, relabel or "
     "recolour the product. Composite this exact product realistically into the "
-    "following scene. "
+    "following scene. IMPORTANT: product fidelity never applies to human models. "
+    "Any person in a reference image is background only: never preserve or imitate "
+    "their face, identity, skin, hair, body or clothing. Replace them with the "
+    "fictional persona specified in the scene prompt, or remove them completely "
+    "when the scene prompt calls for no person. "
 )
 
 # Appended (in edit mode) to the model's Avoid list to stop product recolouring.
 _COLOUR_NEGATIVE = (
     "changing the product colour, recolouring the product, black or dark product body, "
-    "discoloured product, wrong material or finish, tinted product"
+    "discoloured product, wrong material or finish, tinted product, copied reference "
+    "person, preserved reference face, same human identity as supplier photograph"
 )
 
 
@@ -97,11 +104,19 @@ class GrokImageBackend(ImageBackend):
         return self._post("images/generations", payload)
 
     def _edit(self, prompt, negative_prompt, n, refs) -> List[GeneratedImage]:
-        # Single reference -> object form; multiple -> array of data URIs.
+        # xAI uses ``image`` for one source and ``images`` for 2-3 sources.
+        # Each multi-image entry must be an image object, not a bare data URI.
         if len(refs) == 1:
-            image_field = {"url": _data_uri(refs[0]), "type": "image_url"}
+            source_fields = {
+                "image": {"url": _data_uri(refs[0]), "type": "image_url"}
+            }
         else:
-            image_field = [_data_uri(r) for r in refs]
+            source_fields = {
+                "images": [
+                    {"url": _data_uri(reference), "type": "image_url"}
+                    for reference in refs
+                ]
+            }
         # Reinforce colour/finish preservation via the negative prompt too.
         negative_prompt = ", ".join(
             p for p in (negative_prompt.strip(", "), _COLOUR_NEGATIVE) if p
@@ -109,9 +124,9 @@ class GrokImageBackend(ImageBackend):
         payload = {
             "model": self.model,
             "prompt": self._full_prompt(prompt, negative_prompt, fidelity=True),
-            "image": image_field,
             "n": max(1, n),
             "response_format": "b64_json",
+            **source_fields,
         }
         log.debug("Editing with %d reference image(s)", len(refs))
         return self._post("images/edits", payload)
@@ -135,7 +150,36 @@ class GrokImageBackend(ImageBackend):
             json=payload,
             timeout=self.settings.grok_timeout,
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            status = getattr(resp, "status_code", "unknown")
+            request_id = ""
+            headers = getattr(resp, "headers", None)
+            if headers:
+                request_id = headers.get("x-request-id") or headers.get("request-id") or ""
+            try:
+                error_body = resp.json()
+            except (ValueError, TypeError):
+                error_body = (getattr(resp, "text", "") or "").strip()
+            if isinstance(error_body, dict):
+                api_error = error_body.get("error", error_body)
+                if isinstance(api_error, dict):
+                    detail = str(
+                        api_error.get("message")
+                        or api_error.get("detail")
+                        or api_error
+                    )
+                else:
+                    detail = str(api_error)
+            else:
+                detail = str(error_body or exc)
+            detail = " ".join(detail.split())[:1500]
+            request_suffix = f" Request ID: {request_id}." if request_id else ""
+            raise RuntimeError(
+                f"xAI image API rejected {endpoint} with HTTP {status}: {detail}."
+                f"{request_suffix} No retry or fallback was attempted."
+            ) from exc
         body = resp.json()
 
         images: List[GeneratedImage] = []

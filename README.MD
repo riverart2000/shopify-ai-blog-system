@@ -7,6 +7,8 @@ This repository contains two active applications:
 
 The embedded app also includes a native-storefront **Wellness Quiz & Routine Builder**. Its Shopify theme block renders and scores four questions without an iframe or an LLM request, then uses a cached catalogue prepared by the Python backend to recommend a three-step routine. Consent-aware anonymous quiz events are included in Customer Intelligence.
 
+The Shopify admin also includes a modular **SEO Growth** control centre. It runs Shopify content and merchant-data audits immediately, optionally combines them with read-only Google Search Console query/page data and existing GA4/Shopify landing-page behaviour, and produces a scored workflow queue without automatically rewriting pages or creating redirects. Audits run in the background with progress polling, exact terminal errors and no hidden retries. A human-controlled backlink prospect tracker deliberately avoids automatic reciprocal link schemes.
+
 The authoritative backend in this repository is the Python server. The repo contains the Python backend and the embedded Shopify app only.
 
 This file is written for coding agents. It is intended to answer three questions quickly:
@@ -97,6 +99,9 @@ Responsibilities:
 `routes/wellness_quiz_api.py`
 - Product catalogue sync, public quiz bootstrap, anonymous event collection, and quiz reporting.
 
+`routes/seo_growth_api.py`
+- Authenticated embedded-app API for SEO settings, background audits, opportunity workflow and backlink prospects.
+
 ### Service Layer
 
 `services/llm_service.py`
@@ -117,6 +122,11 @@ Responsibilities:
 `services/ga4_service.py`
 - Optional read-only GA4 Data API connector for aggregate channel, device, and landing-page reports.
 - Uses a GA4 property ID and service account saved from the Intelligence page.
+
+`services/seo_growth/`
+- Modular SEO subsystem: `search_console.py` is the read-only Google adapter, `shopify_audit.py` inspects live product/article data, `opportunities.py` contains deterministic evidence rules, and `orchestrator.py` owns progress, final failures and scheduled weekly runs.
+- Search Console credentials may be stored separately or reuse the read-only GA4 service account after that account is granted access to the exact Search Console property.
+- No SEO audit retries automatically after failure, and no page, redirect or backlink is changed without a merchant action.
 
 ### Reusable Backfill Command
 
@@ -184,6 +194,9 @@ Core logical tables:
 - `scheduled_jobs` — cron-like jobs, including `is_product_blog`.
 - `intelligence_runs` — historical aggregate analysis snapshots.
 - `intelligence_recommendations` — evidence, action, confidence, impact, effort, and lifecycle state for each finding.
+- `seo_growth_runs` — background audit stage, progress, summary and exact final error.
+- `seo_growth_opportunities` — stable evidence keys, source metrics, affected URLs and merchant workflow state.
+- `seo_backlink_prospects` — human-reviewed outreach and acquired-link records.
 
 Behavior-specific DB modules:
 

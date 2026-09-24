@@ -24,8 +24,12 @@ async function backendFetch(path: string, opts: RequestInit = {}) {
   if (!res.ok) {
     let detail = `Backend ${res.status}`;
     try {
-      const body = await res.json() as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = await res.json() as { detail?: unknown };
+      if (typeof body.detail === "string") detail = body.detail;
+      else if (body.detail && typeof body.detail === "object") {
+        const value = body.detail as { message?: string; error?: string };
+        detail = value.message || value.error || JSON.stringify(body.detail);
+      }
     } catch {
       const text = await res.text().catch(() => "");
       if (text) detail = text.slice(0, 200);
@@ -40,9 +44,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const session = requireShopifySession((auth as { session?: unknown }).session);
   const handle = params.handle as string;
   
-  const [context, productDataResponse] = await Promise.all([
+  const [context, productDataResponse, creditResponse] = await Promise.all([
     loadShopifyStudioContext(session),
     BACKEND_KEY ? backendFetch(`/api/landing-pages/products/${handle}`).catch(() => null) : Promise.resolve(null),
+    BACKEND_KEY
+      ? backendFetch(`/api/landing-pages/credits?shop=${encodeURIComponent(session.shop)}`).catch((error) => ({
+          credit: {
+            status: "check_failed",
+            can_start: false,
+            available_display: "Unavailable",
+            minimum_display: "Unavailable",
+            message: `Credit check could not be loaded: ${error.message}`,
+          },
+        }))
+      : Promise.resolve(null),
   ]);
   
   const storefrontDomain = context.storefrontDomain;
@@ -54,6 +69,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     productUrl,
     initialData: addLandingPageAssetPreviewUrls(rawProductData),
     initialPublishResult: rawProductData?.landing_page_publication || null,
+    initialCredit: creditResponse?.credit || null,
   };
 };
 
@@ -63,15 +79,45 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const handle = params.handle as string;
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
+  const submittedConcept = String(formData.get("concept") || "");
 
   try {
     if (intent === "generate_prompts") {
       const productUrl = formData.get("productUrl") as string;
       const res = await backendFetch("/api/landing-pages/generate-prompts", {
         method: "POST",
-        body: JSON.stringify({ product_url: productUrl, shop: session.shop, generator: "grok" })
+        body: JSON.stringify({
+          product_url: productUrl,
+          shop: session.shop,
+          fetcher: "shopify",
+          generator: "grok",
+        })
       });
-      return { ok: true, intent, data: addLandingPageAssetPreviewUrls(res.data) };
+      if (!res.accepted) {
+        return {
+          ok: false,
+          intent,
+          error: res.error || res.credit?.message || "Generation was not accepted.",
+          credit: res.credit || null,
+        };
+      }
+      return { ok: true, intent, job: res.job, credit: res.credit };
+    }
+
+    if (intent === "poll_generation") {
+      const jobId = formData.get("jobId") as string;
+      const res = await backendFetch(`/api/landing-pages/generate-prompts/jobs/${encodeURIComponent(jobId)}`);
+      const job = res.job;
+      if (job.status === "succeeded") {
+        const productRes = await backendFetch(`/api/landing-pages/products/${handle}`);
+        return {
+          ok: true,
+          intent,
+          job,
+          data: addLandingPageAssetPreviewUrls(productRes.data),
+        };
+      }
+      return { ok: true, intent, job };
     }
     
     if (intent === "save_edits") {
@@ -192,12 +238,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     return { ok: false, error: "Unknown intent" };
   } catch (err: any) {
-    return { ok: false, error: err.message, intent };
+    if (intent === "create_video_script" && submittedConcept) {
+      const fetchRes = await backendFetch(`/api/landing-pages/social/${handle}`).catch(() => null);
+      return {
+        ok: false,
+        error: err.message,
+        intent,
+        concept: submittedConcept,
+        socialItems: fetchRes?.items
+          ? addSocialImagePreviewUrls(fetchRes.items)
+          : null,
+      };
+    }
+    return { ok: false, error: err.message, intent, concept: submittedConcept };
   }
 };
 
 export default function LandingPageWizard() {
-  const { handle, productUrl, initialData, initialPublishResult } = useLoaderData<typeof loader>();
+  const { handle, productUrl, initialData, initialPublishResult, initialCredit } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const submit = useSubmit();
   const actionData = useActionData<typeof action>();
@@ -208,6 +266,8 @@ export default function LandingPageWizard() {
   const [error, setError] = useState<string | null>(null);
   const [socialItems, setSocialItems] = useState<any[] | null>(null);
   const [publishResult, setPublishResult] = useState<any>(initialPublishResult);
+  const [credit, setCredit] = useState<any>(initialCredit);
+  const [generationJob, setGenerationJob] = useState<any>(null);
 
   const isSubmitting = navigation.state !== "idle";
 
@@ -220,30 +280,71 @@ export default function LandingPageWizard() {
 
   useEffect(() => {
     if (actionData) {
-      if (actionData.ok) {
-        if (actionData.intent === "generate_prompts") {
-          // Use a function to ensure we capture the new data directly into state
-          setData((prevData: any) => actionData.data);
-          setStep(2);
-        } else if (actionData.intent === "save_edits") {
-          setData(actionData.data);
-        } else if (["generate_social", "fetch_social", "create_video_script", "generate_video", "approve_video"].includes(actionData.intent || "")) {
-          if (actionData.socialItems) {
-            setSocialItems(actionData.socialItems);
+      const result: any = actionData;
+      if (result.credit) setCredit(result.credit);
+      if (result.ok) {
+        if (result.intent === "generate_prompts") {
+          setGenerationJob(result.job);
+        } else if (result.intent === "poll_generation") {
+          setGenerationJob(result.job);
+          if (result.job?.status === "succeeded" && result.data) {
+            setData(result.data);
+            setStep(2);
+            setError(null);
+          } else if (result.job?.status === "failed") {
+            setError(result.job.message || result.job.error_message || "Generation failed.");
+          }
+        } else if (result.intent === "save_edits") {
+          setData(result.data);
+        } else if (["generate_social", "fetch_social", "create_video_script", "generate_video", "approve_video"].includes(result.intent || "")) {
+          if (result.socialItems) {
+            setSocialItems(result.socialItems);
           }
           setStep(3);
-        } else if (actionData.intent === "publish") {
-          setPublishResult(actionData.publishResult);
+        } else if (result.intent === "publish") {
+          setPublishResult(result.publishResult);
           setStep(4);
         }
       } else {
-        setError(actionData.error);
+        setError(result.error);
+        if (result.socialItems) {
+          setSocialItems(result.socialItems);
+          setStep(3);
+        } else if (result.intent === "create_video_script" && result.concept) {
+          setSocialItems((items) => items?.map((item) =>
+            item.concept === result.concept
+              ? {
+                  ...item,
+                  video: {
+                    ...(item.video || {}),
+                    status: "error",
+                    approved: false,
+                    last_error: result.error,
+                  },
+                }
+              : item
+          ) || null);
+        }
       }
     }
   }, [actionData]);
 
+  useEffect(() => {
+    if (!generationJob || !["queued", "running"].includes(generationJob.status) || isSubmitting) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      submit(
+        { intent: "poll_generation", jobId: generationJob.id },
+        { method: "post" },
+      );
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [generationJob, isSubmitting, submit]);
+
   const handleGeneratePrompts = () => {
     setError(null);
+    setGenerationJob(null);
     submit({ intent: "generate_prompts", productUrl }, { method: "post" });
   };
 
@@ -341,6 +442,10 @@ export default function LandingPageWizard() {
     setData(newData);
   };
 
+  const isGenerationActive = Boolean(
+    generationJob && ["queued", "running"].includes(generationJob.status)
+  );
+
   return (
     <s-page heading={`Landing Page Wizard: ${handle}`}>
       <div style={{ marginBottom: "12px" }}>
@@ -359,13 +464,88 @@ export default function LandingPageWizard() {
         <s-paragraph>
           Extracts product details and generates marketing angles, persona, and image prompts.
         </s-paragraph>
+        <div style={{
+          margin: "14px 0",
+          padding: "14px",
+          borderRadius: "10px",
+          border: `1px solid ${credit?.can_start ? "#86c79a" : "#e0a800"}`,
+          background: credit?.can_start ? "#f0fff4" : "#fff8e6",
+        }}>
+          <div style={{ fontWeight: 700 }}>xAI credit preflight</div>
+          <div style={{ marginTop: "6px" }}>
+            Available: <strong>{credit?.available_display || "Unavailable"}</strong>
+            {credit?.minimum_display && <> · Minimum required: <strong>{credit.minimum_display}</strong></>}
+          </div>
+          <div style={{ marginTop: "6px", color: "#4a4a4a" }}>
+            {credit?.message || "Credit status has not been checked."}
+          </div>
+          <div style={{ marginTop: "5px", fontSize: "0.82rem", color: "#6d7175" }}>
+            Generation is blocked unless this check succeeds. The check and generation do not retry.
+          </div>
+        </div>
         <button
           onClick={handleGeneratePrompts}
-          disabled={isSubmitting}
-          style={{ padding: "8px 16px", background: "#202223", color: "#fff", borderRadius: "8px", border: "none", cursor: isSubmitting ? "not-allowed" : "pointer" }}
+          disabled={isSubmitting || isGenerationActive || !credit?.can_start}
+          style={{ padding: "8px 16px", background: "#202223", color: "#fff", borderRadius: "8px", border: "none", cursor: (isSubmitting || isGenerationActive || !credit?.can_start) ? "not-allowed" : "pointer", opacity: (isSubmitting || isGenerationActive || !credit?.can_start) ? 0.55 : 1 }}
         >
-          {isSubmitting && navigation.formData?.get("intent") === "generate_prompts" ? "Generating..." : "Run Generator"}
+          {isGenerationActive ? "Generation running in background…" : isSubmitting && navigation.formData?.get("intent") === "generate_prompts" ? "Starting…" : "Run Generator"}
         </button>
+
+        {generationJob && (
+          <div style={{
+            marginTop: "16px",
+            padding: "16px",
+            borderRadius: "10px",
+            border: `1px solid ${generationJob.status === "failed" ? "#e57373" : generationJob.status === "succeeded" ? "#86c79a" : "#8c9196"}`,
+            background: generationJob.status === "failed" ? "#fff1f0" : generationJob.status === "succeeded" ? "#f0fff4" : "#f6f6f7",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center" }}>
+              <strong>
+                {generationJob.status === "failed" ? "Generation failed" :
+                  generationJob.status === "succeeded" ? "Generation complete" :
+                  "Generation in progress"}
+              </strong>
+              <span>{generationJob.progress || 0}%</span>
+            </div>
+            <div style={{ height: "8px", background: "#d8d8d8", borderRadius: "999px", overflow: "hidden", marginTop: "10px" }}>
+              <div style={{
+                width: `${generationJob.progress || 0}%`,
+                height: "100%",
+                background: generationJob.status === "failed" ? "#b42318" : generationJob.status === "succeeded" ? "#107c41" : "#005bd3",
+                transition: "width 250ms ease",
+              }} />
+            </div>
+            <div style={{ marginTop: "10px" }}>{generationJob.message}</div>
+            <div style={{ marginTop: "5px", color: "#6d7175", fontSize: "0.82rem" }}>
+              Stage: {generationJob.stage} · Job: {generationJob.id}
+            </div>
+
+            {generationJob.status === "failed" && (
+              <div style={{ marginTop: "14px", padding: "12px", background: "#fff", border: "1px solid #fecaca", borderRadius: "8px" }}>
+                <div><strong>Error type:</strong> {generationJob.error_type || "unknown"}</div>
+                <div style={{ marginTop: "6px", whiteSpace: "pre-wrap" }}>
+                  <strong>Exact error:</strong> {generationJob.error_message}
+                </div>
+                <div style={{ marginTop: "6px", fontSize: "0.85rem" }}>
+                  Attempts: <strong>1</strong> · Retries: <strong>0</strong> · Fallbacks: <strong>0</strong>
+                </div>
+              </div>
+            )}
+
+            {Array.isArray(generationJob.timeline) && generationJob.timeline.length > 0 && (
+              <details style={{ marginTop: "12px" }}>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Detailed progress log</summary>
+                <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {generationJob.timeline.map((entry: any, index: number) => (
+                    <div key={`${entry.at}-${index}`} style={{ fontSize: "0.84rem" }}>
+                      <strong>{entry.progress}% · {entry.stage}</strong> — {entry.message}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
       </s-section>
 
       {/* STEP 2: Edit Text & Generate Social */}
@@ -394,6 +574,10 @@ export default function LandingPageWizard() {
           <div style={{ marginBottom: "20px" }}>
             <div>
               <strong>Ideal Client:</strong> {data.persona?.name}, {data.persona?.age} {data.persona?.sex}
+              {data.persona?.race ? ` · ${data.persona.race}` : ""}
+              {data.persona?.ethnicity && data.persona.ethnicity !== data.persona.race
+                ? ` (${data.persona.ethnicity})`
+                : ""}
             </div>
             {data.persona?.rationale && (
               <div style={{ marginTop: "6px", color: "#4a4a4a", lineHeight: 1.45 }}>
@@ -528,8 +712,8 @@ export default function LandingPageWizard() {
                       <div style={{ marginTop: "20px", paddingTop: "20px", borderTop: "1px solid #d1d5db" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap", marginBottom: "14px" }}>
                           <div>
-                            <strong>Marketing video</strong>
-                            {script?.duration_seconds && <span style={{ marginLeft: "8px", color: "#4b5563" }}>{script.duration_seconds} seconds · Grok chose this length · 480p</span>}
+                            <strong>UGC lip-sync video</strong>
+                            {script?.duration_seconds && <span style={{ marginLeft: "8px", color: "#4b5563" }}>{script.duration_seconds} seconds · Grok chose this length · 480p · vertical 9:16</span>}
                           </div>
                           <span style={{ padding: "4px 9px", borderRadius: "999px", background: item.video.approved ? "#dcfce7" : item.video.status === "error" ? "#fee2e2" : "#fef3c7", color: item.video.approved ? "#166534" : item.video.status === "error" ? "#991b1b" : "#92400e", fontSize: "0.78rem", fontWeight: 700 }}>
                             {item.video.approved ? "Approved for publishing" : item.video.status === "error" ? "Generation failed" : item.video.video_file ? "Ready for approval" : "Script ready"}
@@ -542,6 +726,12 @@ export default function LandingPageWizard() {
                           </div>
                         )}
 
+                        {script?.speech_warning && (
+                          <div style={{ marginBottom: "14px", padding: "10px", borderRadius: "7px", background: "#fff8e6", color: "#7a4b00", border: "1px solid #f1c56b" }}>
+                            Speech timing warning: {script.speech_warning}
+                          </div>
+                        )}
+
                         {item.video.preview_url && (
                           <div style={{ maxWidth: "360px", marginBottom: "16px" }}>
                             <video controls playsInline preload="metadata" poster={item.preview_url} src={item.video.preview_url} style={{ display: "block", width: "100%", maxHeight: "640px", background: "#000", borderRadius: "10px" }} />
@@ -551,8 +741,20 @@ export default function LandingPageWizard() {
 
                         {script && (
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px" }}>
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Exact Spoken Script for Lip-Sync</label>
+                              <textarea
+                                value={script.spoken_script || ""}
+                                onChange={(e) => handleVideoScriptChange(item.concept, "spoken_script", e.target.value)}
+                                onBlur={() => handleSaveVideo(item)}
+                                style={{ width: "100%", minHeight: "95px", padding: "11px", borderRadius: "8px", border: "1px solid #ccc", lineHeight: 1.45 }}
+                              />
+                              <div style={{ marginTop: "5px", color: "#4b5563", fontSize: "0.78rem" }}>
+                                These exact words are injected into the final Grok video request. Keep the dialogue natural and short enough for {script.duration_seconds} seconds.
+                              </div>
+                            </div>
                             <div>
-                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Detailed Video Prompt</label>
+                              <label style={{ display: "block", marginBottom: "5px", fontWeight: 700, fontSize: "0.85rem" }}>Detailed UGC Video Prompt</label>
                               <textarea
                                 value={script.video_prompt || ""}
                                 onChange={(e) => handleVideoScriptChange(item.concept, "video_prompt", e.target.value)}
@@ -568,7 +770,7 @@ export default function LandingPageWizard() {
                                     <strong>{scene.start_second}–{scene.end_second}s</strong>: {scene.visual_action}
                                     {scene.camera && <div><strong>Camera:</strong> {scene.camera}</div>}
                                     {scene.on_screen_text && <div><strong>On-screen:</strong> {scene.on_screen_text}</div>}
-                                    {scene.voiceover && <div><strong>Voiceover:</strong> {scene.voiceover}</div>}
+                                    {(scene.speech || scene.voiceover) && <div><strong>Speech:</strong> {scene.speech || scene.voiceover}</div>}
                                   </div>
                                 ))}
                               </div>

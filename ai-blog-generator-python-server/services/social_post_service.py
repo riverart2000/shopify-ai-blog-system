@@ -485,7 +485,7 @@ def _model_supports_reference_image(model: providers.ModelRecord) -> bool:
     if provider_name == "openai":
         return "gpt-image" in model_name
 
-    if provider_name == "grok":
+    if provider_name in {"grok", "xai"}:
         return True
 
     if provider_name == "replicate":
@@ -516,7 +516,7 @@ def _reference_model_rank(model: providers.ModelRecord) -> int:
         return 0
 
     # Next best: other known image-conditioning providers.
-    if provider_name == "grok":
+    if provider_name in {"grok", "xai"}:
         return 1
     if provider_name == "replicate":
         return 2
@@ -564,11 +564,8 @@ async def _generate_social_marketing_image_once(
             ),
         )
 
-    skip_providers: set[str] = set()
-    for row in rows:
+    for row in rows[:1]:
         model = providers.ModelRecord.from_dict(row)
-        if model.provider in skip_providers:
-            continue
 
         attempt_data: dict[str, Any] = {
             "provider": model.provider,
@@ -591,29 +588,14 @@ async def _generate_social_marketing_image_once(
             reference_attempted = False
             reference_attached = False
             used_reference_fallback = False
-            try:
-                if reference_payload:
-                    reference_attempted = True
-                    reference_attached = True
-                urls = await provider.generate_images(
-                    prompt,
-                    1,
-                    reference_image=reference_payload,
-                )
-            except providers.ProviderError as ref_exc:
-                if not reference_payload:
-                    raise
-
-                # Some image models reject conditioning fields; retry prompt-only.
+            if reference_payload:
                 reference_attempted = True
-                reference_attached = False
-                used_reference_fallback = True
-                logger.info(
-                    "Social image provider %s rejected reference image; retrying without reference: %s",
-                    model.name,
-                    ref_exc,
-                )
-                urls = await provider.generate_images(prompt, 1)
+                reference_attached = True
+            urls = await provider.generate_images(
+                prompt,
+                1,
+                reference_image=reference_payload,
+            )
 
             attempt_data["reference_attempted"] = reference_attempted
             attempt_data["reference_attached"] = reference_attached
@@ -638,8 +620,6 @@ async def _generate_social_marketing_image_once(
             debug_data["attempts"].append(attempt_data)
             logger.warning("Social image provider %s failed: %s", model.name, err_msg)
             await db.log_model_error(store_id, model.id, model.provider, "image_error", err_msg)
-            if not exc.retryable:
-                skip_providers.add(model.provider)
         except Exception as exc:
             err_msg = f"Unexpected error: {exc}"
             attempt_data["status"] = "failed"
@@ -920,17 +900,17 @@ async def generate_social_post_variants(
     content = _clean_text(generated.get("content"))
     provider_texts = _extract_provider_lines(content)
 
+    missing_provider_texts = [
+        provider for provider in SUPPORTED_TEXT_PROVIDERS
+        if provider not in provider_texts
+    ]
+    if missing_provider_texts:
+        raise ValueError(
+            "The AI response omitted required social copy for: "
+            + ", ".join(missing_provider_texts)
+            + ". The response was rejected; no template fallback or retry was attempted."
+        )
     for provider in SUPPORTED_TEXT_PROVIDERS:
-        if provider not in provider_texts:
-            provider_texts[provider] = _fallback_post_text(
-                provider=provider,
-                product_title=title,
-                product_url=url,
-                discount_url=discount_url,
-                brief_text=brief,
-                hashtags=hashtags,
-                offer_type=normalized_offer_type,
-            )
         provider_texts[provider] = _ensure_offer_structure(
             provider=provider,
             text=provider_texts[provider],
@@ -942,7 +922,10 @@ async def generate_social_post_variants(
         )
 
     if not summary:
-        summary = provider_texts.get("instagram") or provider_texts.get("facebook") or "Social post draft"
+        raise ValueError(
+            "The AI response omitted the campaign summary. The response was "
+            "rejected; no fallback or retry was attempted."
+        )
 
     image_urls: list[str] = []
     image_generation_prompts: list[str] = []

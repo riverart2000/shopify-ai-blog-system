@@ -51,7 +51,6 @@ class DeepSeekProvider(TextProvider):
         sys = system_prompt or extra.get("system_prompt") or _DEFAULT_SYSTEM
         temperature = float(extra.get("temperature", 0.7))
         timeout = float(extra.get("timeout", 90))
-        max_retries = int(extra.get("max_retries", 2))
 
         user_prompt = _build_user_prompt(prompt, prompt_ending)
         payload = {
@@ -64,7 +63,9 @@ class DeepSeekProvider(TextProvider):
         }
 
         last_error: Optional[Exception] = None
-        attempts = max_retries + 1
+        # Paid generation policy: exactly one request. Model-level retry
+        # settings are intentionally ignored until failures have been diagnosed.
+        attempts = 1
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             for attempt in range(attempts):
@@ -164,17 +165,56 @@ def _parse_json(raw: str) -> dict:
     s = re.sub(r"^```\s*", "", s)
     s = re.sub(r"\s*```$", "", s)
     s = s.strip()
+    last_error: json.JSONDecodeError | None = None
     try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
+        return _loads_with_terminal_object_repair(s)
+    except json.JSONDecodeError as exc:
+        last_error = exc
     start, end = s.find("{"), s.rfind("}")
     if start != -1 and end > start:
         try:
-            return json.loads(s[start : end + 1])
-        except json.JSONDecodeError:
-            pass
-    raise ValueError(f"Could not parse JSON from response: {raw[:200]}")
+            return _loads_with_terminal_object_repair(s[start : end + 1])
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    detail = (
+        f"{last_error.msg} at line {last_error.lineno}, column "
+        f"{last_error.colno}, character {last_error.pos} of {len(s)}"
+        if last_error is not None
+        else "no JSON object was found"
+    )
+    raise ValueError(f"Could not parse provider JSON response: {detail}")
+
+
+def _loads_with_terminal_object_repair(candidate: str) -> dict:
+    """Repair only one omitted final object brace, never prose or field data.
+
+    Long responses occasionally finish after the closing quote of the final
+    string value but omit the root object's final ``}``. Completing that single
+    structural character is deterministic and avoids paying for another request.
+    Any mid-response error or incomplete string still raises unchanged.
+    """
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as original:
+        stripped = candidate.rstrip()
+        terminal_error = original.pos >= len(stripped) - 1
+        if (
+            terminal_error
+            and stripped.startswith("{")
+            and not stripped.endswith("}")
+        ):
+            try:
+                repaired = json.loads(stripped + "}")
+            except json.JSONDecodeError:
+                pass
+            else:
+                if isinstance(repaired, dict):
+                    logger.warning(
+                        "Provider JSON omitted the final object brace; repaired "
+                        "deterministically without an API retry."
+                    )
+                    return repaired
+        raise original
 
 
 def _validate(data: dict) -> None:

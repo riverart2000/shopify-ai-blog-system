@@ -39,7 +39,7 @@ def configure_logging(verbose: bool = False) -> None:
 
 
 def build_session(user_agent: str, max_retries: int = 3) -> requests.Session:
-    """Create a requests session with retry/backoff and a sane User-Agent."""
+    """Retry safe reads only. Paid POST operations are always attempted once."""
     session = requests.Session()
     session.headers.update({"User-Agent": user_agent})
     if Retry is not None:
@@ -47,7 +47,7 @@ def build_session(user_agent: str, max_retries: int = 3) -> requests.Session:
             total=max_retries,
             backoff_factor=0.5,
             status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"GET", "POST"}),
+            allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
             raise_on_status=False,
         )
         adapter = HTTPAdapter(max_retries=retry)

@@ -26,6 +26,7 @@ export default function App() {
         <s-link href="/app/wellness-quiz">Wellness Quiz</s-link>
         <s-link href="/app/reviews">Reviews</s-link>
         <s-link href="/app/intelligence">Intelligence</s-link>
+        <s-link href="/app/seo-growth">SEO Growth</s-link>
         <s-link href="/app/system-health">System Health</s-link>
         <s-link href="/app/history">History</s-link>
         <s-link href="/app/schedule">Schedule</s-link>

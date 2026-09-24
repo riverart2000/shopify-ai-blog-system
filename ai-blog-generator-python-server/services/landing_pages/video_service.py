@@ -12,31 +12,46 @@ from typing import Any
 
 
 SCRIPT_SYSTEM_PROMPT = """You are a senior direct-response video creative director.
-Create an accurate, premium short-form marketing video plan from the supplied product,
-audience and creative evidence. Never invent product features, results, certifications,
-prices, discounts or medical claims. The supplied creative image depicts the actual
-product and must remain visually faithful.
+Create an accurate, authentic UGC short-form marketing video plan from the supplied
+product, audience and creative evidence. The fictional ideal-customer persona in the
+approved creative image is the on-camera spokesperson. Never invent product features,
+results, certifications, prices, discounts or medical claims. The supplied creative
+image depicts the actual product and spokesperson and both must remain visually
+faithful.
 
 Return only valid JSON with these keys:
 duration_seconds (an integer YOU choose from 6 through 12), hook, campaign_goal,
 scenes (an array covering the full duration; each scene has start_second, end_second,
-visual_action, camera, on_screen_text and voiceover), audio_direction, final_cta,
-video_prompt, and posting_text.
+visual_action, camera, on_screen_text and speech), spoken_script, audio_direction,
+final_cta, video_prompt, and posting_text.
 
 The video_prompt must be a detailed, standalone production prompt for an image-to-video
-model. It must preserve the exact product, colour, shape, branding and proportions in
-the reference image, specify natural motion and camera movement, and prohibit warped
-products, extra parts, unreadable text and fabricated claims. Choose the shortest
-duration that communicates the idea clearly; use longer durations only when the
-creative genuinely needs them. Match the production specificity of a top-tier cinematic
-commercial prompt: name the creative style, camera/lens look, lighting, depth of field,
-colour grade, an exact second-by-second sequence covering the chosen duration, product
-and environmental motion, final composition, mood, frame rate, realism and material
-detail. Adapt every choice to this product and concept; do not copy irrelevant luxury,
-perfume, mist or sparkle motifs. The deliverable is 480p, so do not claim a 4K output.
-posting_text should be ready to publish, with a clear CTA and relevant hashtags."""
+model. It must create a realistic vertical 9:16 UGC/TikTok/Reels video in which the
+spokesperson speaks directly to the viewer in a natural first-person, conversational
+tone. Use realistic speech audio and precise lip-sync: mouth shapes must match every
+spoken word, with natural blinking, micro-expressions, head movement, breathing and
+small hand gestures. Keep the face and mouth visible while speaking. Do not use an
+off-camera narrator or silent montage.
+
+spoken_script is the exact dialogue the spokesperson says aloud. It must be a single
+natural conversational passage, grounded in the supplied evidence, with no quotation
+marks around the stored value. Keep it short enough for relaxed, intelligible delivery
+at roughly 2 to 2.5 words per second within the chosen duration. Include the exact same
+dialogue verbatim inside video_prompt under a clearly labelled "Script (speak exactly)"
+section, surrounded by quotation marks. Every scene's speech must be taken verbatim
+from spoken_script and the scene timings must cover the full chosen duration.
+
+Preserve the exact product, colour, shape, branding and proportions in the reference
+image and preserve the approved fictional spokesperson's appearance. Specify natural
+handheld phone movement, casual framing, natural lighting and an authentic relatable
+setting. Prohibit warped products, extra fingers or limbs, identity drift, unreadable
+text, fabricated claims, robotic delivery and lip-sync mismatch. Choose the shortest
+duration that communicates the idea clearly; use longer durations only when genuinely
+needed. The deliverable is 480p, so do not claim a 4K output. posting_text should be
+ready to publish, with a clear CTA and relevant hashtags."""
 
 VIDEO_SCRIPT_MODEL = "grok-4.3"
+MAX_SPEECH_WORDS_PER_SECOND = 2.6
 
 
 class LandingPageVideoService:
@@ -122,12 +137,94 @@ class LandingPageVideoService:
             raise RuntimeError("Grok returned a script without the required video prompt.")
         if not isinstance(script.get("scenes"), list) or not script["scenes"]:
             raise RuntimeError("Grok returned a script without a usable scene plan.")
+        spoken_script = self._spoken_script_from_response(script, duration)
 
         script["duration_seconds"] = duration
+        script["spoken_script"] = spoken_script
+        script["speech_warning"] = self._speech_fit_warning(
+            spoken_script, duration
+        )
+        script["video_prompt"] = self._ugc_video_prompt(
+            str(script.get("video_prompt") or "").strip(),
+            spoken_script,
+            duration,
+        )
         script["posting_text"] = str(script.get("posting_text") or social_text or "").strip()
         script["created_at"] = datetime.now(timezone.utc).isoformat()
         script["model"] = VIDEO_SCRIPT_MODEL
         return script
+
+    @staticmethod
+    def _validate_spoken_script(value: Any, duration: int) -> str:
+        spoken_script = str(value or "").strip()
+        if (
+            len(spoken_script) >= 2
+            and spoken_script[0] == spoken_script[-1]
+            and spoken_script[0] in {'"', "'"}
+        ):
+            spoken_script = spoken_script[1:-1].strip()
+        if not spoken_script:
+            raise RuntimeError(
+                "Grok returned no spoken_script. UGC video generation requires the "
+                "exact words the on-camera spokesperson will say for lip-sync, and "
+                "no recoverable scene speech was present. No retry was attempted."
+            )
+        return spoken_script
+
+    @classmethod
+    def _spoken_script_from_response(cls, script: dict, duration: int) -> str:
+        """Preserve paid results when Grok places dialogue in the scene objects."""
+        spoken_script = str(script.get("spoken_script") or "").strip()
+        if not spoken_script:
+            pieces: list[str] = []
+            for scene in script.get("scenes") or []:
+                if not isinstance(scene, dict):
+                    continue
+                piece = str(scene.get("speech") or scene.get("voiceover") or "").strip()
+                if piece and (not pieces or pieces[-1] != piece):
+                    pieces.append(piece)
+            spoken_script = " ".join(pieces)
+        return cls._validate_spoken_script(spoken_script, duration)
+
+    @staticmethod
+    def _speech_fit_warning(spoken_script: str, duration: int) -> str:
+        word_count = len(spoken_script.split())
+        maximum_words = int(duration * MAX_SPEECH_WORDS_PER_SECOND)
+        if word_count > maximum_words:
+            return (
+                f"Grok wrote {word_count} spoken words for a {duration}-second video; "
+                f"approximately {maximum_words} words is safer for clear UGC lip-sync. "
+                "The paid script was preserved. Shorten the editable spoken script "
+                "before generating the video, or accept a faster delivery."
+            )
+        return ""
+
+    @staticmethod
+    def _ugc_video_prompt(base_prompt: str, spoken_script: str, duration: int) -> str:
+        """Build the final renderer prompt with immutable lip-sync instructions."""
+        marker = "MANDATORY UGC SPEECH AND LIP-SYNC INSTRUCTIONS"
+        # create_script stores the composed prompt for review in the admin UI.
+        # Recompose at render time so edited dialogue is injected once, not appended
+        # beneath stale or duplicated speech instructions.
+        base_prompt = base_prompt.split(marker, 1)[0].rstrip()
+        return (
+            f"{base_prompt}\n\n"
+            f"{marker} (these override any "
+            "conflicting audio or dialogue instruction above):\n"
+            "- Format: authentic vertical 9:16 UGC / TikTok / Instagram Reels video.\n"
+            "- The fictional spokesperson shown in the reference image speaks directly "
+            "to camera; preserve their approved appearance and the exact product.\n"
+            "- Generate natural audible speech, not captions-only and not an off-camera "
+            "voiceover.\n"
+            "- Keep the speaker's face and mouth clearly visible while speaking.\n"
+            "- Synchronize every mouth movement precisely to every spoken phoneme, with "
+            "natural blinking, breathing, micro-expressions, head motion and gestures.\n"
+            "- Natural conversational delivery; no robotic cadence, frozen face, mouth "
+            "drift, identity drift or mismatched lip movement.\n"
+            f"- Exact duration: {duration} seconds.\n"
+            "Script (speak exactly, with no added or omitted words):\n"
+            f"\"{spoken_script}\""
+        )
 
     @staticmethod
     def _image_data_uri(image_path: Path) -> str:
@@ -146,9 +243,13 @@ class LandingPageVideoService:
         duration = int(script.get("duration_seconds") or 0)
         if not 6 <= duration <= 12:
             raise RuntimeError("Video duration must be between 6 and 12 seconds.")
-        prompt = str(script.get("video_prompt") or "").strip()
-        if not prompt:
+        base_prompt = str(script.get("video_prompt") or "").strip()
+        if not base_prompt:
             raise RuntimeError("The video script has no generation prompt.")
+        spoken_script = self._validate_spoken_script(
+            script.get("spoken_script"), duration
+        )
+        prompt = self._ugc_video_prompt(base_prompt, spoken_script, duration)
 
         payload = {
             "model": self.settings.grok_video_model,

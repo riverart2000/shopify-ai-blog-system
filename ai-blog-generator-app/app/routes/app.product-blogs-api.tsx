@@ -135,5 +135,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (intent === "sync-start") {
+    try {
+      const storeId = String(form.get("storeId") || "");
+      const result = await backendFetch("/api/products/blog-sync", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: storeId,
+          blog_handle: "inside-the-products",
+          repair: true,
+        }),
+      });
+      return Response.json({ ok: true, ...result });
+    } catch (e) {
+      return Response.json({
+        ok: false,
+        error: e instanceof Error ? e.message : "Product-blog sanity check could not start",
+      });
+    }
+  }
+
+  if (intent === "sync-status") {
+    try {
+      const storeId = String(form.get("storeId") || "");
+      const jobId = String(form.get("jobId") || "");
+      const result = await backendFetch(
+        `/api/products/blog-sync/status?store_id=${encodeURIComponent(storeId)}&job_id=${encodeURIComponent(jobId)}`,
+      );
+      return Response.json({ ok: true, ...result });
+    } catch (e) {
+      return Response.json({
+        ok: false,
+        error: e instanceof Error ? e.message : "Product-blog sanity-check status failed",
+      });
+    }
+  }
+
   return Response.json({ ok: false, error: "Unknown intent" });
 };

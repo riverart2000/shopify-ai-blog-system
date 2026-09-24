@@ -6,7 +6,7 @@ Covers:
   2. utils.py   — text_to_html
   3. providers  — ModelRecord, ProviderError, AllModelsFailedError, provider registry
   4. security   — hash_password / verify_password
-  5. services   — llm_service failover, image_service soft-fail (mocked providers)
+  5. services   — single-attempt LLM/image policy (mocked providers)
   6. HTTP routes — auth, generate, api, setup, schedule (httpx + FastAPI TestClient)
 
 Run with:
@@ -492,7 +492,7 @@ class TestSocialPostService:
                 brief_text="",
             )
 
-    async def test_generate_variants_fills_missing_provider_lines(self, tmp_db):
+    async def test_generate_variants_rejects_missing_provider_lines(self, tmp_db):
         from services import social_post_service
 
         await db.upsert_store(_make_store("social-s1", "Store One"))
@@ -511,25 +511,17 @@ class TestSocialPostService:
             new_callable=AsyncMock,
             return_value=llm_payload,
         ):
-            result = await social_post_service.generate_social_post_variants(
-                store_id="social-s1",
-                store_name="Store One",
-                product_title="Pro Serum",
-                product_url="https://example.com/products/pro-serum",
-                brief_text="Drive curiosity",
-            )
+            with pytest.raises(ValueError) as caught:
+                await social_post_service.generate_social_post_variants(
+                    store_id="social-s1",
+                    store_name="Store One",
+                    product_title="Pro Serum",
+                    product_url="https://example.com/products/pro-serum",
+                    brief_text="Drive curiosity",
+                )
 
-        provider_texts = result["provider_texts"]
-        assert provider_texts["instagram"].startswith("Insta caption only")
-        assert all(provider in provider_texts for provider in ["facebook", "x", "linkedin", "pinterest"])
-        assert "tiktok" not in provider_texts
-        discount_url = result["discount_url"]
-        assert discount_url.startswith("https://bioluxelab.com/discount/LAUNCH20?redirect=/products/pro-serum")
-        assert all(discount_url in provider_texts[provider] for provider in ["instagram", "facebook", "x", "linkedin", "pinterest"])
-        assert result["hashtags"][0].startswith("#")
-        assert "Offer style to apply: Direct Offers" in result["text_generation_prompt"]
-        assert isinstance(result["image_generation_prompts"], list)
-        assert "text_generation_prompt_combined" in result
+        assert "facebook, x, linkedin, pinterest" in str(caught.value)
+        assert "no template fallback or retry" in str(caught.value)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -807,6 +799,36 @@ class TestProviderTypes:
         p = get_image_provider(m)
         assert isinstance(p, GrokProvider)
 
+    def test_xai_provider_alias_uses_grok_image_adapter(self):
+        from providers import get_image_provider, GrokProvider
+        m = ModelRecord.from_dict({
+            "id": "x", "store_id": "s", "name": "n", "provider": "xai",
+            "model_type": "image", "model_name": "grok-imagine-image-quality",
+            "api_key": "k", "endpoint": "", "extra_json": "{}",
+            "priority": 0, "is_active": 1,
+        })
+        assert isinstance(get_image_provider(m), GrokProvider)
+
+    def test_provider_json_repairs_only_missing_final_object_brace(self):
+        from providers.deepseek import _parse_json
+
+        raw = (
+            '{"title":"Complete title","summary":"Complete summary",'
+            '"keywords":["one"],"hashtags":["#one"],'
+            '"content":"Complete article body."'
+        )
+        parsed = _parse_json(raw)
+        assert parsed["content"] == "Complete article body."
+
+    def test_provider_json_does_not_repair_mid_response_corruption(self):
+        from providers.deepseek import _parse_json
+
+        with pytest.raises(ValueError, match="line 1, column"):
+            _parse_json(
+                '{"title":"Broken" "summary":"Missing comma",'
+                '"keywords":[],"hashtags":[],"content":"Body"}'
+            )
+
     def test_unknown_provider_raises(self):
         from providers import get_text_provider
         m = ModelRecord.from_dict({
@@ -853,7 +875,7 @@ class TestSecurity:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ⑬ services — llm_service failover (mocked providers)
+# ⑬ services — llm_service single-attempt policy (mocked providers)
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLLMService:
@@ -890,7 +912,7 @@ class TestLLMService:
         with pytest.raises(AllModelsFailedError, match="No active text models"):
             await llm_service.generate_text(sid, "prompt")
 
-    async def test_generate_text_failover_to_second_model(self, tmp_db):
+    async def test_generate_text_does_not_failover_to_second_model(self, tmp_db):
         from services import llm_service
         sid = "llm-failover"
         await db.upsert_store(_make_store(sid))
@@ -900,26 +922,21 @@ class TestLLMService:
         await db.upsert_model(m1)
         await db.upsert_model(m2)
 
-        good_result = {
-            "title": "Fallback Title", "summary": "s", "content": "c",
-            "keywords": [], "hashtags": [],
-        }
         call_count = {"n": 0}
 
-        async def side_effect(prompt, system_prompt=""):
+        async def side_effect(prompt, system_prompt="", prompt_ending=""):
             call_count["n"] += 1
-            if call_count["n"] == 1:
-                raise ProviderError("timeout", retryable=True)
-            return good_result
+            raise ProviderError("timeout", retryable=True)
 
         mock_provider = AsyncMock()
         mock_provider.generate_text = side_effect
 
         with patch("providers.get_text_provider", return_value=mock_provider):
-            result = await llm_service.generate_text(sid, "prompt")
+            with pytest.raises(AllModelsFailedError) as caught:
+                await llm_service.generate_text(sid, "prompt")
 
-        assert result["title"] == "Fallback Title"
-        assert call_count["n"] == 2
+        assert "model failover are disabled" in str(caught.value)
+        assert call_count["n"] == 1
 
     async def test_generate_text_non_retryable_skips_provider(self, tmp_db):
         from services import llm_service
@@ -2642,6 +2659,40 @@ class TestAuthedRoutes:
         ]
         assert set(generated_images).issubset(body_images)
         assert result.image_count == 5
+
+    async def test_background_product_blog_does_not_publish_incomplete_ai_image_set(self, tmp_db):
+        from services import publish_service
+
+        store_row = _make_store("s1", "Store One")
+        blog_data = {
+            "title": "Incomplete Product Guide",
+            "summary": "A practical product guide.",
+            "content": "## Introduction\n\n" + ("Useful product guidance. " * 160),
+            "keywords": ["product guide"],
+            "hashtags": ["#productguide"],
+        }
+
+        with patch("services.publish_service.db.get_store", new_callable=AsyncMock, return_value=store_row), \
+             patch("services.publish_service.blog_scope.resolve_blog_scope", new_callable=AsyncMock, return_value=SimpleNamespace(handle="inside-the-products")), \
+             patch("services.publish_service.blog_scope.apply_blog_scope", new_callable=AsyncMock, side_effect=lambda prompt, **kwargs: prompt), \
+             patch("services.publish_service.llm_service.generate_text", new_callable=AsyncMock, return_value=blog_data), \
+             patch("services.publish_service.shopify_client.fetch_product_details", new_callable=AsyncMock, return_value={"title": "Item", "description": "A useful product.", "tags": "wellness"}), \
+             patch("services.publish_service.db.get_store_setting", new_callable=AsyncMock, return_value=""), \
+             patch("services.publish_service.shopify_client.fetch_product_image_data_uri", new_callable=AsyncMock, return_value="data:image/png;base64,cHJvZHVjdA=="), \
+             patch("services.publish_service.logo_service.stamp_infographic", new_callable=AsyncMock, return_value="data:image/webp;base64,c3RhbXBlZA=="), \
+             patch("services.publish_service.image_service.generate_typed_images", new_callable=AsyncMock, return_value=([], [], [])), \
+             patch("services.publish_service.shopify_client.publish_article", new_callable=AsyncMock) as publish_mock:
+            with pytest.raises(RuntimeError, match="article was not published"):
+                await publish_service.run(
+                    store_id="s1",
+                    prompt_text="Write a complete product guide.",
+                    blog_handle="inside-the-products",
+                    author="Store Team",
+                    product_url="https://s1.myshopify.com/products/item",
+                    product_title="Item",
+                )
+
+        publish_mock.assert_not_awaited()
 
     async def test_publish_blocks_low_quality_draft(self, store_client):
         await db.upsert_store(_make_store("s1", "Store One Updated"))

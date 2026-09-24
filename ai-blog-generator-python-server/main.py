@@ -34,6 +34,7 @@ from routes.intelligence import router as intelligence_router
 from routes.intelligence_api import router as intelligence_api_router
 from routes.wellness_quiz_api import router as wellness_quiz_api_router
 from routes.reviews_api import router as reviews_api_router
+from routes.seo_growth_api import router as seo_growth_api_router
 from security import AuthMiddleware, RootPathRedirectMiddleware, SecurityHeadersMiddleware, limiter
 from services.system_events import install_logging_handler
 
@@ -118,10 +119,24 @@ async def lifespan(app: FastAPI):
 
     db.set_db_path(DB_PATH)
     await db.init_db()
+    from services.landing_page_jobs import fail_interrupted_jobs
+    interrupted_jobs = fail_interrupted_jobs()
+    interrupted_seo_runs = await db.fail_interrupted_seo_growth_runs("manual")
     install_logging_handler()
     state.config = state._bootstrap  # server/logging config from file; all else from DB per-request
 
     logger = logging.getLogger("ai_blog_server")
+    if interrupted_jobs:
+        logger.warning(
+            "Marked %d interrupted landing-page generation job(s) as failed; "
+            "none were retried.",
+            interrupted_jobs,
+        )
+    if interrupted_seo_runs:
+        logger.warning(
+            "Marked %d interrupted SEO Growth run(s) as failed; none were retried.",
+            interrupted_seo_runs,
+        )
     logger.info(
         "AI Blog Server starting | mode=%s port=%d root_path=%s db=%s",
         state.config.server.mode,
@@ -190,6 +205,7 @@ app.include_router(intelligence_router)
 app.include_router(intelligence_api_router)
 app.include_router(wellness_quiz_api_router)
 app.include_router(reviews_api_router)
+app.include_router(seo_growth_api_router)
 
 _STATIC_DIR = _here / "static"
 _STATIC_DIR.mkdir(exist_ok=True)

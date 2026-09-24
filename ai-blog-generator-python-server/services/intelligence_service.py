@@ -371,8 +371,11 @@ async def _grok_rank(store_id: str, summary: dict, recs: list[dict]) -> tuple[li
             )
         return ranked, executive_summary
     except Exception as exc:
-        logger.warning("Grok intelligence ranking failed store=%s: %s", store_id, exc)
-        return recs, ""
+        raise RuntimeError(
+            f"Grok intelligence ranking failed ({type(exc).__name__}: {exc}). "
+            "The analysis was not replaced with an unlabelled fallback and no "
+            "retry was attempted."
+        ) from exc
 
 
 async def run_analysis(store_id: str, period_days: int = 90, trigger_type: str = "manual") -> str:

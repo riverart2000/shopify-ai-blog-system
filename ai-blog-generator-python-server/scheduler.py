@@ -68,6 +68,7 @@ import shopify_client
 from config import StoreConfig
 from services.quality_service import QualityGateError
 from services.intelligence_service import run_scheduled_scans
+from services.seo_growth import run_scheduled_scans as run_scheduled_seo_scans
 from services.system_events import install_logging_handler
 
 _POLL_INTERVAL = 60  # seconds between ticks
@@ -287,6 +288,7 @@ async def _tick() -> None:
     if now - _last_intelligence_poll >= _INTELLIGENCE_POLL_INTERVAL:
         _last_intelligence_poll = now
         await run_scheduled_scans()
+        await run_scheduled_seo_scans()
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +298,14 @@ async def _tick() -> None:
 async def main() -> None:
     db.set_db_path(_DB_PATH)
     await db.init_db()
+    interrupted_seo_runs = await db.fail_interrupted_seo_growth_runs("scheduled")
     install_logging_handler()
     logger.info("Scheduler started | db=%s poll_interval=%ds", _DB_PATH, _POLL_INTERVAL)
+    if interrupted_seo_runs:
+        logger.warning(
+            "Marked %d interrupted scheduled SEO Growth run(s) as failed; none were retried.",
+            interrupted_seo_runs,
+        )
 
     await _initialise_next_run_times()
 

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+import db
 from services.landing_pages.social_publisher.landing_page import LandingPagePublisher
 from services.landing_pages.social_publisher.pipeline import SocialPublisher
 from services.landing_pages.social_publisher.rss_feed import (
@@ -14,12 +18,33 @@ from services.landing_pages.video_service import LandingPageVideoService
 from routes.landing_pages import (
     GeneratePromptsRequest,
     _apply_store_grok_model,
+    _configure_store_shopify,
     landing_page_product_summary,
 )
-from services.landing_pages.product_prompts.models import BlogContent, Campaign, Product
+from services.landing_pages.product_prompts.blog import BlogScraper
+from services.landing_pages.product_prompts.models import (
+    BlogContent,
+    Campaign,
+    ClientPersona,
+    Product,
+)
 from services.landing_pages.product_prompts.prompting.grok import (
+    _BRAND_CASTING_RULE,
+    GrokGenerationError,
     GrokPromptGenerator,
     _product_evidence,
+)
+from services.landing_pages.social_publisher.image_backends.grok import (
+    _FIDELITY_CLAUSE,
+    GrokImageBackend,
+)
+from services.landing_pages.product_prompts.utils import build_session
+from services.xai_billing_service import check_xai_credit
+from services.landing_page_jobs import (
+    create_job,
+    fail_interrupted_jobs,
+    get_job,
+    update_progress,
 )
 from services.landing_pages.product_prompts.prompting.template import (
     TemplatePromptGenerator,
@@ -118,17 +143,12 @@ def test_grok_persona_conflict_is_rejected() -> None:
         "landing_page_plan": {},
     }
 
-    persona, outputs, _plan = generator.generate_bundle(
-        product, BlogContent(), [], Campaign()
-    )
+    with pytest.raises(GrokGenerationError) as caught:
+        generator.generate_bundle(product, BlogContent(), [], Campaign())
 
-    assert persona.sex == "man"
-    assert persona.name == "David"
-    assert outputs == []
-    diagnostics = generator.generation_diagnostics()
-    assert diagnostics["status"] == "warning"
-    assert diagnostics["fallback_used"] is True
-    assert "contradicted" in diagnostics["message"]
+    assert caught.value.error_type == "persona_validation_error"
+    assert "requires 'man'" in str(caught.value)
+    assert "no template fallback or retry" in str(caught.value)
 
 
 def test_grok_persona_receives_all_product_and_blog_evidence() -> None:
@@ -159,9 +179,101 @@ def test_grok_persona_receives_all_product_and_blog_evidence() -> None:
     assert "busy adults who need a quick workout" in evidence
 
 
+def test_brand_casting_accepts_white_or_mixed_black_white_personas() -> None:
+    GrokPromptGenerator._validate_brand_casting(
+        ClientPersona(race="White", ethnicity="White")
+    )
+    GrokPromptGenerator._validate_brand_casting(
+        ClientPersona(
+            race="Mixed Black and White",
+            ethnicity="Mixed Black and White",
+        )
+    )
+
+
+def test_brand_casting_rejects_other_or_ambiguous_persona_output() -> None:
+    with pytest.raises(GrokGenerationError) as caught:
+        GrokPromptGenerator._validate_brand_casting(
+            ClientPersona(race="East Asian", ethnicity="East Asian")
+        )
+    assert caught.value.error_type == "persona_casting_validation_error"
+    assert "White' or 'Mixed Black and White" in str(caught.value)
+    assert "no fallback or retry" in str(caught.value)
+
+
+def test_brand_casting_rejects_contradictory_ethnicity_field() -> None:
+    with pytest.raises(GrokGenerationError) as caught:
+        GrokPromptGenerator._validate_brand_casting(
+            ClientPersona(race="White", ethnicity="another category")
+        )
+    assert caught.value.error_type == "persona_casting_validation_error"
+    assert "both fields to match exactly" in str(caught.value)
+
+
+def test_reference_people_are_always_replaced_not_classified() -> None:
+    assert "never identify or classify" in _BRAND_CASTING_RULE
+    assert "never preserve or imitate" in _FIDELITY_CLAUSE
+    assert "fictional persona specified in the scene prompt" in _FIDELITY_CLAUSE
+
+
 def test_landing_prompt_requests_use_grok_by_default() -> None:
     request = GeneratePromptsRequest(product_url="https://store.test/products/item")
     assert request.generator == "grok"
+    assert request.fetcher == "shopify"
+
+
+def test_store_shopify_credentials_are_reused_by_landing_fetcher() -> None:
+    settings = SimpleNamespace(
+        myshopify_domain=None,
+        shopify_client_id=None,
+        shopify_client_secret=None,
+    )
+    _configure_store_shopify(settings, {
+        "myshopify_domain": "store.myshopify.com",
+        "client_id": "client-id",
+        "client_secret": "client-secret",
+    })
+    assert settings.myshopify_domain == "store.myshopify.com"
+    assert settings.shopify_client_id == "client-id"
+    assert settings.shopify_client_secret == "client-secret"
+
+
+def test_linked_blog_uses_authenticated_shopify_admin_api() -> None:
+    session = FakeSession([])
+    session.get_calls = []
+    responses = [
+        FakeResponse({"blogs": [{"id": 123, "handle": "inside-the-products"}]}),
+        FakeResponse({
+            "articles": [{
+                "title": "MacBook Sleeve Guide",
+                "body_html": '<p>Protect your laptop.</p><img src="https://cdn.test/blog.jpg">',
+                "image": {"src": "https://cdn.test/hero.jpg"},
+            }]
+        }),
+    ]
+
+    def fake_get(endpoint: str, **kwargs):
+        session.get_calls.append({"endpoint": endpoint, **kwargs})
+        return responses.pop(0)
+
+    session.get = fake_get
+    settings = SimpleNamespace(
+        myshopify_domain="store.myshopify.com",
+        shopify_access_token="admin-token",
+        shopify_api_version="2026-01",
+        request_timeout=30,
+    )
+    article = BlogScraper(settings, session).scrape(
+        "https://store.test/blogs/inside-the-products/macbook-sleeve-guide"
+    )
+    assert article.title == "MacBook Sleeve Guide"
+    assert article.text == "Protect your laptop."
+    assert article.image_urls == [
+        "https://cdn.test/hero.jpg",
+        "https://cdn.test/blog.jpg",
+    ]
+    assert session.get_calls[0]["headers"]["X-Shopify-Access-Token"] == "admin-token"
+    assert "/admin/api/2026-01/blogs.json" in session.get_calls[0]["endpoint"]
 
 
 def test_store_grok_model_is_reused_by_landing_generator() -> None:
@@ -251,11 +363,109 @@ def test_strength_audience_constraint_is_binding_for_grok() -> None:
 def test_missing_grok_key_is_visible_in_diagnostics() -> None:
     settings = SimpleNamespace(grok_api_key=None, grok_model="grok-4.3")
     generator = GrokPromptGenerator(settings, object())
-    generator.generate_bundle(_product("Neutral Item"), BlogContent(), [], Campaign())
-    diagnostics = generator.generation_diagnostics()
-    assert diagnostics["status"] == "error"
-    assert diagnostics["completed_by"] == "template"
-    assert "no xAI API key" in diagnostics["message"]
+    with pytest.raises(GrokGenerationError) as caught:
+        generator.generate_bundle(_product("Neutral Item"), BlogContent(), [], Campaign())
+    assert caught.value.error_type == "configuration_error"
+    assert "No request was sent" in str(caught.value)
+
+
+def test_paid_post_requests_are_never_retried() -> None:
+    session = build_session("test-agent", max_retries=3)
+    retry = session.get_adapter("https://").max_retries
+    assert "POST" not in retry.allowed_methods
+    assert "GET" in retry.allowed_methods
+
+
+def test_credit_check_accepts_existing_grok_env_names(monkeypatch) -> None:
+    monkeypatch.delenv("XAI_MANAGEMENT_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_TEAM_ID", raising=False)
+    monkeypatch.setenv("GROK_BILLING_API_KEY", "billing-secret")
+    monkeypatch.setenv("GROK_TEAM_ID", "team-1")
+    monkeypatch.setenv("XAI_MIN_CREDIT_CENTS", "100")
+
+    class BillingResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"total": {"val": -1250}}
+
+    def fake_get(url, *, headers, timeout):
+        assert url.endswith("/v1/billing/teams/team-1/prepaid/balance")
+        assert headers["Authorization"] == "Bearer billing-secret"
+        assert timeout == 15
+        return BillingResponse()
+
+    monkeypatch.setattr("services.xai_billing_service.requests.get", fake_get)
+    result = check_xai_credit()
+    assert result["can_start"] is True
+    assert result["available_cents"] == 1250
+    assert result["available_display"] == "$12.50"
+    assert result["retry_attempted"] is False
+
+
+def test_low_credit_blocks_generation_without_retry(monkeypatch) -> None:
+    monkeypatch.setenv("GROK_BILLING_API_KEY", "billing-secret")
+    monkeypatch.setenv("GROK_TEAM_ID", "team-1")
+    monkeypatch.setenv("XAI_MIN_CREDIT_CENTS", "100")
+
+    class BillingResponse:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {"total": {"val": -25}}
+
+    monkeypatch.setattr(
+        "services.xai_billing_service.requests.get",
+        lambda *args, **kwargs: BillingResponse(),
+    )
+    result = check_xai_credit()
+    assert result["status"] == "insufficient_credit"
+    assert result["can_start"] is False
+    assert "$0.25" in result["message"]
+    assert result["retry_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_generation_jobs_persist_progress_dedupe_and_interruptions(tmp_path: Path) -> None:
+    previous_path = db.get_db_path()
+    try:
+        db.set_db_path(str(tmp_path / "jobs.db"))
+        await db.init_db()
+        credit = {"can_start": True, "available_display": "$12.50"}
+        first, created = create_job(
+            shop="store.myshopify.com",
+            store_id="store-1",
+            product_url="https://store.test/products/item",
+            credit=credit,
+        )
+        duplicate, duplicate_created = create_job(
+            shop="store.myshopify.com",
+            store_id="store-1",
+            product_url="https://store.test/products/item",
+            credit=credit,
+        )
+        assert created is True
+        assert duplicate_created is False
+        assert duplicate["id"] == first["id"]
+
+        update_progress(first["id"], "waiting_for_grok", 55, "One request sent.")
+        running = get_job(first["id"])
+        assert running is not None
+        assert running["status"] == "running"
+        assert running["progress"] == 55
+
+        assert fail_interrupted_jobs() == 1
+        interrupted = get_job(first["id"])
+        assert interrupted is not None
+        assert interrupted["status"] == "failed"
+        assert interrupted["error_type"] == "job_interrupted"
+        assert "not retried" in interrupted["error_message"]
+    finally:
+        db.set_db_path(previous_path)
 
 
 def test_product_summary_uses_full_shopify_handle_and_publication_url(tmp_path: Path) -> None:
@@ -295,6 +505,60 @@ def test_social_concept_filter_accepts_image_slug_and_variation_suffix() -> None
 
     publisher.concept_filter = {"lifestyle-image"}
     assert publisher._concept_matches_filter("Premium Brand Image") is False
+
+
+def test_grok_multi_image_edit_uses_xai_images_object_array() -> None:
+    session = FakeSession(
+        [{"data": [{"b64_json": base64.b64encode(b"generated").decode("ascii")}]}]
+    )
+    settings = SimpleNamespace(
+        grok_api_key="test-key",
+        grok_base_url="https://api.x.ai/v1",
+        grok_timeout=30,
+        grok_image_model="grok-imagine-image",
+        grok_image_quality_model="grok-imagine-image-quality",
+    )
+    backend = GrokImageBackend(settings, session)
+
+    images = backend.generate(
+        "Create a product advert",
+        reference_images=[b"first-reference", b"second-reference"],
+    )
+
+    payload = session.calls[0]["json"]
+    assert "image" not in payload
+    assert [entry["type"] for entry in payload["images"]] == [
+        "image_url",
+        "image_url",
+    ]
+    assert all(entry["url"].startswith("data:image/jpeg;base64,") for entry in payload["images"])
+    assert images[0].data == b"generated"
+
+
+def test_social_publisher_records_exact_concept_failure() -> None:
+    publisher = SocialPublisher.__new__(SocialPublisher)
+    publisher.concept_filter = None
+    publisher.failures = []
+    publisher._load_references = lambda *_args: [b"reference"]
+    publisher._process_concept = lambda *_args: (_ for _ in ()).throw(
+        RuntimeError("xAI returned HTTP 400: invalid images field")
+    )
+
+    produced = publisher._process_product(
+        Path("example-product.json"),
+        {
+            "creative_concepts": [{"concept": "Lifestyle Proof"}],
+            "product": {},
+            "persona": {},
+            "campaign": {},
+        },
+        Path("social"),
+    )
+
+    assert produced == []
+    assert publisher.failures == [
+        "Lifestyle Proof: xAI returned HTTP 400: invalid images field"
+    ]
 
 
 def test_page_upsert_updates_legacy_title_match_and_normalises_seo() -> None:
@@ -465,7 +729,8 @@ def test_video_script_uses_grok_43_and_accepts_model_chosen_duration() -> None:
         "scenes": [{"start_second": 0, "end_second": 11, "visual_action": "Orbit"}],
         "audio_direction": "Modern",
         "final_cta": "Shop now",
-        "video_prompt": "An exact 11-second cinematic product sequence.",
+        "spoken_script": "I use this every day because it makes my routine feel much easier.",
+        "video_prompt": "An exact 11-second handheld UGC product demonstration.",
         "posting_text": "See it in action. #wellness",
     }
     session = FakeSession(
@@ -487,8 +752,34 @@ def test_video_script_uses_grok_43_and_accepts_model_chosen_duration() -> None:
 
     assert result["duration_seconds"] == 11
     assert result["model"] == "grok-4.3"
+    assert result["spoken_script"] in result["video_prompt"]
+    assert "MANDATORY UGC SPEECH AND LIP-SYNC" in result["video_prompt"]
     assert session.calls[0]["json"]["model"] == "grok-4.3"
     assert "6-to-12-second" in session.calls[0]["json"]["messages"][1]["content"]
+
+
+def test_video_script_rejects_missing_ugc_speech_but_preserves_long_speech() -> None:
+    with pytest.raises(RuntimeError, match="no recoverable scene speech"):
+        LandingPageVideoService._validate_spoken_script("", 8)
+
+    long_script = " ".join(["word"] * 30)
+    assert LandingPageVideoService._validate_spoken_script(long_script, 8) == long_script
+    assert "paid script was preserved" in (
+        LandingPageVideoService._speech_fit_warning(long_script, 8).lower()
+    )
+
+
+def test_video_script_recovers_dialogue_from_scene_speech() -> None:
+    script = {
+        "scenes": [
+            {"speech": "I tried this in my daily routine."},
+            {"speech": "It is simple, practical, and easy to carry."},
+        ]
+    }
+    assert LandingPageVideoService._spoken_script_from_response(script, 10) == (
+        "I tried this in my daily routine. "
+        "It is simple, practical, and easy to carry."
+    )
 
 
 def test_rss_includes_video_as_separate_duplicate_safe_entry(tmp_path: Path) -> None:
@@ -552,7 +843,11 @@ def test_video_render_uses_creative_image_grok_video_and_480p(tmp_path: Path) ->
     )
 
     result = LandingPageVideoService(settings, session).generate_video(
-        {"duration_seconds": 9, "video_prompt": "Exact nine-second product sequence"},
+        {
+            "duration_seconds": 9,
+            "spoken_script": "This fits naturally into my routine and feels so easy to use.",
+            "video_prompt": "Exact nine-second handheld UGC product sequence",
+        },
         image_path,
         output_path,
     )
@@ -563,6 +858,9 @@ def test_video_render_uses_creative_image_grok_video_and_480p(tmp_path: Path) ->
     assert request["resolution"] == "480p"
     assert request["aspect_ratio"] == "9:16"
     assert request["image"]["url"].startswith("data:image/jpeg;base64,")
+    assert "Script (speak exactly, with no added or omitted words):" in request["prompt"]
+    assert "This fits naturally into my routine" in request["prompt"]
+    assert "Synchronize every mouth movement precisely" in request["prompt"]
     assert output_path.read_bytes() == b"generated-mp4"
     assert result["video_file"] == "product__lifestyle.mp4"
 

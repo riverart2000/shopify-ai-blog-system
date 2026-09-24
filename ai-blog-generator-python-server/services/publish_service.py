@@ -175,12 +175,15 @@ async def run(
             if image_type not in set(gen_types)
         ]
         if missing_types:
-            warning = (
-                f"Only {len(gen_urls)} of {len(image_service.EXPECTED_TYPED_IMAGE_TYPES)} supporting images "
-                f"were generated. Missing: {', '.join(missing_types)}."
+            error_message = (
+                "Product blog image generation was incomplete: "
+                f"{len(gen_urls)} of {len(image_service.EXPECTED_TYPED_IMAGE_TYPES)} "
+                f"required AI images were generated. Missing: {', '.join(missing_types)}. "
+                "The article was not published, and no automatic retry or provider "
+                "fallback was attempted. Check System Health for the exact image-provider error."
             )
-            pipeline_warnings.append(warning)
-            progress("images", warning, "warning")
+            progress("images", error_message, "error")
+            raise RuntimeError(error_message)
         if not stamped_product_image:
             warning = "The Shopify product image could not be downloaded or branded."
             pipeline_warnings.append(warning)

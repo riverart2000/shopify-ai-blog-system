@@ -207,7 +207,8 @@ class ReplicateTextProvider(TextProvider):
             "Content-Type": "application/json",
         }
 
-        max_retries = int(extra.get("max_retries", 2))
+        # Paid generation policy: never submit a second prediction implicitly.
+        max_retries = 0
         last_error: Exception | None = None
 
         for attempt in range(max_retries + 1):
@@ -308,4 +309,3 @@ class ReplicateTextProvider(TextProvider):
             raise ProviderError(
                 f"Replicate prediction {pred_id} timed out after {_MAX_POLLS * _POLL_INTERVAL}s"
             )
-

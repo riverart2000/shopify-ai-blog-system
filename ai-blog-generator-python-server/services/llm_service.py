@@ -1,4 +1,4 @@
-"""services/llm_service.py — Text generation with per-store model failover."""
+"""services/llm_service.py — Single-attempt text generation with exact errors."""
 from __future__ import annotations
 
 import logging
@@ -16,9 +16,10 @@ async def generate_text(
     model_id: str | None = None,
     prompt_ending_override: str | None = None,
 ) -> dict:
-    """Try active text models in priority order. Returns blog dict on first success.
-    If model_id is provided, only that model is tried first; falls back to priority order.
-    Raises AllModelsFailedError if every model fails.
+    """Run exactly one configured model once.
+
+    Automatic model failover is disabled because a second model is another paid
+    generation whose output can conceal the first failure.
     """
     rows = await db.get_active_text_models(store_id)
     if not rows:
@@ -33,10 +34,9 @@ async def generate_text(
         rows = [r for r in rows if r["id"] == model_id]
         if not rows:
             raise providers.AllModelsFailedError([(model_id, "Model not found or not active")])
+    rows = rows[:1]
 
     failures: list[tuple[str, str]] = []
-    skip_providers: set[str] = set()
-
     if prompt_ending_override is None:
         prompt_ending = await db.get_store_setting(store_id, "prompt_ending", "")
     else:
@@ -44,8 +44,6 @@ async def generate_text(
 
     for row in rows:
         model = providers.ModelRecord.from_dict(row)
-        if model.provider in skip_providers:
-            continue
         try:
             provider = providers.get_text_provider(model)
             result = await provider.generate_text(prompt, system_prompt, prompt_ending=prompt_ending)
@@ -57,15 +55,18 @@ async def generate_text(
             result["_model_provider"] = model.provider
             return result
         except providers.ProviderError as exc:
-            err_msg = str(exc)
+            err_msg = (
+                f"{exc}. Exactly one model was attempted; automatic retries and "
+                "model failover are disabled."
+            )
             logger.warning("Provider %s failed: %s", model.name, err_msg)
             failures.append((model.name, err_msg))
             await db.log_model_error(store_id, model.id, model.provider, "provider_error", err_msg)
-            if not exc.retryable:
-                # Auth/config error — skip all remaining models from this same provider
-                skip_providers.add(model.provider)
         except Exception as exc:
-            err_msg = f"Unexpected error: {exc}"
+            err_msg = (
+                f"Unexpected error: {exc}. Exactly one model was attempted; "
+                "automatic retries and model failover are disabled."
+            )
             logger.exception("Unexpected error from provider %s", model.name)
             failures.append((model.name, err_msg))
             await db.log_model_error(store_id, model.id, model.provider, "unexpected_error", err_msg)

@@ -1,5 +1,5 @@
-"""services/image_service.py — Image generation with per-store model failover.
-Images are always optional — failures return [] so blogs still publish.
+"""services/image_service.py — Single-attempt image generation.
+Failures return [] and are surfaced by the publishing pipeline as warnings.
 """
 from __future__ import annotations
 
@@ -65,16 +65,13 @@ async def _generate_one(
     image_prompt: str,
     label: str,
 ) -> str | None:
-    """Try active image models until one returns a URL. Returns None on all failures."""
+    """Try the highest-priority image model once. Returns None with a logged error."""
     rows = await db.get_active_image_models(store_id)
     if not rows:
         return None
 
-    skip_providers: set[str] = set()
-    for row in rows:
+    for row in rows[:1]:
         model = providers.ModelRecord.from_dict(row)
-        if model.provider in skip_providers:
-            continue
         try:
             provider = providers.get_image_provider(model)
             urls = await provider.generate_images(image_prompt, 1)
@@ -88,14 +85,17 @@ async def _generate_one(
             err_msg = str(exc)
             logger.warning("Image provider %s failed (%s): %s", model.name, label, err_msg)
             await db.log_model_error(store_id, model.id, model.provider, "image_error", err_msg)
-            if not exc.retryable:
-                skip_providers.add(model.provider)
         except Exception as exc:
             err_msg = f"Unexpected error: {exc}"
             logger.exception("Unexpected error from image provider %s (%s)", model.name, label)
             await db.log_model_error(store_id, model.id, model.provider, "unexpected_error", err_msg)
 
-    logger.warning("All image models failed for %s store=%s", label, store_id)
+    logger.warning(
+        "Image generation failed for %s store=%s. Exactly one model was attempted; "
+        "automatic retries and failover are disabled.",
+        label,
+        store_id,
+    )
     return None
 
 

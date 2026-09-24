@@ -218,6 +218,80 @@ CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_run
 CREATE INDEX IF NOT EXISTS idx_intelligence_recommendations_store
     ON intelligence_recommendations(store_id, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS seo_growth_runs (
+    id            TEXT PRIMARY KEY,
+    store_id      TEXT NOT NULL,
+    trigger_type  TEXT NOT NULL DEFAULT 'manual',
+    status        TEXT NOT NULL DEFAULT 'queued',
+    stage         TEXT NOT NULL DEFAULT 'queued',
+    progress      INTEGER NOT NULL DEFAULT 0,
+    period_days   INTEGER NOT NULL DEFAULT 90,
+    summary_json  TEXT NOT NULL DEFAULT '{}',
+    error_type    TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    started_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    completed_at  INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_growth_runs_store_started
+    ON seo_growth_runs(store_id, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_seo_growth_runs_active
+    ON seo_growth_runs(store_id, status, updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_seo_growth_one_active_run
+    ON seo_growth_runs(store_id) WHERE status IN ('queued','running');
+
+CREATE TABLE IF NOT EXISTS seo_growth_opportunities (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL,
+    store_id     TEXT NOT NULL,
+    opportunity_key TEXT NOT NULL,
+    kind         TEXT NOT NULL DEFAULT 'content',
+    category     TEXT NOT NULL DEFAULT 'content',
+    severity     TEXT NOT NULL DEFAULT 'medium',
+    score        INTEGER NOT NULL DEFAULT 0,
+    title        TEXT NOT NULL,
+    evidence     TEXT NOT NULL DEFAULT '',
+    action       TEXT NOT NULL DEFAULT '',
+    page_url     TEXT NOT NULL DEFAULT '',
+    search_query TEXT NOT NULL DEFAULT '',
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    source       TEXT NOT NULL DEFAULT 'shopify',
+    status       TEXT NOT NULL DEFAULT 'open',
+    created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    UNIQUE(run_id, opportunity_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_growth_opportunities_store
+    ON seo_growth_opportunities(store_id, status, score DESC, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_seo_growth_opportunities_run
+    ON seo_growth_opportunities(run_id, score DESC, created_at);
+
+CREATE TABLE IF NOT EXISTS seo_backlink_prospects (
+    id                TEXT PRIMARY KEY,
+    store_id          TEXT NOT NULL,
+    domain            TEXT NOT NULL,
+    prospect_url      TEXT NOT NULL DEFAULT '',
+    contact_name      TEXT NOT NULL DEFAULT '',
+    contact_email     TEXT NOT NULL DEFAULT '',
+    target_url        TEXT NOT NULL DEFAULT '',
+    outreach_angle    TEXT NOT NULL DEFAULT '',
+    relationship_type TEXT NOT NULL DEFAULT 'earned',
+    status            TEXT NOT NULL DEFAULT 'prospect',
+    link_url          TEXT NOT NULL DEFAULT '',
+    link_rel          TEXT NOT NULL DEFAULT '',
+    notes             TEXT NOT NULL DEFAULT '',
+    created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_backlink_prospects_store
+    ON seo_backlink_prospects(store_id, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS wellness_quiz_products (
     store_id          TEXT NOT NULL,
     product_id        TEXT NOT NULL,
@@ -307,6 +381,34 @@ CREATE TABLE IF NOT EXISTS review_audit (
 
 CREATE INDEX IF NOT EXISTS idx_review_audit_review
     ON review_audit(review_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS landing_page_jobs (
+    id             TEXT PRIMARY KEY,
+    store_id       TEXT NOT NULL DEFAULT '',
+    shop           TEXT NOT NULL,
+    product_url    TEXT NOT NULL,
+    product_handle TEXT NOT NULL DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'queued',
+    stage          TEXT NOT NULL DEFAULT 'queued',
+    progress       INTEGER NOT NULL DEFAULT 0,
+    message        TEXT NOT NULL DEFAULT '',
+    error_type     TEXT NOT NULL DEFAULT '',
+    error_message  TEXT NOT NULL DEFAULT '',
+    error_detail   TEXT NOT NULL DEFAULT '',
+    credit_json    TEXT NOT NULL DEFAULT '{}',
+    result_path    TEXT NOT NULL DEFAULT '',
+    timeline_json  TEXT NOT NULL DEFAULT '[]',
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    started_at     INTEGER,
+    updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    completed_at   INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_landing_page_jobs_shop_created
+    ON landing_page_jobs(shop, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_landing_page_jobs_active
+    ON landing_page_jobs(shop, product_url, status);
 """
 
 # Columns added in v2 — wrapped in try/except since ALTER TABLE has no IF NOT EXISTS

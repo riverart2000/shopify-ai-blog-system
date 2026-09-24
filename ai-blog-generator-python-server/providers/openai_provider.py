@@ -41,7 +41,6 @@ class OpenAITextProvider(TextProvider):
         sys = system_prompt or extra.get("system_prompt") or _DEFAULT_SYSTEM
         temperature = float(extra.get("temperature", 0.7))
         timeout = float(extra.get("timeout", 90))
-        max_retries = int(extra.get("max_retries", 2))
 
         user_prompt = _build_user_prompt(prompt, prompt_ending)
         payload = {
@@ -55,7 +54,8 @@ class OpenAITextProvider(TextProvider):
         }
 
         last_error: Optional[Exception] = None
-        attempts = max_retries + 1
+        # Paid generation policy: exactly one request and an exact failure.
+        attempts = 1
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             for attempt in range(attempts):

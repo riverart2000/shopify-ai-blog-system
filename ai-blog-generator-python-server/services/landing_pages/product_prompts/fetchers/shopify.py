@@ -58,6 +58,8 @@ class ShopifyAdminFetcher(ProductFetcher):
             return self._token
         if self.settings.shopify_client_id and self.settings.shopify_client_secret:
             self._token = self._client_credentials_token()
+            # Reuse the same token for linked-blog evidence requests in this job.
+            self.settings.shopify_access_token = self._token
             return self._token
         raise RuntimeError(
             "No Shopify credentials: set SHOPIFY_ACCESS_TOKEN or "

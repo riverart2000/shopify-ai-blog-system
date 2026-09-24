@@ -29,12 +29,14 @@ _TEXT_PROVIDERS: dict[str, type[TextProvider]] = {
     "deepseek": DeepSeekProvider,
     "openai": OpenAITextProvider,
     "grok": OpenAITextProvider,   # xAI Grok — OpenAI-compatible chat API
+    "xai": OpenAITextProvider,    # UI/provider-name alias for xAI Grok
     "local": OllamaProvider,
     "replicate": ReplicateTextProvider,
 }
 
 _IMAGE_PROVIDERS: dict[str, type[ImageProvider]] = {
     "grok": GrokProvider,
+    "xai": GrokProvider,          # UI/provider-name alias for xAI Grok
     "openai": OpenAIImageProvider,
     "replicate": ReplicateImageProvider,
 }

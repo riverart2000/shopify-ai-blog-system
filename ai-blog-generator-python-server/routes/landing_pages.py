@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,22 +15,24 @@ from providers import ModelRecord
 
 # Note: We're going to import from services.landing_pages
 from services.landing_pages.product_prompts.config import Settings
-from services.landing_pages.product_prompts.pipeline import Pipeline
 from services.landing_pages.social_publisher.pipeline import SocialPublisher
 from services.landing_pages.social_publisher.landing_page import LandingPagePublisher
 from services.landing_pages.social_publisher.rss_feed import read_product_section
 from services.landing_pages.video_service import LandingPageVideoService
 from services.landing_pages.product_prompts.utils import build_session, slugify
+from services.landing_page_jobs import create_job, get_job, run_job
+from services.xai_billing_service import check_xai_credit
 
 router = APIRouter(
     prefix="/api/landing-pages",
     tags=["landing_pages"],
 )
+logger = logging.getLogger("landing_pages")
 
 class GeneratePromptsRequest(BaseModel):
     product_url: str
     shop: str = ""
-    fetcher: str = "web"
+    fetcher: str = "shopify"
     generator: str = "grok"
 
 class GenerateSocialRequest(BaseModel):
@@ -142,6 +145,13 @@ async def _configure_store_grok(settings: Settings, shop: str) -> bool:
             return _apply_store_grok_model(settings, row)
     return False
 
+
+def _configure_store_shopify(settings: Settings, store: dict) -> None:
+    """Use the selected store's Admin API credentials for evidence fetching."""
+    settings.myshopify_domain = str(store.get("myshopify_domain") or "").strip()
+    settings.shopify_client_id = str(store.get("client_id") or "").strip() or None
+    settings.shopify_client_secret = str(store.get("client_secret") or "").strip() or None
+
 def landing_pages_rss_url() -> str:
     configured = (os.environ.get("LANDING_PAGES_RSS_URL") or "").strip()
     if configured:
@@ -201,33 +211,91 @@ async def list_products():
                 pass
     return {"products": products}
 
+@router.get("/credits")
+async def landing_page_credits(shop: str = ""):
+    """Read xAI prepaid balance before any paid generation is attempted."""
+    credit = await run_in_threadpool(check_xai_credit)
+    return {"success": True, "shop": shop, "credit": credit}
+
+
 @router.post("/generate-prompts")
-async def generate_prompts(req: GeneratePromptsRequest):
-    """Run generate_prompts.py logic for a single product URL."""
+async def generate_prompts(
+    req: GeneratePromptsRequest, background_tasks: BackgroundTasks
+):
+    """Validate credit, then enqueue one persistent no-retry generation job."""
     settings = get_settings()
-    if req.generator.lower() in ("grok", "xai", "llm") and not settings.grok_api_key:
-        await _configure_store_grok(settings, req.shop)
-    
-    def run_pipeline():
-        pipeline = Pipeline(
-            settings,
-            fetcher_name=req.fetcher,
-            generator_name=req.generator,
-        )
-        return pipeline.process_one(req.product_url)
-    
-    try:
-        out_path = await run_in_threadpool(run_pipeline)
-        
-        # Read and return the generated json
-        data = json.loads(out_path.read_text(encoding="utf-8"))
+    generator = req.generator.lower()
+    store = await db.get_store_by_domain(req.shop)
+    if not store:
         return {
-            "success": True,
-            "handle": out_path.stem,
-            "data": data
+            "success": False,
+            "accepted": False,
+            "error": (
+                f"Store configuration was not found for '{req.shop}'. "
+                "No generation request was sent."
+            ),
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _configure_store_shopify(settings, store)
+    if generator not in ("grok", "xai", "llm"):
+        return {
+            "success": False,
+            "accepted": False,
+            "error": (
+                f"Background landing-page generation only accepts Grok, not "
+                f"'{req.generator}'. No request was sent."
+            ),
+        }
+
+    configured = bool(settings.grok_api_key)
+    if not configured:
+        configured = await _configure_store_grok(settings, req.shop)
+    if not configured:
+        return {
+            "success": False,
+            "accepted": False,
+            "error": (
+                "No active xAI/Grok inference model with an API key is configured "
+                "for this store. No generation request was sent."
+            ),
+        }
+
+    credit = await run_in_threadpool(check_xai_credit)
+    if not credit["can_start"]:
+        return {
+            "success": False,
+            "accepted": False,
+            "credit": credit,
+            "error": credit["message"],
+        }
+
+    job, created = await run_in_threadpool(
+        lambda: create_job(
+            shop=req.shop,
+            store_id=store["id"],
+            product_url=req.product_url,
+            credit=credit,
+        )
+    )
+    if created:
+        background_tasks.add_task(
+            run_job, job["id"], settings, req.fetcher, req.generator
+        )
+    return {
+        "success": True,
+        "accepted": True,
+        "created": created,
+        "credit": credit,
+        "job": job,
+    }
+
+
+@router.get("/generate-prompts/jobs/{job_id}")
+async def generation_job_status(job_id: str):
+    """Poll persisted progress or the exact terminal failure."""
+    job = await run_in_threadpool(get_job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Generation job '{job_id}' was not found.")
+    return {"success": True, "job": job}
 
 @router.post("/generate-social")
 async def generate_social(req: GenerateSocialRequest):
@@ -258,21 +326,33 @@ async def generate_social(req: GenerateSocialRequest):
 
         if not produced:
             requested = ", ".join(req.concept_filter or [])
+            failures = " | ".join(publisher.failures)
+            if failures:
+                raise RuntimeError(
+                    "Social image generation failed: "
+                    f"{failures} No retry or fallback was attempted."
+                )
             if requested:
                 raise RuntimeError(
-                    f"No image was regenerated for concept: {requested}"
+                    f"No creative concept matched the requested image: {requested}. "
+                    "No retry or fallback was attempted."
                 )
-            raise RuntimeError("No social images were generated")
+            raise RuntimeError(
+                "No social images were generated because no eligible creative "
+                "concept was found. No retry or fallback was attempted."
+            )
 
-        return [str(p) for p in produced]
+        return [str(p) for p in produced], publisher.failures
 
     try:
-        produced = await run_in_threadpool(run_publisher)
+        produced, warnings = await run_in_threadpool(run_publisher)
         return {
             "success": True,
-            "produced": produced
+            "produced": produced,
+            "warnings": warnings,
         }
     except Exception as e:
+        logger.exception("Social image generation failed for handle=%s", safe_handle)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/products/{handle}")
@@ -375,6 +455,8 @@ async def create_video_script(req: VideoScriptRequest):
     await _configure_store_grok(settings, req.shop)
     safe_handle = slugify(req.handle)
     concept_slug = slugify(req.concept)
+    json_path: Optional[Path] = None
+    data: dict = {}
     try:
         json_path, data = _read_product_json(settings, safe_handle)
         concept = _find_creative_concept(data, concept_slug)
@@ -407,6 +489,31 @@ async def create_video_script(req: VideoScriptRequest):
         _write_product_json(json_path, data)
         return {"success": True, "video": record}
     except Exception as exc:
+        error_message = f"{type(exc).__name__}: {exc}"
+        logger.error(
+            "UGC video script failed for product=%s concept=%s: %s",
+            safe_handle,
+            concept_slug,
+            error_message,
+            exc_info=(type(exc), exc, exc.__traceback__),
+            extra={"operation": "create_ugc_video_script"},
+        )
+        if json_path is not None and data:
+            videos = data.setdefault("marketing_videos", {})
+            record = (
+                videos.get(concept_slug)
+                if isinstance(videos.get(concept_slug), dict)
+                else {}
+            )
+            record.update({
+                "concept": str(record.get("concept") or req.concept),
+                "concept_slug": concept_slug,
+                "status": "error",
+                "approved": False,
+                "last_error": error_message,
+            })
+            videos[concept_slug] = record
+            _write_product_json(json_path, data)
         raise HTTPException(status_code=500, detail=str(exc))
 
 @router.post("/videos/generate")
@@ -476,6 +583,9 @@ async def update_marketing_video(handle: str, concept: str, req: UpdateVideoRequ
                 raise ValueError("Video duration must remain between 6 and 12 seconds.")
             if not str(req.script.get("video_prompt") or "").strip():
                 raise ValueError("The video generation prompt cannot be empty.")
+            LandingPageVideoService._validate_spoken_script(
+                req.script.get("spoken_script"), duration
+            )
             record["script"] = req.script
             if record.get("video_file"):
                 record["approved"] = False

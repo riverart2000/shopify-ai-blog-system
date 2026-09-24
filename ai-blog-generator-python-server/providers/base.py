@@ -30,7 +30,7 @@ class ModelRecord:
     id: str
     store_id: str
     name: str
-    provider: str       # deepseek | openai | grok | replicate | local
+    provider: str       # deepseek | openai | grok/xai | replicate | local
     model_type: str     # text | image
     model_name: str     # e.g. "deepseek-chat", "gpt-4o-mini", "grok-2-image"
     api_key: str
@@ -62,6 +62,7 @@ class ModelRecord:
         provider_env_names = {
             "deepseek": ("DEEPSEEK_API_KEY",),
             "grok": ("GROK_API_KEY", "XAI_API_KEY"),
+            "xai": ("GROK_API_KEY", "XAI_API_KEY"),
             "openai": ("OPENAI_API_KEY",),
             "replicate": ("REPLICATE_API_TOKEN", "REPLICATE_API_KEY"),
         }

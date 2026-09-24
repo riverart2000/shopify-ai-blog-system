@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import html
 import json
 import logging
 import re
@@ -418,6 +419,73 @@ async def fetch_products(store: StoreConfig, limit: int = 250) -> list[ShopifyPr
         )
         for p in data.get("products", [])
     ]
+
+
+async def fetch_product_blog_sync_products(store: StoreConfig, limit: int = 250) -> list[dict]:
+    """Return the live product/link fields required by the product-blog audit.
+
+    This deliberately reads Shopify rather than the app loader cache so a re-sync
+    is a genuine sanity check of the current catalogue.
+    """
+    query = """
+      query ProductBlogSyncProducts($first: Int!) {
+        products(first: $first, sortKey: TITLE) {
+          nodes {
+            id legacyResourceId title handle status descriptionHtml
+            guideTitle: metafield(namespace: "custom", key: "ai_blog_related_guide_title") { value }
+            guideUrl: metafield(namespace: "custom", key: "ai_blog_related_guide_url") { value }
+            guideExcerpt: metafield(namespace: "custom", key: "ai_blog_related_guide_excerpt") { value }
+          }
+        }
+      }
+    """
+    data = await graphql_request(store, query, {"first": min(max(int(limit), 1), 250)})
+    return list(((data.get("products") or {}).get("nodes") or []))
+
+
+async def fetch_blog_articles(
+    store: StoreConfig,
+    blog_handle: str,
+    limit: int = 250,
+) -> list[ShopifyArticle]:
+    """Return the current articles for one exact blog handle."""
+    blogs = await fetch_blogs(store)
+    blog = next((item for item in blogs if item.handle == blog_handle), None)
+    if blog is None:
+        raise ShopifyError(
+            f"Shopify blog handle '{blog_handle}' does not exist. No reconciliation was attempted."
+        )
+
+    token = await _get_token(store)
+    url = (
+        f"{_base_url(store)}/blogs/{blog.id}/articles.json"
+        f"?limit={min(max(int(limit), 1), 250)}"
+        "&fields=id,blog_id,title,handle,body_html,summary_html,tags,image,published_at"
+    )
+    async with httpx.AsyncClient(timeout=45) as client:
+        data = await _get(client, url, token)
+
+    articles: list[ShopifyArticle] = []
+    for article in data.get("articles", []):
+        image = article.get("image") or {}
+        articles.append(
+            ShopifyArticle(
+                id=article.get("id", 0),
+                blog_id=article.get("blog_id", blog.id),
+                blog_handle=blog.handle,
+                title=article.get("title", ""),
+                handle=article.get("handle", ""),
+                body_html=article.get("body_html", ""),
+                summary_html=article.get("summary_html", ""),
+                tags=article.get("tags", ""),
+                article_url=(
+                    f"https://{_storefront_domain(store)}/blogs/{blog.handle}/{article.get('handle', '')}"
+                ),
+                image_url=image.get("src", ""),
+                published_at=article.get("published_at", ""),
+            )
+        )
+    return articles
 
 
 async def fetch_wellness_quiz_products(store: StoreConfig, limit: int = 250) -> list[dict]:
@@ -1152,24 +1220,47 @@ async def _set_related_product_guide_metafields(
     if not product_id:
         raise ShopifyError(f"Shopify product '{product_handle}' did not return an id.")
 
+    await set_related_product_guide_metafields_by_id(
+        store=store,
+        product_id=str(product_id),
+        guide_title=guide_title,
+        guide_url=guide_url,
+        guide_excerpt=guide_excerpt,
+    )
+
+
+async def set_related_product_guide_metafields_by_id(
+    store: StoreConfig,
+    product_id: str,
+    guide_title: str,
+    guide_url: str,
+    guide_excerpt: str,
+) -> None:
+    """Set the shared guide metafields when the audit already knows the product id."""
+    owner_id = str(product_id).strip()
+    if not owner_id:
+        raise ShopifyError("Cannot update related guide metafields without a Shopify product id.")
+    if not owner_id.startswith("gid://shopify/Product/"):
+        owner_id = f"gid://shopify/Product/{owner_id}"
+
     token = await _get_token(store)
     metafields = [
         {
-            "ownerId": f"gid://shopify/Product/{product_id}",
+            "ownerId": owner_id,
             "namespace": SHARED_GUIDE_NAMESPACE,
             "key": SHARED_GUIDE_TITLE_KEY,
             "type": "single_line_text_field",
             "value": guide_title,
         },
         {
-            "ownerId": f"gid://shopify/Product/{product_id}",
+            "ownerId": owner_id,
             "namespace": SHARED_GUIDE_NAMESPACE,
             "key": SHARED_GUIDE_URL_KEY,
             "type": "url",
             "value": guide_url,
         },
         {
-            "ownerId": f"gid://shopify/Product/{product_id}",
+            "ownerId": owner_id,
             "namespace": SHARED_GUIDE_NAMESPACE,
             "key": SHARED_GUIDE_EXCERPT_KEY,
             "type": "multi_line_text_field",
@@ -1199,6 +1290,88 @@ async def _set_related_product_guide_metafields(
             message = err.get("message", "Shopify rejected the related guide metafield update.")
             parts.append(f"{field}: {message}" if field else message)
         raise ShopifyError("; ".join(parts))
+
+
+async def sync_product_description_guide_link(
+    store: StoreConfig,
+    product_id: str,
+    product_handle: str,
+    current_body_html: str,
+    guide_title: str,
+    guide_url: str,
+) -> str:
+    """Ensure one managed Related Guide paragraph points at the expected article.
+
+    Existing product copy is preserved. Only paragraphs created by this system
+    with the ``Related Guide:`` label are replaced; an unrelated merchant link
+    is never removed.
+    """
+    numeric_id = str(product_id).strip().split("/")[-1]
+    if not numeric_id:
+        raise ShopifyError(f"Shopify product '{product_handle}' did not return an id.")
+
+    body = current_body_html or ""
+    escaped_title = html.escape(guide_title.strip() or "View product guide")
+    escaped_url = html.escape(guide_url.strip(), quote=True)
+    managed_paragraph = (
+        '<p data-ai-blog-related-guide="true"><strong>Related Guide:</strong> '
+        f'<a href="{escaped_url}" target="_blank" rel="noopener">{escaped_title}</a></p>'
+    )
+    managed_pattern = re.compile(
+        r'<p\b[^>]*>\s*<strong\b[^>]*>\s*Related\s+Guide:\s*</strong>\s*'
+        r'<a\b[^>]*>.*?</a>\s*</p>',
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    existing = list(managed_pattern.finditer(body))
+    if existing:
+        if len(existing) == 1 and guide_url.strip() in existing[0].group(0):
+            return "description already linked"
+        replaced = managed_pattern.sub("", body).rstrip()
+        new_body = f"{replaced}\n{managed_paragraph}" if replaced else managed_paragraph
+        action = "replaced stale Related Guide link"
+    elif guide_url.strip() and guide_url.strip() in body:
+        return "description already linked"
+    else:
+        new_body = f"{body.rstrip()}\n{managed_paragraph}" if body.strip() else managed_paragraph
+        action = "added missing Related Guide link"
+
+    if new_body == body:
+        return "description already linked"
+
+    token = await _get_token(store)
+    url = f"{_base_url(store)}/products/{numeric_id}.json"
+    payload = {"product": {"id": int(numeric_id), "body_html": new_body}}
+    async with httpx.AsyncClient(timeout=30) as client:
+        await _put(client, url, token, payload)
+    logger.info("Product-blog sync %s for product %s", action, product_handle)
+    return action
+
+
+async def append_product_link_to_article(
+    store: StoreConfig,
+    article: ShopifyArticle,
+    product_title: str,
+    product_url: str,
+) -> None:
+    """Restore the product CTA on an article with authoritative generation provenance."""
+    escaped_title = html.escape(product_title.strip() or "this product")
+    escaped_url = html.escape(product_url.strip(), quote=True)
+    cta = (
+        '<p data-ai-blog-product-link="true">'
+        f'<a href="{escaped_url}" target="_blank" rel="noopener">Shop {escaped_title}</a></p>'
+    )
+    new_body = f"{(article.body_html or '').rstrip()}\n{cta}"
+    token = await _get_token(store)
+    url = f"{_base_url(store)}/blogs/{article.blog_id}/articles/{article.id}.json"
+    payload = {"article": {"id": article.id, "body_html": new_body}}
+    async with httpx.AsyncClient(timeout=30) as client:
+        await _put(client, url, token, payload)
+    article.body_html = new_body
+    logger.info(
+        "Product-blog sync restored product CTA article=%s product_url=%s",
+        article.id,
+        product_url,
+    )
 
 
 async def set_product_review_metafields(

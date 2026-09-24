@@ -1,16 +1,17 @@
 """Grok (xAI) prompt generator.
 
 Uses the xAI chat-completions API to profile the ideal client persona and author
-rich, precise image prompts, on-image text and captions. By default it does this
-for a whole product in a SINGLE batched request (persona + every concept), which
-minimises API calls. On any failure it transparently falls back to the
-deterministic :class:`TemplatePromptGenerator`, so the pipeline never hard-fails.
+rich, precise image prompts, on-image text and captions. It does this for a whole
+product in a SINGLE batched request (persona + every concept). Paid requests are
+never retried and failures are never replaced with silent template output.
 """
 
 from __future__ import annotations
 
 import json
 from typing import Any, List, Optional, Tuple
+
+import requests
 
 from ..models import (
     BlogContent,
@@ -33,11 +34,29 @@ from .template import (
 
 log = get_logger("prompting.grok")
 
+
+class GrokGenerationError(RuntimeError):
+    """A terminal, user-visible xAI generation failure."""
+
+    def __init__(self, error_type: str, message: str) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+
 _SYSTEM = (
     "You are a senior direct-response marketing creative, brand strategist and "
     "prompt engineer. You write vivid, precise prompts for a cloud text-to-image "
     "model and punchy social captions that drive sales. You never invent product "
     "claims unsupported by the provided context. You always return STRICT JSON."
+)
+
+_BRAND_CASTING_RULE = (
+    "BRAND CASTING RULE: the fictional ideal-customer model must be either "
+    "(1) White, or (2) mixed Black and White. Return race exactly as 'White' "
+    "or 'Mixed Black and White', and return ethnicity using the same exact label. "
+    "The appearance description must be consistent with that selected fictional "
+    "casting. This is a casting instruction for a newly generated fictional model; "
+    "never identify or classify a person visible in supplier photography. Supplier "
+    "people are reference-background only and must never be copied."
 )
 
 
@@ -80,6 +99,7 @@ marketing image can depict a believable, specific person.
 PRODUCT EVIDENCE:
 {evidence}
 AUDIENCE CONSTRAINT: {audience_constraint}
+{casting_rule}
 
 Derive every persona choice from the evidence. Product-title audience wording is
 binding. Do not use a generic wellness/beauty stereotype. Choose age, occupation,
@@ -95,8 +115,8 @@ Return STRICT JSON with exactly these keys:
   "name": "first name",
   "age": 42,
   "sex": "woman|man",
-  "race": "concrete e.g. Black, East Asian, Hispanic, White/Caucasian, South Asian",
-  "ethnicity": "short",
+  "race": "White|Mixed Black and White",
+  "ethnicity": "White|Mixed Black and White (must match race)",
   "appearance": "concrete visual description for an image model (hair, build, style, expression)",
   "occupation": "short",
   "location": "short",
@@ -114,6 +134,7 @@ PRODUCT SUMMARY: {summary}
 PRODUCT EVIDENCE:
 {evidence}
 AUDIENCE CONSTRAINT: {audience_constraint}
+{casting_rule}
 
 IDEAL CUSTOMER (depict this exact person if the concept includes a person):
 {persona}
@@ -131,6 +152,10 @@ Requirements:
   composition/framing, lighting, mood, colours and style so the model produces
   exactly this image. If a person is included, describe them using the ideal
   customer above.
+- Supplier photographs are PRODUCT references only. Never preserve, copy or
+  imitate the face, identity or appearance of any person visible in a reference.
+  Replace every reference person with the fictional ideal customer above. If the
+  concept should contain no person, remove all reference people.
 - Specify the EXACT text to render inside the image via the image_text fields,
   spelled correctly. Include the promotion as an offer badge when it makes sense
   for the concept. Keep on-image text short and punchy.
@@ -162,6 +187,7 @@ PRODUCT SUMMARY: {summary}
 PRODUCT EVIDENCE:
 {evidence}
 AUDIENCE CONSTRAINT: {audience_constraint}
+{casting_rule}
 
 PROMOTION TO FEATURE (if any): {offer}
 DISCOUNT CODE: {code}
@@ -186,6 +212,9 @@ For each concept:
   word in the product title with the persona, imagery or copy.
 - If "include_person" is true, depict the ideal customer described in "persona".
   If false, keep it product/graphic focused with no person.
+- Supplier photographs are PRODUCT references only. Never preserve, copy or
+  imitate any person visible in them. Replace all reference people with the
+  fictional persona when include_person is true; otherwise remove them.
 - image_prompt must be DETAILED and PRECISE: subject, setting, composition/framing,
   lighting, mood, colours, style — so the model produces exactly this image.
 - Specify EXACT on-image text via image_text (spelled correctly, short, punchy).
@@ -200,8 +229,9 @@ For each concept:
 Return STRICT JSON with EXACTLY this shape:
 {{
   "persona": {{
-    "name": "", "age": 42, "sex": "woman|man", "race": "concrete",
-    "ethnicity": "", "appearance": "concrete visual description",
+    "name": "", "age": 42, "sex": "woman|man", "race": "White|Mixed Black and White",
+    "ethnicity": "White|Mixed Black and White (must match race)",
+    "appearance": "concrete visual description consistent with the selected casting",
     "occupation": "", "location": "", "lifestyle": "",
     "pain_point": "", "description": "1-2 sentence summary",
     "rationale": "evidence behind sex, age, life stage and pain point"
@@ -267,74 +297,83 @@ class GrokPromptGenerator(PromptGenerator):
     ) -> Tuple[ClientPersona, List[ConceptOutput], Any]:
         self._set_diagnostics("success", "grok", False)
         if not self.settings.grok_api_key:
-            self._set_diagnostics(
-                "error",
-                "template",
-                True,
-                "Grok could not run because no xAI API key was available for this store.",
+            raise GrokGenerationError(
+                "configuration_error",
+                "Grok could not start because no xAI inference API key was "
+                "available for this store. No request was sent.",
             )
-            return super().generate_bundle(product, blog, concepts, campaign)
-        try:
-            data = self._call_bundle(product, blog, concepts, campaign)
-            persona = self._parse_persona(data.get("persona") or {})
-            persona, corrected = self._enforce_persona(product, blog, persona)
-            if corrected:
-                # The batch concepts were authored around the rejected persona,
-                # so none of them are safe to reuse for people-focused imagery.
-                outputs = self._fallback.generate_all(
-                    product, blog, concepts, persona, campaign
-                )
-                self._set_diagnostics(
-                    "warning",
-                    "template",
-                    True,
-                    "Grok returned a persona that contradicted the detected primary "
-                    "commercial audience. The conflicting result was rejected and "
-                    "the safe fallback was used.",
-                )
-            else:
-                outputs = self._parse_bundle_concepts(
-                    data.get("concepts") or [], concepts, product, persona, blog, campaign
-                )
-            
-            from ..models import FunnelStage, LandingPagePlan
-            lp_data = data.get("landing_page_plan") or {}
-            stages_data = lp_data.get("funnel_stages", [])
-            stages = [
-                FunnelStage(
-                    stage=s.get("stage", ""),
-                    concept=s.get("concept", ""),
-                    why=s.get("why", "")
-                )
-                for s in stages_data if isinstance(s, dict)
-            ]
-            
-            plan = LandingPagePlan(
-                funnel_stages=stages,
-                advice=lp_data.get("advice", "")
+        data = self._call_bundle(product, blog, concepts, campaign)
+        if not isinstance(data.get("persona"), dict):
+            raise GrokGenerationError(
+                "invalid_provider_response",
+                "xAI response did not contain the required persona object. "
+                "No fallback or retry was attempted.",
             )
-            
-            if not plan.funnel_stages and outputs:
-                plan.funnel_stages = [FunnelStage("Hero / Hook", outputs[0].concept, "Main feature")]
-                if len(outputs) > 1:
-                    plan.funnel_stages.append(FunnelStage("Benefits", outputs[1].concept, "Show benefits"))
-                if len(outputs) > 2:
-                    plan.funnel_stages.append(FunnelStage("Social Proof", outputs[2].concept, "Build trust"))
-                plan.advice = "Default fallback funnel plan."
+        persona = self._parse_persona(data["persona"])
+        _, contradicted = self._enforce_persona(product, blog, persona)
+        if contradicted:
+            required = infer_target_sex(product, blog) or infer_fallback_persona_sex(
+                product, blog
+            )
+            raise GrokGenerationError(
+                "persona_validation_error",
+                f"xAI returned persona sex '{persona.sex or 'blank'}', but product "
+                f"evidence requires '{required}'. The response was rejected; no "
+                "template fallback or retry was attempted.",
+            )
+        missing_persona = [
+            field for field, value in (
+                ("name", persona.name),
+                ("age", persona.age),
+                ("sex", persona.sex),
+                ("race", persona.race),
+                ("ethnicity", persona.ethnicity),
+                ("pain_point", persona.pain_point),
+                ("rationale", persona.rationale),
+            )
+            if value in (None, "")
+        ]
+        if missing_persona:
+            raise GrokGenerationError(
+                "persona_validation_error",
+                "xAI persona omitted required fields: "
+                + ", ".join(missing_persona)
+                + ". The response was rejected; no fallback or retry was attempted.",
+            )
+        self._validate_brand_casting(persona)
+        outputs = self._parse_bundle_concepts(
+            data.get("concepts") or [], concepts, product, persona, blog, campaign
+        )
 
-            return persona, outputs, plan
-        except Exception as exc:  # noqa: BLE001 - single-call fallback
-            log.warning(
-                "Grok batched generation failed (%s); falling back to per-concept.",
-                exc,
+        from ..models import FunnelStage, LandingPagePlan
+        lp_data = data.get("landing_page_plan")
+        stages_data = lp_data.get("funnel_stages") if isinstance(lp_data, dict) else None
+        if not isinstance(stages_data, list) or not stages_data:
+            raise GrokGenerationError(
+                "landing_plan_validation_error",
+                "xAI response omitted landing_page_plan.funnel_stages. The response "
+                "was rejected; no fallback or retry was attempted.",
             )
-            self._set_diagnostics(
-                "error",
-                "template",
-                True,
-                f"Grok generation failed: {exc}",
+        stages = [
+            FunnelStage(
+                stage=str(stage.get("stage") or ""),
+                concept=str(stage.get("concept") or ""),
+                why=str(stage.get("why") or ""),
             )
-            return super().generate_bundle(product, blog, concepts, campaign)
+            for stage in stages_data
+            if isinstance(stage, dict)
+        ]
+        if not stages:
+            raise GrokGenerationError(
+                "landing_plan_validation_error",
+                "xAI returned no valid landing-page funnel stages. No fallback or "
+                "retry was attempted.",
+            )
+        plan = LandingPagePlan(
+            funnel_stages=stages,
+            advice=str(lp_data.get("advice") or ""),
+        )
+        return persona, outputs, plan
 
     def _call_bundle(self, product, blog, concepts, campaign) -> dict:
         concept_lines = "\n".join(
@@ -355,6 +394,7 @@ class GrokPromptGenerator(PromptGenerator):
             code=campaign.code or "none",
             concepts=concept_lines,
             audience_constraint=audience_constraint(product, blog),
+            casting_rule=_BRAND_CASTING_RULE,
         )
         return self._chat(prompt, product.image_urls)
 
@@ -395,6 +435,23 @@ class GrokPromptGenerator(PromptGenerator):
             rationale=data.get("rationale", "") or "",
         )
 
+    @staticmethod
+    def _validate_brand_casting(persona: ClientPersona) -> None:
+        """Validate the requested fictional casting without analysing photos."""
+        race = " ".join(str(persona.race or "").strip().lower().split())
+        ethnicity = " ".join(str(persona.ethnicity or "").strip().lower().split())
+        allowed = {"white", "mixed black and white"}
+        if race not in allowed or ethnicity != race:
+            raise GrokGenerationError(
+                "persona_casting_validation_error",
+                "xAI returned persona casting "
+                f"race='{persona.race or 'blank'}', "
+                f"ethnicity='{persona.ethnicity or 'blank'}'. Brand casting "
+                "requires both fields to match exactly: 'White' or 'Mixed Black "
+                "and White'. The response was rejected; no fallback or retry was "
+                "attempted.",
+            )
+
     def _parse_bundle_concepts(
         self, items, concepts, product, persona, blog, campaign
     ) -> List[ConceptOutput]:
@@ -406,53 +463,50 @@ class GrokPromptGenerator(PromptGenerator):
                 by_name[key] = item
 
         outputs: List[ConceptOutput] = []
-        for index, concept in enumerate(concepts):
+        missing: List[str] = []
+        for concept in concepts:
             item = by_name.get(concept.name.strip().lower())
-            if item is None and index < len(items):
-                item = items[index]  # positional fallback
             if not item or not (item.get("image_prompt") or "").strip():
-                # Missing/empty entry: fill deterministically so the set is complete.
-                outputs.append(
-                    self._fallback.generate(product, blog, concept, persona, campaign)
-                )
+                missing.append(concept.name)
                 continue
             outputs.append(
                 self._to_output(
                     item, concept, product, needs_person(concept.slug),
-                    aspect_for(concept.slug),
+                    aspect_for(concept.slug), persona,
                 )
+            )
+        if missing:
+            raise GrokGenerationError(
+                "concept_validation_error",
+                "xAI omitted or returned an empty image prompt for: "
+                + ", ".join(missing)
+                + ". The entire response was rejected; no fallback or retry was attempted.",
             )
         return outputs
 
     # ------------------------------------------------------------------
     def build_persona(self, product: Product, blog: BlogContent) -> ClientPersona:
         if not self.settings.grok_api_key:
-            return self._fallback.build_persona(product, blog)
+            raise GrokGenerationError(
+                "configuration_error",
+                "Cannot generate persona: xAI inference API key is missing.",
+            )
         prompt = _PERSONA_PROMPT.format(
             evidence=_product_evidence(product, blog),
             audience_constraint=audience_constraint(product, blog),
+            casting_rule=_BRAND_CASTING_RULE,
         )
-        try:
-            data = self._chat(prompt, product.image_urls)
-            age = data.get("age")
-            persona = ClientPersona(
-                name=data.get("name", ""),
-                age=int(age) if isinstance(age, (int, float, str)) and str(age).isdigit() else None,
-                sex=data.get("sex", ""),
-                race=data.get("race", ""),
-                ethnicity=data.get("ethnicity", ""),
-                appearance=data.get("appearance", ""),
-                occupation=data.get("occupation", ""),
-                location=data.get("location", ""),
-                lifestyle=data.get("lifestyle", ""),
-                pain_point=data.get("pain_point", ""),
-                description=data.get("description", ""),
-                rationale=data.get("rationale", ""),
+        data = self._chat(prompt, product.image_urls)
+        persona = self._parse_persona(data)
+        _, contradicted = self._enforce_persona(product, blog, persona)
+        if contradicted:
+            raise GrokGenerationError(
+                "persona_validation_error",
+                "xAI persona contradicted the product audience. No fallback or retry "
+                "was attempted.",
             )
-            return self._enforce_persona(product, blog, persona)[0]
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Grok persona failed (%s); using heuristic persona.", exc)
-            return self._fallback.build_persona(product, blog)
+        self._validate_brand_casting(persona)
+        return persona
 
     # ------------------------------------------------------------------
     def generate(
@@ -464,23 +518,16 @@ class GrokPromptGenerator(PromptGenerator):
         campaign: Campaign,
     ) -> ConceptOutput:
         if not self.settings.grok_api_key:
-            return self._fallback.generate(product, blog, concept, persona, campaign)
+            raise GrokGenerationError(
+                "configuration_error",
+                f"Cannot generate '{concept.name}': xAI inference API key is missing.",
+            )
         include_person = needs_person(concept.slug)
         aspect = aspect_for(concept.slug)
-        try:
-            data = self._call_concept(
-                product, blog, concept, persona, campaign, include_person, aspect
-            )
-            return self._to_output(
-                data, concept, product, include_person, aspect
-            )
-        except Exception as exc:  # noqa: BLE001 - deliberate broad fallback
-            log.warning(
-                "Grok generation failed for '%s' (%s); falling back to template.",
-                concept.name,
-                exc,
-            )
-            return self._fallback.generate(product, blog, concept, persona, campaign)
+        data = self._call_concept(
+            product, blog, concept, persona, campaign, include_person, aspect
+        )
+        return self._to_output(data, concept, product, include_person, aspect, persona)
 
     # ------------------------------------------------------------------
     def _call_concept(
@@ -492,6 +539,7 @@ class GrokPromptGenerator(PromptGenerator):
             summary=first_sentences(product.description_text or "", 400),
             evidence=_product_evidence(product, blog),
             audience_constraint=audience_constraint(product, blog),
+            casting_rule=_BRAND_CASTING_RULE,
             persona=persona.description or persona.visual_description(),
             concept_name=concept.name,
             concept_desc=concept.description or concept.name,
@@ -523,15 +571,30 @@ class GrokPromptGenerator(PromptGenerator):
             "temperature": 0.8,
             "response_format": {"type": "json_object"},
         }
-        resp = self.session.post(
-            f"{self.settings.grok_base_url.rstrip('/')}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.settings.grok_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=self.settings.grok_timeout,
-        )
+        endpoint = f"{self.settings.grok_base_url.rstrip('/')}/chat/completions"
+        try:
+            resp = self.session.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {self.settings.grok_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.settings.grok_timeout,
+            )
+        except requests.Timeout as exc:
+            raise GrokGenerationError(
+                "provider_timeout",
+                f"xAI Grok timed out after {self.settings.grok_timeout} seconds "
+                f"({type(exc).__name__}: {exc}). Exactly one request was attempted; "
+                "there was no retry or fallback.",
+            ) from exc
+        except requests.RequestException as exc:
+            raise GrokGenerationError(
+                "provider_network_error",
+                f"xAI Grok request failed ({type(exc).__name__}: {exc}). Exactly "
+                "one request was attempted; there was no retry or fallback.",
+            ) from exc
         if getattr(resp, "status_code", 200) >= 400:
             try:
                 error_body = resp.json()
@@ -542,21 +605,62 @@ class GrokPromptGenerator(PromptGenerator):
                 )
             except Exception:  # noqa: BLE001
                 detail = getattr(resp, "text", "")
-            raise RuntimeError(
+            raise GrokGenerationError(
+                "provider_http_error",
                 f"xAI API HTTP {resp.status_code}: "
-                f"{str(detail or 'unknown API error')[:500]}"
+                f"{str(detail or 'unknown API error')[:800]}. Exactly one request "
+                "was attempted; there was no retry or fallback.",
             )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+        try:
+            body = resp.json()
+            content = body["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+        except (ValueError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise GrokGenerationError(
+                "invalid_provider_response",
+                f"xAI returned HTTP 200 but its JSON response could not be read "
+                f"({type(exc).__name__}: {exc}). Exactly one request was attempted; "
+                "there was no retry or fallback.",
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise GrokGenerationError(
+                "invalid_provider_response",
+                "xAI returned valid JSON but it was not a JSON object. No retry or "
+                "fallback was attempted.",
+            )
+        return parsed
 
     def _to_output(
         self, data: dict, concept: CreativeConcept, product: Product,
-        include_person: bool, aspect: str,
+        include_person: bool, aspect: str, persona: ClientPersona,
     ) -> ConceptOutput:
         image_prompt = (data.get("image_prompt") or "").strip()
         if not image_prompt:
             raise ValueError("Grok returned empty image_prompt")
+        if include_person:
+            replacement = (
+                "REFERENCE HUMAN REPLACEMENT — Treat every person visible in the "
+                "supplier/reference photography as background that must not be "
+                "copied. Replace them completely with this newly generated fictional "
+                f"persona: {persona.visual_description()}; race: {persona.race}; "
+                f"ethnicity: {persona.ethnicity or 'not additionally specified'}; "
+                f"appearance: {persona.appearance}. Do not preserve or imitate any "
+                "reference person's face, identity, hair, skin, body or clothing."
+            )
+        else:
+            replacement = (
+                "REFERENCE HUMAN REMOVAL — The reference photography supplies the "
+                "product only. Remove every visible person and do not preserve or "
+                "imitate any reference person's face, identity or appearance."
+            )
+        image_prompt = f"{image_prompt}\n\n{replacement}"
+        social_text = (data.get("social_text") or "").strip()
+        if not social_text:
+            raise GrokGenerationError(
+                "concept_validation_error",
+                f"xAI returned an empty social_text for '{concept.name}'. No "
+                "fallback or retry was attempted.",
+            )
 
         it_data = data.get("image_text") or {}
         image_text = ImageText(
@@ -567,20 +671,32 @@ class GrokPromptGenerator(PromptGenerator):
             discount_code=it_data.get("discount_code", "") or "",
         )
 
-        hashtags = data.get("hashtags") or self._fallback._hashtags(product)
+        hashtags = data.get("hashtags")
         if isinstance(hashtags, str):
             hashtags = [h.strip() for h in hashtags.split() if h.strip()]
+        if not isinstance(hashtags, list) or not hashtags:
+            raise GrokGenerationError(
+                "concept_validation_error",
+                f"xAI returned no hashtags for '{concept.name}'. No fallback or "
+                "retry was attempted.",
+            )
 
-        keywords = data.get("keywords") or self._fallback._keywords(product, concept)
+        keywords = data.get("keywords")
         if isinstance(keywords, str):
             keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+        if not isinstance(keywords, list) or not keywords:
+            raise GrokGenerationError(
+                "concept_validation_error",
+                f"xAI returned no keywords for '{concept.name}'. No fallback or "
+                "retry was attempted.",
+            )
 
         width, height = dimensions_for(aspect)
         return ConceptOutput(
             concept=concept.name,
             concept_description=concept.description,
             image_prompt=image_prompt,
-            social_text=(data.get("social_text") or "").strip(),
+            social_text=social_text,
             image_text=image_text,
             include_persona=include_person,
             negative_prompt=(data.get("negative_prompt") or "").strip(),

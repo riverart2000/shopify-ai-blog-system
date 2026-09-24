@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from typing import Annotated
 from urllib.parse import quote_plus, urlparse
 
@@ -30,6 +31,7 @@ from providers import AllModelsFailedError
 from services import blog_scope, image_service, internal_links, llm_service, logo_service, title_service
 from services.quality_service import html_to_review_text, review_draft
 from services import system_events
+from services import product_blog_sync
 from utils import text_to_html
 
 router = APIRouter()
@@ -2052,6 +2054,132 @@ async def api_product_blog_generate_status(request: Request, store_id: str, prod
         "timeline": task.get("timeline", []),
         "error": task.get("error")
     }
+
+
+class ProductBlogSyncRequest(BaseModel):
+    store_id: str = ""
+    blog_handle: str = "inside-the-products"
+    repair: bool = True
+
+
+async def run_product_blog_sync_task(
+    store_id: str,
+    store_cfg: StoreConfig,
+    blog_handle: str,
+    repair: bool,
+    task_key: str,
+) -> None:
+    task = state.product_blog_sync_tasks[task_key]
+
+    def report_progress(stage: str, message: str, current: int, total: int) -> None:
+        task.update(
+            {
+                "status": "processing",
+                "current_stage": stage,
+                "message": message,
+                "current": current,
+                "total": total,
+                "updated_at": time.time(),
+            }
+        )
+
+    try:
+        result = await product_blog_sync.reconcile_product_blogs(
+            store_cfg,
+            blog_handle,
+            repair=repair,
+            progress=report_progress,
+        )
+        task.update(
+            {
+                "status": "success",
+                "current_stage": "complete",
+                "message": result["message"],
+                "result": result,
+                "updated_at": time.time(),
+            }
+        )
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        logger.exception(
+            "Product-blog re-sync failed store=%s job=%s: %s",
+            store_id,
+            task_key,
+            error,
+            extra={
+                "operation": "product_blog_sync",
+                "store_id": store_id,
+                "correlation_id": task_key,
+            },
+        )
+        task.update(
+            {
+                "status": "failed",
+                "current_stage": "failed",
+                "message": "Product-blog sanity check failed. No retry was attempted.",
+                "error": error,
+                "updated_at": time.time(),
+            }
+        )
+
+
+@router.post("/api/products/blog-sync")
+async def api_product_blog_sync(
+    request: Request,
+    payload: ProductBlogSyncRequest,
+    background_tasks: BackgroundTasks,
+):
+    """Start a no-AI-cost audit of live Shopify products and product articles."""
+    _verify_backend_api_key(request)
+    store_row = await _resolve_generation_store(payload.store_id)
+    store_id = str(store_row["id"])
+
+    for key, existing in state.product_blog_sync_tasks.items():
+        if key.startswith(f"{store_id}:") and existing.get("status") in ("pending", "processing"):
+            return {
+                "ok": True,
+                "status": existing["status"],
+                "job_id": existing["job_id"],
+                "message": "A product-blog sanity check is already running for this store.",
+            }
+
+    job_id = uuid.uuid4().hex
+    task_key = f"{store_id}:{job_id}"
+    state.product_blog_sync_tasks[task_key] = {
+        "job_id": job_id,
+        "store_id": store_id,
+        "status": "pending",
+        "current_stage": "queued",
+        "message": "Product-blog sanity check queued.",
+        "current": 0,
+        "total": 0,
+        "result": None,
+        "error": None,
+        "updated_at": time.time(),
+    }
+    background_tasks.add_task(
+        run_product_blog_sync_task,
+        store_id,
+        _store_config_from_row(store_row),
+        payload.blog_handle.strip() or "inside-the-products",
+        bool(payload.repair),
+        task_key,
+    )
+    return {
+        "ok": True,
+        "status": "pending",
+        "job_id": job_id,
+        "message": "Product-blog sanity check queued. This job does not call an AI model.",
+    }
+
+
+@router.get("/api/products/blog-sync/status")
+async def api_product_blog_sync_status(request: Request, store_id: str, job_id: str):
+    _verify_backend_api_key(request)
+    task = state.product_blog_sync_tasks.get(f"{store_id}:{job_id}")
+    if task is None:
+        raise HTTPException(status_code=404, detail="Product-blog sanity-check job was not found.")
+    return {"ok": True, **task}
 
 
 class ProductBlogEnsureDescriptionRequest(BaseModel):

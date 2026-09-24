@@ -44,6 +44,13 @@ from .reviews import (
     get_review_summary, get_admin_summary, moderate_review, delete_review,
     export_reviews_csv,
 )
+from .seo_growth import (
+    create_seo_growth_run, update_seo_growth_run, complete_seo_growth_run,
+    fail_seo_growth_run, get_latest_seo_growth_run, get_active_seo_growth_run,
+    get_seo_growth_runs, get_seo_growth_opportunities, set_seo_opportunity_status,
+    upsert_backlink_prospect, list_backlink_prospects, delete_backlink_prospect,
+    get_stores_due_for_seo_growth, fail_interrupted_seo_growth_runs,
+)
 
 __all__ = [
     # base
@@ -85,4 +92,10 @@ __all__ = [
     "external_review_duplicate_count",
     "list_reviews", "get_review_summary", "get_admin_summary",
     "moderate_review", "delete_review", "export_reviews_csv",
+    # SEO Growth
+    "create_seo_growth_run", "update_seo_growth_run", "complete_seo_growth_run",
+    "fail_seo_growth_run", "get_latest_seo_growth_run", "get_active_seo_growth_run",
+    "get_seo_growth_runs", "get_seo_growth_opportunities", "set_seo_opportunity_status",
+    "upsert_backlink_prospect", "list_backlink_prospects", "delete_backlink_prospect",
+    "get_stores_due_for_seo_growth", "fail_interrupted_seo_growth_runs",
 ]
