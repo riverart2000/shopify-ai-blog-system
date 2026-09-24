@@ -292,6 +292,59 @@ CREATE TABLE IF NOT EXISTS seo_backlink_prospects (
 CREATE INDEX IF NOT EXISTS idx_seo_backlink_prospects_store
     ON seo_backlink_prospects(store_id, status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS seo_repair_jobs (
+    id                TEXT PRIMARY KEY,
+    store_id          TEXT NOT NULL,
+    rule_key          TEXT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'queued',
+    stage             TEXT NOT NULL DEFAULT 'queued',
+    progress          INTEGER NOT NULL DEFAULT 0,
+    total_items       INTEGER NOT NULL DEFAULT 0,
+    processed_items   INTEGER NOT NULL DEFAULT 0,
+    changed_items     INTEGER NOT NULL DEFAULT 0,
+    skipped_items     INTEGER NOT NULL DEFAULT 0,
+    failed_items      INTEGER NOT NULL DEFAULT 0,
+    message           TEXT NOT NULL DEFAULT '',
+    error_type        TEXT NOT NULL DEFAULT '',
+    error_message     TEXT NOT NULL DEFAULT '',
+    created_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    started_at        INTEGER,
+    updated_at        INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    completed_at      INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_repair_jobs_store_created
+    ON seo_repair_jobs(store_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_seo_repair_one_active
+    ON seo_repair_jobs(store_id)
+    WHERE status IN ('queued','running','applying','restoring');
+
+CREATE TABLE IF NOT EXISTS seo_repair_items (
+    id             TEXT PRIMARY KEY,
+    job_id         TEXT NOT NULL,
+    store_id       TEXT NOT NULL,
+    rule_key       TEXT NOT NULL,
+    resource_type  TEXT NOT NULL DEFAULT 'article',
+    resource_id    TEXT NOT NULL,
+    parent_id      TEXT NOT NULL DEFAULT '',
+    title          TEXT NOT NULL DEFAULT '',
+    page_url       TEXT NOT NULL DEFAULT '',
+    original_html  TEXT NOT NULL,
+    repaired_html  TEXT NOT NULL,
+    original_hash  TEXT NOT NULL,
+    repaired_hash  TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'ready',
+    error_message  TEXT NOT NULL DEFAULT '',
+    created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    restored_at    INTEGER,
+    UNIQUE(job_id, resource_type, resource_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_repair_items_job_status
+    ON seo_repair_items(job_id, status, created_at);
+
 CREATE TABLE IF NOT EXISTS wellness_quiz_products (
     store_id          TEXT NOT NULL,
     product_id        TEXT NOT NULL,

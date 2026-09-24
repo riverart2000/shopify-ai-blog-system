@@ -13,6 +13,12 @@ from pydantic import BaseModel
 import db
 from routes.api import _resolve_generation_store, _verify_backend_api_key
 from services.seo_growth.orchestrator import launch_background, run_audit
+from services.seo_growth.managed_content import RULE_KEY
+from services.seo_growth.repair import (
+    apply_managed_keyword_blocks,
+    restore_managed_keyword_blocks,
+    scan_managed_keyword_blocks,
+)
 from services.seo_growth.search_console import SearchConsoleError, normalise_site_url
 
 router = APIRouter(prefix="/api/seo-growth")
@@ -31,6 +37,7 @@ class SeoSettingsRequest(BaseModel):
     clear_gsc_credentials: bool = False
     use_ga4_credentials: bool = True
     auto_enabled: bool = False
+    auto_safe_repairs: bool = False
     period_days: int = 90
 
 
@@ -59,6 +66,12 @@ class BacklinkRequest(BaseModel):
 class BacklinkDeleteRequest(BaseModel):
     store_id: str = ""
     prospect_id: str
+
+
+class RepairRequest(BaseModel):
+    store_id: str = ""
+    job_id: str = ""
+    confirmed: bool = False
 
 
 async def _store_id(requested: str) -> str:
@@ -91,15 +104,31 @@ def _clean_url(value: str, field: str) -> str:
 
 
 @router.get("")
-async def seo_growth_data(request: Request, store_id: str = ""):
+async def seo_growth_data(
+    request: Request,
+    store_id: str = "",
+    opportunity_page: int = 1,
+):
     _verify_backend_api_key(request)
     sid = await _store_id(store_id)
     history = await db.get_seo_growth_runs(sid, limit=10)
     latest = history[0] if history else None
     result_run = next((item for item in history if item.get("status") == "complete"), None)
+    page_size = 50
+    page = max(int(opportunity_page), 1)
+    result_run_id = result_run["id"] if result_run else ""
+    opportunity_total = await db.count_seo_growth_opportunities(
+        sid, result_run_id, status="",
+    ) if result_run else 0
+    max_page = max(1, (opportunity_total + page_size - 1) // page_size)
+    page = min(page, max_page)
     opportunities = await db.get_seo_growth_opportunities(
-        sid, result_run["id"] if result_run else "", status="", limit=250,
+        sid, result_run_id, status="", limit=page_size, offset=(page - 1) * page_size,
     ) if result_run else []
+    repair = await db.get_latest_seo_repair_job(sid)
+    repair_items = await db.list_seo_repair_items(
+        sid, repair["id"], limit=12, include_html=False,
+    ) if repair else []
     prospects = await db.list_backlink_prospects(sid)
     site_url = await db.get_store_setting(sid, "seo_gsc_site_url", "")
     gsc_credentials = await db.get_store_setting(sid, "seo_gsc_service_account_json", "")
@@ -113,14 +142,20 @@ async def seo_growth_data(request: Request, store_id: str = ""):
         "latest": latest,
         "results_run_id": result_run["id"] if result_run else "",
         "opportunities": opportunities,
+        "opportunity_total": opportunity_total,
+        "opportunity_page": page,
+        "opportunity_page_size": page_size,
         "history": history,
         "backlinks": prospects,
+        "repair": repair,
+        "repair_items": repair_items,
         "settings": {
             "gsc_site_url": site_url,
             "gsc_credentials_saved": bool(gsc_credentials),
             "ga4_credentials_available": bool(ga4_credentials),
             "use_ga4_credentials": await db.get_store_setting(sid, "seo_use_ga4_credentials", "1") == "1",
             "auto_enabled": await db.get_store_setting(sid, "seo_growth_auto_enabled", "0") == "1",
+            "auto_safe_repairs": await db.get_store_setting(sid, "seo_auto_safe_repairs", "0") == "1",
             "period_days": min(max(period_days, 28), 365),
         },
     }
@@ -159,6 +194,7 @@ async def save_seo_growth_settings(request: Request, payload: SeoSettingsRequest
         "seo_gsc_site_url": site_url,
         "seo_use_ga4_credentials": "1" if payload.use_ga4_credentials else "0",
         "seo_growth_auto_enabled": "1" if payload.auto_enabled else "0",
+        "seo_auto_safe_repairs": "1" if payload.auto_safe_repairs else "0",
         "seo_growth_period_days": str(days),
     }
     if credentials:
@@ -167,6 +203,70 @@ async def save_seo_growth_settings(request: Request, payload: SeoSettingsRequest
         values["seo_gsc_service_account_json"] = ""
     await db.set_store_settings(sid, values)
     return {"ok": True}
+
+
+@router.post("/repairs/scan")
+async def scan_repairs(request: Request, payload: RepairRequest):
+    _verify_backend_api_key(request)
+    sid = await _store_id(payload.store_id)
+    job_id = await db.create_seo_repair_job(sid, RULE_KEY)
+    if not job_id:
+        active = await db.get_latest_seo_repair_job(sid)
+        return {"ok": True, "already_running": True, "job_id": (active or {}).get("id", "")}
+    launch_background(scan_managed_keyword_blocks(job_id, sid), _tasks)
+    return {"ok": True, "job_id": job_id, "status": "queued"}
+
+
+@router.post("/repairs/apply")
+async def apply_repairs(request: Request, payload: RepairRequest):
+    _verify_backend_api_key(request)
+    sid = await _store_id(payload.store_id)
+    if not payload.confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm the backed-up repair preview before applying Shopify changes.",
+        )
+    job = await db.get_seo_repair_job(sid, payload.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="SEO repair preview was not found for this store.")
+    if job["rule_key"] != RULE_KEY:
+        raise HTTPException(status_code=400, detail="This repair rule is not allow-listed for automatic changes.")
+    claimed = await db.begin_seo_repair_phase(
+        sid, payload.job_id, expected_status="awaiting_approval",
+        status="applying", stage="starting_apply",
+    )
+    if not claimed:
+        current = await db.get_seo_repair_job(sid, payload.job_id)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Repair cannot be applied while its status is '{(current or {}).get('status', 'missing')}'.",
+        )
+    launch_background(apply_managed_keyword_blocks(payload.job_id, sid), _tasks)
+    return {"ok": True, "job_id": payload.job_id, "status": "applying"}
+
+
+@router.post("/repairs/restore")
+async def restore_repairs(request: Request, payload: RepairRequest):
+    _verify_backend_api_key(request)
+    sid = await _store_id(payload.store_id)
+    if not payload.confirmed:
+        raise HTTPException(status_code=400, detail="Confirm rollback before restoring article backups.")
+    job = await db.get_seo_repair_job(sid, payload.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="SEO repair backup was not found for this store.")
+    if job["status"] not in {"complete", "partial"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Rollback is unavailable while repair status is '{job['status']}'.",
+        )
+    claimed = await db.begin_seo_repair_phase(
+        sid, payload.job_id, expected_status=job["status"],
+        status="restoring", stage="starting_restore",
+    )
+    if not claimed:
+        raise HTTPException(status_code=409, detail="Another repair action started first.")
+    launch_background(restore_managed_keyword_blocks(payload.job_id, sid), _tasks)
+    return {"ok": True, "job_id": payload.job_id, "status": "restoring"}
 
 
 @router.post("/opportunity-status")

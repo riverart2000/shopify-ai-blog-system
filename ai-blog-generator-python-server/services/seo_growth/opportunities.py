@@ -139,8 +139,16 @@ def search_opportunities(
     return opportunities
 
 
-def merge_and_rank(*groups: list[dict[str, Any]], limit: int = 250) -> list[dict[str, Any]]:
-    """Deduplicate by stable evidence key, keeping the highest-scored finding."""
+def merge_and_rank(
+    *groups: list[dict[str, Any]],
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Deduplicate by stable evidence key, keeping the highest-scored finding.
+
+    Audits persist the full queue and paginate it in the UI.  ``limit`` remains
+    available to bounded callers, but there is deliberately no implicit
+    250-item truncation that can hide whole categories of evidence.
+    """
     by_key: dict[str, dict[str, Any]] = {}
     for group in groups:
         for item in group:
@@ -150,4 +158,5 @@ def merge_and_rank(*groups: list[dict[str, Any]], limit: int = 250) -> list[dict
             current = by_key.get(key)
             if current is None or int(item.get("score", 0)) > int(current.get("score", 0)):
                 by_key[key] = item
-    return sorted(by_key.values(), key=lambda item: (-int(item.get("score", 0)), item["key"]))[:limit]
+    ranked = sorted(by_key.values(), key=lambda item: (-int(item.get("score", 0)), item["key"]))
+    return ranked if limit is None else ranked[:max(int(limit), 0)]

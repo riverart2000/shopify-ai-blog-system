@@ -127,7 +127,22 @@ async def run_scheduled_scans() -> None:
         run_id = await db.create_seo_growth_run(store_id, days, "scheduled")
         if not run_id:
             continue
-        launch_background(run_audit(run_id, store_id, days), _scheduled_tasks)
+        launch_background(
+            _run_scheduled_cycle(run_id, store_id, days),
+            _scheduled_tasks,
+        )
+
+
+async def _run_scheduled_cycle(run_id: str, store_id: str, days: int) -> None:
+    """Run the weekly audit, then only an explicitly opted-in safe repair rule."""
+    await run_audit(run_id, store_id, days)
+    run = await db.get_latest_seo_growth_run(store_id)
+    if not run or run.get("id") != run_id or run.get("status") != "complete":
+        return
+    if await db.get_store_setting(store_id, "seo_auto_safe_repairs", "0") != "1":
+        return
+    from .repair import run_automatic_safe_repairs
+    await run_automatic_safe_repairs(store_id)
 
 
 def launch_background(coro: Any, task_set: set[asyncio.Task]) -> asyncio.Task:

@@ -125,8 +125,10 @@ Responsibilities:
 
 `services/seo_growth/`
 - Modular SEO subsystem: `search_console.py` is the read-only Google adapter, `shopify_audit.py` inspects live product/article data, `opportunities.py` contains deterministic evidence rules, and `orchestrator.py` owns progress, final failures and scheduled weekly runs.
+- `managed_content.py` contains narrow signatures for HTML historically created by this app. `repair.py` provides dry-run, approval, backup, exact progress/error reporting, rate-limited Shopify updates and rollback. Only explicitly allow-listed deterministic rules can run automatically.
 - Search Console credentials may be stored separately or reuse the read-only GA4 service account after that account is granted access to the exact Search Console property.
-- No SEO audit retries automatically after failure, and no page, redirect or backlink is changed without a merchant action.
+- SEO opportunities are stored as a complete paginated queue; repeated app-owned findings are grouped so they cannot hide other categories behind a display cap.
+- No SEO audit or repair retries automatically after failure. Content changes require a reviewed preview unless the merchant explicitly enables the allow-listed weekly safe-repair option; redirects and backlinks are never changed automatically.
 
 ### Reusable Backfill Command
 

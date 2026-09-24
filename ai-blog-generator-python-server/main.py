@@ -121,7 +121,8 @@ async def lifespan(app: FastAPI):
     await db.init_db()
     from services.landing_page_jobs import fail_interrupted_jobs
     interrupted_jobs = fail_interrupted_jobs()
-    interrupted_seo_runs = await db.fail_interrupted_seo_growth_runs("manual")
+    interrupted_seo_runs = await db.fail_interrupted_seo_growth_runs()
+    interrupted_seo_repairs = await db.fail_interrupted_seo_repair_jobs()
     install_logging_handler()
     state.config = state._bootstrap  # server/logging config from file; all else from DB per-request
 
@@ -136,6 +137,11 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Marked %d interrupted SEO Growth run(s) as failed; none were retried.",
             interrupted_seo_runs,
+        )
+    if interrupted_seo_repairs:
+        logger.warning(
+            "Marked %d interrupted SEO repair job(s) as failed; none were retried.",
+            interrupted_seo_repairs,
         )
     logger.info(
         "AI Blog Server starting | mode=%s port=%d root_path=%s db=%s",

@@ -82,6 +82,7 @@ async def delete_store(store_id: str) -> None:
             "models", "prompts", "scheduled_jobs",
             "social_posts", "intelligence_runs", "intelligence_recommendations",
             "seo_growth_runs", "seo_growth_opportunities", "seo_backlink_prospects",
+            "seo_repair_items", "seo_repair_jobs",
             "wellness_quiz_products", "wellness_quiz_events",
         ):
             col = "store_id" if tbl != "stores" else "id"

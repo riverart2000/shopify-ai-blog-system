@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 import shopify_client
 from config import StoreConfig
+from .managed_content import RULE_KEY, has_managed_keyword_blocks
 
 
 _SEO_LABEL = re.compile(r"\b(?:seo\s+)?(?:keywords?|hashtags?)\s*:\s*", re.IGNORECASE)
@@ -34,19 +35,16 @@ def _similarity(left: str, right: str) -> float:
 def audit_articles(articles: list[shopify_client.ShopifyArticle]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     issues: list[dict[str, Any]] = []
     duplicate_pairs: set[tuple[int, int]] = set()
+    managed_block_articles: list[shopify_client.ShopifyArticle] = []
+    unmanaged_keyword_articles: list[shopify_client.ShopifyArticle] = []
     for article in articles:
         soup = BeautifulSoup(article.body_html or "", "html.parser")
         text = soup.get_text(" ", strip=True)
         page = article.article_url
-        if _SEO_LABEL.search(text) or _HASHTAG_RUN.search(text):
-            issues.append({
-                "key": f"article-keyword-dump:{article.id}", "category": "quality",
-                "severity": "high", "score": 92,
-                "title": f"Remove visible SEO keyword blocks from ‘{article.title}’",
-                "evidence": "The published article contains a visible Keywords/Hashtags label or a run of four or more hashtags.",
-                "action": "Remove the public keyword/hashtag block while retaining planning terms inside the app. Review the live page after publishing.",
-                "page_url": page, "source": "shopify", "metrics": {"article_id": article.id},
-            })
+        if has_managed_keyword_blocks(article.body_html or ""):
+            managed_block_articles.append(article)
+        elif _SEO_LABEL.search(text) or _HASHTAG_RUN.search(text):
+            unmanaged_keyword_articles.append(article)
         if not article.image_url and not soup.find("img"):
             issues.append({
                 "key": f"article-missing-image:{article.id}", "category": "content",
@@ -94,10 +92,57 @@ def audit_articles(articles: list[shopify_client.ShopifyArticle]) -> tuple[dict[
                 "page_url": left.article_url, "source": "shopify",
                 "metrics": {"similarity": round(similarity, 3), "other_url": right.article_url},
             })
+
+    if managed_block_articles:
+        count = len(managed_block_articles)
+        issues.append({
+            "key": f"safe-repair:{RULE_KEY}", "kind": "safe_repair",
+            "category": "quality", "severity": "high", "score": 96,
+            "title": f"Remove app-generated SEO blocks from {count:,} articles",
+            "evidence": (
+                f"{count:,} published articles contain the exact visible or hidden "
+                "keyword-block signature previously emitted by this app."
+            ),
+            "action": (
+                "Use Safe SEO repair to preview, back up and remove these exact "
+                "app-owned blocks. No merchant-authored article text is targeted."
+            ),
+            "page_url": managed_block_articles[0].article_url,
+            "source": "shopify",
+            "metrics": {
+                "affected_count": count,
+                "autofix_rule": RULE_KEY,
+                "sample_urls": [item.article_url for item in managed_block_articles[:10]],
+            },
+        })
+
+    if unmanaged_keyword_articles:
+        count = len(unmanaged_keyword_articles)
+        issues.append({
+            "key": "article-unmanaged-keyword-blocks", "category": "quality",
+            "severity": "medium", "score": 70,
+            "title": f"Review possible keyword blocks in {count:,} other articles",
+            "evidence": (
+                f"{count:,} articles contain a Keywords/Hashtags label or a run of "
+                "four or more hashtags, but not the app's exact managed signature."
+            ),
+            "action": (
+                "Review these pages manually. They are deliberately excluded from "
+                "automatic repair because their ownership and intent are uncertain."
+            ),
+            "page_url": unmanaged_keyword_articles[0].article_url,
+            "source": "shopify",
+            "metrics": {
+                "affected_count": count,
+                "sample_urls": [item.article_url for item in unmanaged_keyword_articles[:10]],
+            },
+        })
     return {
         "articles": len(articles),
         "with_featured_images": sum(bool(article.image_url) for article in articles),
-        "visible_keyword_blocks": sum(issue["key"].startswith("article-keyword-dump:") for issue in issues),
+        "visible_keyword_blocks": len(managed_block_articles) + len(unmanaged_keyword_articles),
+        "managed_keyword_blocks": len(managed_block_articles),
+        "unmanaged_keyword_blocks": len(unmanaged_keyword_articles),
         "health_claim_warnings": sum(issue["key"].startswith("article-health-citations:") for issue in issues),
         "overlap_groups": len(duplicate_pairs),
     }, issues
@@ -206,7 +251,7 @@ def audit_products(products: list[dict[str, Any]], storefront: str) -> tuple[dic
 
 async def collect_shopify_audit(store: StoreConfig) -> dict[str, Any]:
     products = await _products(store)
-    articles = await shopify_client.fetch_store_articles(store, limit_per_blog=250)
+    articles = await shopify_client.fetch_store_articles(store, limit_per_blog=0)
     storefront = (store.custom_domain or store.myshopify_domain).strip().rstrip("/")
     if not storefront.startswith(("https://", "http://")):
         storefront = f"https://{storefront}"

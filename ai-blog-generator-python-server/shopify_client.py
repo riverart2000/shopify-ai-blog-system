@@ -278,36 +278,57 @@ def _storefront_domain(store: StoreConfig) -> str:
 
 
 async def fetch_store_articles(store: StoreConfig, limit_per_blog: int = 50) -> list[ShopifyArticle]:
-    """Return current articles across the store's blogs."""
+    """Return current articles across the store's blogs.
+
+    ``limit_per_blog=0`` follows Shopify cursor pagination until every article
+    has been read. Positive values retain the bounded behaviour used by lighter
+    features such as internal-link suggestions.
+    """
     blogs = await fetch_blogs(store)
     token = await _get_token(store)
     articles: list[ShopifyArticle] = []
-    async with httpx.AsyncClient(timeout=30) as client:
+    requested_limit = int(limit_per_blog)
+    page_size = 250 if requested_limit <= 0 else min(max(requested_limit, 1), 250)
+    async with httpx.AsyncClient(timeout=45) as client:
         for blog in blogs:
             url = (
                 f"{_base_url(store)}/blogs/{blog.id}/articles.json"
-                f"?limit={limit_per_blog}&fields=id,blog_id,title,handle,body_html,summary_html,tags,image,published_at"
+                f"?limit={page_size}&fields=id,blog_id,title,handle,body_html,summary_html,tags,image,published_at"
             )
-            data = await _get(client, url, token)
-            for article in data.get("articles", []):
-                image = article.get("image") or {}
-                articles.append(
-                    ShopifyArticle(
-                        id=article.get("id", 0),
-                        blog_id=article.get("blog_id", blog.id),
-                        blog_handle=blog.handle,
-                        title=article.get("title", ""),
-                        handle=article.get("handle", ""),
-                        body_html=article.get("body_html", ""),
-                        summary_html=article.get("summary_html", ""),
-                        tags=article.get("tags", ""),
-                        article_url=(
-                            f"https://{_storefront_domain(store)}/blogs/{blog.handle}/{article.get('handle', '')}"
-                        ),
-                        image_url=image.get("src", ""),
-                        published_at=article.get("published_at", ""),
+            read_for_blog = 0
+            while url:
+                response = await client.get(url, headers=_headers(token))
+                if response.status_code != 200:
+                    raise ShopifyError(
+                        f"Shopify GET {url} returned {response.status_code}: {response.text[:300]}"
                     )
-                )
+                data = response.json()
+                log_debug_payload(logger, f"Shopify GET ← {url}", data)
+                for article in data.get("articles", []):
+                    if requested_limit > 0 and read_for_blog >= requested_limit:
+                        break
+                    image = article.get("image") or {}
+                    articles.append(
+                        ShopifyArticle(
+                            id=article.get("id", 0),
+                            blog_id=article.get("blog_id", blog.id),
+                            blog_handle=blog.handle,
+                            title=article.get("title", ""),
+                            handle=article.get("handle", ""),
+                            body_html=article.get("body_html", ""),
+                            summary_html=article.get("summary_html", ""),
+                            tags=article.get("tags", ""),
+                            article_url=(
+                                f"https://{_storefront_domain(store)}/blogs/{blog.handle}/{article.get('handle', '')}"
+                            ),
+                            image_url=image.get("src", ""),
+                            published_at=article.get("published_at", ""),
+                        )
+                    )
+                    read_for_blog += 1
+                if requested_limit > 0 and read_for_blog >= requested_limit:
+                    break
+                url = str((response.links.get("next") or {}).get("url") or "")
     return articles
 
 
@@ -879,6 +900,37 @@ async def update_article_title(
     return (data.get("article") or {}).get("title") or title
 
 
+async def fetch_article_body_html(
+    store: StoreConfig,
+    blog_id: int,
+    article_id: int,
+) -> str:
+    """Return the current body for one article for repair precondition checks."""
+    url = (
+        f"{_base_url(store)}/blogs/{int(blog_id)}/articles/{int(article_id)}.json"
+        "?fields=id,body_html"
+    )
+    token = await _get_token(store)
+    async with httpx.AsyncClient(timeout=45) as client:
+        data = await _get(client, url, token)
+    return str((data.get("article") or {}).get("body_html") or "")
+
+
+async def update_article_body_html(
+    store: StoreConfig,
+    blog_id: int,
+    article_id: int,
+    body_html: str,
+) -> str:
+    """Replace one article body and return the exact body Shopify stored."""
+    url = f"{_base_url(store)}/blogs/{int(blog_id)}/articles/{int(article_id)}.json"
+    token = await _get_token(store)
+    payload = {"article": {"id": int(article_id), "body_html": body_html}}
+    async with httpx.AsyncClient(timeout=60) as client:
+        data = await _put(client, url, token, payload)
+    return str((data.get("article") or {}).get("body_html") or "")
+
+
 def _build_article_html(
     content: str,
     image_urls: list[str],
@@ -890,13 +942,14 @@ def _build_article_html(
     pin_image_url: str = "",
 ) -> str:
     """
-    Insert images into the HTML content, then append a visible tags section
-    and a hidden SEO keyword div at the bottom.
+    Insert images into the HTML content.
 
     Images carry Pinterest `data-pin-description` + descriptive `alt` text so they
     are optimised when saved to Pinterest. When ``pin_image_url`` is provided, a
     vertical pin image is embedded at the end with ``data-pin-media`` so Pinterest
-    prefers it for the saved pin.
+    prefers it for the saved pin. Keywords and hashtags remain available to the
+    app, Shopify article tags and social captions; they are intentionally not
+    rendered as public or hidden article-body text.
     """
     long_tail_keywords = long_tail_keywords or []
     from html import escape as _esc
@@ -944,39 +997,6 @@ def _build_article_html(
         if pin_desc_attr:
             pin_attrs += f' data-pin-description="{pin_desc_attr}"'
         result += f"<img {pin_attrs} />\n"
-
-    # Visible tags section
-    if keywords or hashtags or long_tail_keywords:
-        tags_html = '<div style="margin-top:40px;padding-top:24px;border-top:1px solid #e5e7eb;">'
-        if long_tail_keywords:
-            lt_items = "".join(
-                f'<li style="margin:2px 0;color:#374151;font-size:14px;">{k}</li>'
-                for k in long_tail_keywords
-            )
-            tags_html += (
-                '<p style="margin:0 0 6px;font-size:13px;font-weight:600;'
-                'text-transform:uppercase;letter-spacing:0.04em;color:#6b7280;">'
-                'You might also search for</p>'
-                f'<ul style="margin:0 0 14px;padding-left:18px;">{lt_items}</ul>'
-            )
-        if keywords:
-            kw_pills = "".join(
-                f'<span style="display:inline-block;background:#eff6ff;color:#1d4ed8;'
-                f'border-radius:6px;padding:4px 12px;font-size:13px;font-weight:500;'
-                f'margin:4px 4px 4px 0;">{k}</span>'
-                for k in keywords
-            )
-            tags_html += f'<div style="margin-bottom:10px;">{kw_pills}</div>'
-        if hashtags:
-            ht_pills = "".join(
-                f'<span style="display:inline-block;background:#f0fdf4;color:#15803d;'
-                f'border-radius:6px;padding:4px 12px;font-size:13px;font-weight:500;'
-                f'margin:4px 4px 4px 0;">{t}</span>'
-                for t in hashtags
-            )
-            tags_html += f'<div>{ht_pills}</div>'
-        tags_html += '</div>'
-        result += tags_html
 
     return result
 
@@ -1077,23 +1097,6 @@ async def publish_article(
         title=title,
         pin_image_url=pin_cdn_url,
     )
-
-    # Append keywords and hashtags as hidden text for SEO — no visible headings
-    if keywords or hashtags or long_tail_keywords:
-        kw_html = ""
-        if keywords:
-            kw_items = " ".join(f"<span>{k}</span>" for k in keywords)
-            kw_html += kw_items
-        if long_tail_keywords:
-            lt_items = " ".join(f"<span>{k}</span>" for k in long_tail_keywords)
-            kw_html += " " + lt_items
-        if hashtags:
-            ht_items = " ".join(f"<span>{t}</span>" for t in hashtags)
-            kw_html += " " + ht_items
-        body_html += (
-            f'<div style="font-size:1px;color:transparent;line-height:1;'
-            f'overflow:hidden;height:1px;" aria-hidden="true">{kw_html}</div>'
-        )
 
     tags = ", ".join(keywords + [t.lstrip("#") for t in hashtags])
     blog_id = await resolve_blog_id(store, blog_handle)
@@ -1461,23 +1464,8 @@ async def _update_product_description_with_guide_link(
         logger.info("Product %s already includes guide link in description. Skipping update.", product_handle)
         return
 
-    # Slice keywords and hashtags to be 3-5 (no above 5, so clamp/slice at 5)
-    kws = long_tail_keywords if long_tail_keywords else keywords
-    if not kws:
-        kws = []
-    # Strip # if present on tags or keywords and format nicely
-    kws_clean = [k.strip() for k in kws if k.strip()][:5]
-    tags_clean = [t.strip() for t in hashtags if t.strip()][:5]
-
-    kw_text = ", ".join(kws_clean)
-    tag_text = " ".join(tags_clean)
-
     append_parts = []
     append_parts.append(f'<p><strong>Related Guide:</strong> <a href="{guide_url}" target="_blank" rel="noopener">{guide_title}</a></p>')
-    if kw_text:
-        append_parts.append(f'<p><em>Topics: {kw_text}</em></p>')
-    if tag_text:
-        append_parts.append(f'<p>{tag_text}</p>')
 
     snippet = "\n" + "\n".join(append_parts)
     new_body = current_body + snippet
@@ -1494,4 +1482,4 @@ async def _update_product_description_with_guide_link(
     async with httpx.AsyncClient(timeout=30) as client:
         await _put(client, url, token, payload)
 
-    logger.info("Updated product %s description with related guide link, keywords, and hashtags.", product_handle)
+    logger.info("Updated product %s description with related guide link.", product_handle)

@@ -87,31 +87,35 @@ async def complete_seo_growth_run(
                WHERE id=?""",
             (json.dumps(summary, ensure_ascii=False), now, now, run_id),
         )
+        previous_statuses: dict[str, str] = {}
+        async with conn.execute(
+            """SELECT opportunity_key,status FROM seo_growth_opportunities
+               WHERE store_id=? AND run_id<>? ORDER BY created_at DESC""",
+            (store_id, run_id),
+        ) as status_cur:
+            for key, status in await status_cur.fetchall():
+                previous_statuses.setdefault(str(key), str(status))
+        rows = []
         for item in opportunities:
-            async with conn.execute(
-                """SELECT status FROM seo_growth_opportunities
-                   WHERE store_id=? AND opportunity_key=? AND run_id<>?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (store_id, item["key"], run_id),
-            ) as status_cur:
-                previous_status_row = await status_cur.fetchone()
-            inherited_status = previous_status_row[0] if previous_status_row else "open"
-            await conn.execute(
+            key = str(item["key"])
+            rows.append((
+                str(uuid.uuid4()), run_id, store_id, key,
+                item.get("kind", "content"), item.get("category", "content"),
+                item.get("severity", "medium"), int(item.get("score", 0)),
+                item.get("title", "SEO opportunity"), item.get("evidence", ""),
+                item.get("action", ""), item.get("page_url", ""),
+                item.get("search_query", ""),
+                json.dumps(item.get("metrics", {}), ensure_ascii=False),
+                item.get("source", "shopify"), previous_statuses.get(key, "open"), now, now,
+            ))
+        if rows:
+            await conn.executemany(
                 """INSERT OR IGNORE INTO seo_growth_opportunities
                    (id, run_id, store_id, opportunity_key, kind, category, severity,
                     score, title, evidence, action, page_url, search_query,
                     metrics_json, source, status, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    str(uuid.uuid4()), run_id, store_id, item["key"],
-                    item.get("kind", "content"), item.get("category", "content"),
-                    item.get("severity", "medium"), int(item.get("score", 0)),
-                    item.get("title", "SEO opportunity"), item.get("evidence", ""),
-                    item.get("action", ""), item.get("page_url", ""),
-                    item.get("search_query", ""),
-                    json.dumps(item.get("metrics", {}), ensure_ascii=False),
-                    item.get("source", "shopify"), inherited_status, now, now,
-                ),
+                rows,
             )
         await conn.commit()
 
@@ -165,6 +169,7 @@ async def get_seo_growth_opportunities(
     run_id: str = "",
     status: str = "open",
     limit: int = 200,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     clauses = ["store_id=?"]
     values: list[Any] = [store_id]
@@ -174,16 +179,38 @@ async def get_seo_growth_opportunities(
     if status:
         clauses.append("status=?")
         values.append(status)
-    values.append(min(max(int(limit), 1), 500))
+    values.extend([min(max(int(limit), 1), 500), max(int(offset), 0)])
     async with aiosqlite.connect(get_db_path()) as conn:
         conn.row_factory = aiosqlite.Row
         async with conn.execute(
             f"""SELECT * FROM seo_growth_opportunities
                 WHERE {' AND '.join(clauses)}
-                ORDER BY score DESC, created_at DESC LIMIT ?""",  # noqa: S608
+                ORDER BY score DESC, created_at DESC LIMIT ? OFFSET ?""",  # noqa: S608
             values,
         ) as cur:
             return [_decode_opportunity(row) for row in await cur.fetchall()]
+
+
+async def count_seo_growth_opportunities(
+    store_id: str,
+    run_id: str = "",
+    status: str = "",
+) -> int:
+    clauses = ["store_id=?"]
+    values: list[Any] = [store_id]
+    if run_id:
+        clauses.append("run_id=?")
+        values.append(run_id)
+    if status:
+        clauses.append("status=?")
+        values.append(status)
+    async with aiosqlite.connect(get_db_path()) as conn:
+        async with conn.execute(
+            f"SELECT COUNT(*) FROM seo_growth_opportunities WHERE {' AND '.join(clauses)}",  # noqa: S608
+            values,
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0] if row else 0)
 
 
 async def set_seo_opportunity_status(store_id: str, opportunity_id: str, status: str) -> bool:
@@ -278,18 +305,23 @@ async def get_stores_due_for_seo_growth(now: int, interval_hours: int = 24 * 7) 
             return [dict(row) for row in await cur.fetchall()]
 
 
-async def fail_interrupted_seo_growth_runs(trigger_type: str) -> int:
+async def fail_interrupted_seo_growth_runs(trigger_type: str = "") -> int:
     """Mark abandoned process-local jobs final after a service restart; never retry them."""
     now = int(time.time())
+    where = "status IN ('queued','running')"
+    values: list[Any] = [now, now]
+    if trigger_type:
+        where += " AND trigger_type=?"
+        values.append(trigger_type)
     async with aiosqlite.connect(get_db_path()) as conn:
         cursor = await conn.execute(
-            """UPDATE seo_growth_runs
+            f"""UPDATE seo_growth_runs
                SET status='failed', stage='failed', progress=0,
                    error_type='ServiceRestart',
                    error_message='The SEO audit was interrupted by a service restart. No retry was attempted.',
                    updated_at=?, completed_at=?
-               WHERE status IN ('queued','running') AND trigger_type=?""",
-            (now, now, trigger_type),
+               WHERE {where}""",  # noqa: S608
+            values,
         )
         await conn.commit()
         return cursor.rowcount

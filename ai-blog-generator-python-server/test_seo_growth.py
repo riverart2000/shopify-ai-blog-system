@@ -3,8 +3,13 @@ from __future__ import annotations
 import pytest
 
 import db
-from shopify_client import ShopifyArticle
+from shopify_client import ShopifyArticle, _build_article_html
 from services.seo_growth import orchestrator
+from services.seo_growth import repair
+from services.seo_growth.managed_content import (
+    has_managed_keyword_blocks,
+    remove_managed_keyword_blocks,
+)
 from services.seo_growth.opportunities import search_opportunities
 from services.seo_growth.search_console import SearchConsoleError, normalise_site_url
 from services.seo_growth.shopify_audit import audit_articles, audit_products
@@ -58,9 +63,52 @@ def test_article_audit_flags_public_keyword_dump_and_uncited_claims():
     )
     summary, issues = audit_articles([article])
     keys = {item["key"].split(":", 1)[0] for item in issues}
-    assert "article-keyword-dump" in keys
+    assert "article-unmanaged-keyword-blocks" in keys
     assert "article-health-citations" in keys
     assert summary["visible_keyword_blocks"] == 1
+
+
+def test_managed_keyword_cleanup_is_exact_and_preserves_article_copy():
+    body = (
+        "<h2>Useful guide</h2><p>Keep this copy and #One natural tag.</p>"
+        '<div style="margin-top:40px;padding-top:24px;border-top:1px solid #e5e7eb;">'
+        '<div style="margin-bottom:10px;"><span style="display:inline-block;">sleep recovery</span></div>'
+        '<div><span style="display:inline-block;">#Sleep</span><span>#Recovery</span></div></div>'
+        '<div style="font-size:1px;color:transparent;line-height:1;overflow:hidden;height:1px;" '
+        'aria-hidden="true"><span>sleep recovery</span> <span>#Sleep</span></div>'
+    )
+    assert has_managed_keyword_blocks(body)
+    result = remove_managed_keyword_blocks(body)
+    assert result.visible_blocks == 1
+    assert result.hidden_blocks == 1
+    assert result.html == "<h2>Useful guide</h2><p>Keep this copy and #One natural tag.</p>"
+    assert not has_managed_keyword_blocks(result.html)
+
+
+def test_new_article_html_does_not_publish_keyword_or_hashtag_blocks():
+    html = _build_article_html(
+        "<p>Helpful article copy.</p>", [], ["sleep recovery"], ["#Sleep"],
+        ["how to recover sleep"], title="Sleep guide",
+    )
+    assert html == "<p>Helpful article copy.</p>"
+    assert "#Sleep" not in html
+    assert "transparent" not in html
+
+
+def test_article_audit_groups_managed_blocks_into_one_repair_opportunity():
+    managed = (
+        "<p>Article copy.</p>"
+        '<div style="font-size:1px;color:transparent;line-height:1;overflow:hidden;height:1px;" '
+        'aria-hidden="true"><span>keyword</span></div>'
+    )
+    summary, issues = audit_articles([
+        _article(1, "First", managed),
+        _article(2, "Second", managed),
+    ])
+    repair_items = [item for item in issues if item.get("kind") == "safe_repair"]
+    assert len(repair_items) == 1
+    assert repair_items[0]["metrics"]["affected_count"] == 2
+    assert summary["managed_keyword_blocks"] == 2
 
 
 def test_product_audit_distinguishes_shopify_fallback_from_missing_content():
@@ -175,5 +223,70 @@ async def test_orchestrator_completes_shopify_only_audit_with_explicit_source_st
         assert latest["summary"]["search_console"]["status"] == "not_configured"
         assert "no Google search metrics were inferred" in latest["summary"]["search_console"]["message"]
         assert items[0]["opportunity_key"] == "shopify-only"
+    finally:
+        db.set_db_path(previous_path)
+
+
+@pytest.mark.asyncio
+async def test_safe_repair_preview_apply_and_restore_are_reversible(tmp_path, monkeypatch):
+    previous_path = db.get_db_path()
+    db.set_db_path(str(tmp_path / "seo-repair.db"))
+    managed = (
+        "<p>Keep this article.</p>"
+        '<div style="font-size:1px;color:transparent;line-height:1;overflow:hidden;height:1px;" '
+        'aria-hidden="true"><span>keyword</span></div>'
+    )
+    current = {"body": managed}
+
+    async def articles(_store, limit_per_blog=0):
+        assert limit_per_blog == 0
+        return [_article(42, "Repair me", current["body"])]
+
+    async def fetch_body(_store, blog_id, article_id):
+        assert (blog_id, article_id) == (1, 42)
+        return current["body"]
+
+    async def update_body(_store, blog_id, article_id, body_html):
+        assert (blog_id, article_id) == (1, 42)
+        current["body"] = body_html
+        return body_html
+
+    monkeypatch.setattr(repair.shopify_client, "fetch_store_articles", articles)
+    monkeypatch.setattr(repair.shopify_client, "fetch_article_body_html", fetch_body)
+    monkeypatch.setattr(repair.shopify_client, "update_article_body_html", update_body)
+    try:
+        await db.init_db()
+        await db.upsert_store({
+            "id": "repair-store", "name": "BioLuxeLab",
+            "myshopify_domain": "bio.myshopify.com", "custom_domain": "bioluxelab.com",
+            "client_id": "id", "client_secret": "secret", "default_blog_handle": "news",
+            "default_author": "Team", "sort_order": 0,
+        })
+        job_id = await db.create_seo_repair_job("repair-store", repair.RULE_KEY)
+        await repair.scan_managed_keyword_blocks(job_id, "repair-store")
+        preview = await db.get_seo_repair_job("repair-store", job_id)
+        assert preview["status"] == "awaiting_approval"
+        assert preview["total_items"] == 1
+
+        assert await db.begin_seo_repair_phase(
+            "repair-store", job_id, expected_status="awaiting_approval",
+            status="applying", stage="starting_apply",
+        )
+        await repair.apply_managed_keyword_blocks(
+            job_id, "repair-store", refresh_audit=False,
+        )
+        applied = await db.get_seo_repair_job("repair-store", job_id)
+        assert applied["status"] == "complete"
+        assert applied["changed_items"] == 1
+        assert current["body"] == "<p>Keep this article.</p>"
+
+        assert await db.begin_seo_repair_phase(
+            "repair-store", job_id, expected_status="complete",
+            status="restoring", stage="starting_restore",
+        )
+        await repair.restore_managed_keyword_blocks(job_id, "repair-store")
+        restored = await db.get_seo_repair_job("repair-store", job_id)
+        assert restored["status"] == "restored"
+        assert current["body"] == managed
     finally:
         db.set_db_path(previous_path)

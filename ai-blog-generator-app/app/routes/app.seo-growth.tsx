@@ -43,25 +43,44 @@ type Backlink = {
   notes: string; updated_at: number;
 };
 
+type RepairJob = {
+  id: string; rule_key: string; status: string; stage: string; progress: number;
+  total_items: number; processed_items: number; changed_items: number;
+  skipped_items: number; failed_items: number; message: string;
+  error_type?: string; error_message?: string; created_at: number; completed_at?: number;
+};
+
+type RepairItem = {
+  id: string; resource_id: string; parent_id: string; title: string; page_url: string;
+  status: string; error_message: string;
+};
+
 type SeoData = {
   store_id: string;
   latest: SeoRun | null;
   results_run_id: string;
   opportunities: Opportunity[];
+  opportunity_total: number;
+  opportunity_page: number;
+  opportunity_page_size: number;
   history: SeoRun[];
   backlinks: Backlink[];
+  repair: RepairJob | null;
+  repair_items: RepairItem[];
   settings: {
     gsc_site_url: string; gsc_credentials_saved: boolean;
     ga4_credentials_available: boolean; use_ga4_credentials: boolean;
-    auto_enabled: boolean; period_days: number;
+    auto_enabled: boolean; auto_safe_repairs: boolean; period_days: number;
   };
 };
 
 const emptyData: SeoData = {
-  store_id: "", latest: null, results_run_id: "", opportunities: [], history: [], backlinks: [],
+  store_id: "", latest: null, results_run_id: "", opportunities: [],
+  opportunity_total: 0, opportunity_page: 1, opportunity_page_size: 50,
+  history: [], backlinks: [], repair: null, repair_items: [],
   settings: {
     gsc_site_url: "", gsc_credentials_saved: false, ga4_credentials_available: false,
-    use_ga4_credentials: true, auto_enabled: false, period_days: 90,
+    use_ga4_credentials: true, auto_enabled: false, auto_safe_repairs: false, period_days: 90,
   },
 };
 
@@ -96,7 +115,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const init = await backendFetch("/api/init") as { store_id?: string };
     const storeId = String(init.store_id || "");
-    const data = await backendFetch(`/api/seo-growth?store_id=${encodeURIComponent(storeId)}`) as unknown as SeoData;
+    const requestedPage = Math.max(Number(new URL(request.url).searchParams.get("opportunity_page") || 1), 1);
+    const data = await backendFetch(`/api/seo-growth?store_id=${encodeURIComponent(storeId)}&opportunity_page=${requestedPage}`) as unknown as SeoData;
     return { backendConfigured: true, data, error: "" };
   } catch (error) {
     return {
@@ -133,10 +153,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           clear_gsc_credentials: form.get("clear_gsc_credentials") === "1",
           use_ga4_credentials: form.get("use_ga4_credentials") === "1",
           auto_enabled: form.get("auto_enabled") === "1",
+          auto_safe_repairs: form.get("auto_safe_repairs") === "1",
           period_days: Number(form.get("period_days") || 90),
         }),
       });
       return { ok: true, intent, message: "SEO connections and schedule saved." };
+    }
+    if (intent === "repair_scan") {
+      const result = await backendFetch("/api/seo-growth/repairs/scan", {
+        method: "POST",
+        body: JSON.stringify({ store_id: storeId }),
+      });
+      return {
+        ok: true, intent,
+        message: result.already_running ? "The existing safe-repair scan is still running." : "Safe-repair preview started. No Shopify content is being changed.",
+      };
+    }
+    if (intent === "repair_apply") {
+      await backendFetch("/api/seo-growth/repairs/apply", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: storeId, job_id: String(form.get("job_id") || ""),
+          confirmed: form.get("confirmed") === "1",
+        }),
+      });
+      return { ok: true, intent, message: "Backed-up safe repair started. Progress and exact failures will appear below." };
+    }
+    if (intent === "repair_restore") {
+      await backendFetch("/api/seo-growth/repairs/restore", {
+        method: "POST",
+        body: JSON.stringify({
+          store_id: storeId, job_id: String(form.get("job_id") || ""),
+          confirmed: form.get("confirmed") === "1",
+        }),
+      });
+      return { ok: true, intent, message: "Rollback started. Newer article edits will be preserved and reported as skipped." };
     }
     if (intent === "opportunity_status") {
       const status = String(form.get("status") || "open");
@@ -227,6 +278,7 @@ export default function SeoGrowthPage() {
   const revalidator = useRevalidator();
   const busy = navigation.state !== "idle";
   const running = data.latest?.status === "queued" || data.latest?.status === "running";
+  const repairRunning = ["queued", "running", "applying", "restoring"].includes(data.repair?.status || "");
   const summary = data.latest?.status === "complete"
     ? data.latest.summary
     : data.history.find(run => run.status === "complete")?.summary;
@@ -235,12 +287,13 @@ export default function SeoGrowthPage() {
   const previousSearchTotals = search?.previous_totals || {};
   const products = summary?.shopify?.products || {};
   const articles = summary?.shopify?.articles || {};
+  const opportunityPages = Math.max(1, Math.ceil(data.opportunity_total / Math.max(data.opportunity_page_size, 1)));
 
   useEffect(() => {
-    if (!running) return undefined;
+    if (!running && !repairRunning) return undefined;
     const timer = window.setInterval(() => revalidator.revalidate(), 2500);
     return () => window.clearInterval(timer);
-  }, [running, revalidator]);
+  }, [running, repairRunning, revalidator]);
 
   return <s-page heading="SEO Growth">
     {!backendConfigured || error ? <s-section><Alert tone="error">{error || "Backend connection is unavailable."}</Alert></s-section> : null}
@@ -294,14 +347,61 @@ export default function SeoGrowthPage() {
         </div>
       </s-section> : null}
 
-      <s-section heading={`Prioritised opportunities (${data.opportunities.length})`}>
-        <p style={{ color: "#6b7280", fontSize: ".85rem" }}>Scores rank measured urgency; they are not Google scores. Workflow choices persist when the same issue appears in a later audit.</p>
+      <s-section heading="Safe SEO repair">
+        <p style={{ color: "#4b5563", lineHeight: 1.55, marginTop: 0 }}>
+          This allow-listed repair only targets the exact visible and hidden keyword-block HTML previously created by this app. It never rewrites article copy, titles, links or merchant-authored hashtag sections. Every changed article is backed up before its Shopify update.
+        </p>
+        {data.repair ? <div style={{ border: "1px solid #e5e7eb", borderRadius: 14, padding: 16, background: "white" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <strong>{stageLabel(data.repair.stage)}</strong>
+            <span style={{ color: "#6b7280", fontSize: ".78rem" }}>Correlation ID: <code>{data.repair.id}</code></span>
+          </div>
+          {data.repair.message ? <p style={{ marginBottom: 8, lineHeight: 1.5 }}>{data.repair.message}</p> : null}
+          {repairRunning ? <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", color: "#4b5563", fontSize: ".8rem", marginBottom: 5 }}>
+              <span>{data.repair.processed_items.toLocaleString("en-GB")} of {data.repair.total_items.toLocaleString("en-GB")} processed</span>
+              <strong>{data.repair.progress}%</strong>
+            </div>
+            <div style={{ height: 9, borderRadius: 99, background: "#e5e7eb", overflow: "hidden" }}><div style={{ width: `${data.repair.progress}%`, height: "100%", background: "#16a34a", transition: "width .25s" }} /></div>
+          </div> : null}
+          {data.repair.status === "failed" ? <Alert tone="error">
+            <strong>{data.repair.error_type || "Safe repair failed"}:</strong> {data.repair.error_message}<br />
+            This job is final. No retry or fallback was attempted.
+          </Alert> : null}
+          {data.repair.status === "awaiting_approval" ? <div style={{ marginTop: 14 }}>
+            <Alert tone="warning">Review the sample below, then explicitly approve the backed-up bulk change. Articles changed after this preview will be skipped rather than overwritten.</Alert>
+            {data.repair_items.length ? <ul style={{ margin: "12px 0", paddingLeft: 20, lineHeight: 1.55 }}>{data.repair_items.map(item => <li key={item.id}>
+              <a href={item.page_url} target="_blank" rel="noreferrer">{item.title}</a>
+            </li>)}</ul> : null}
+            <Form method="post" style={{ marginTop: 12 }}>
+              <input type="hidden" name="intent" value="repair_apply" /><input type="hidden" name="store_id" value={data.store_id} /><input type="hidden" name="job_id" value={data.repair.id} />
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: ".85rem" }}><input type="checkbox" name="confirmed" value="1" required /> I approve removal of only these app-generated blocks and understand the originals will be retained for rollback.</label>
+              <button type="submit" disabled={busy} style={{ ...primaryButton, marginTop: 12 }}>Apply {data.repair.total_items.toLocaleString("en-GB")} safe repairs</button>
+            </Form>
+          </div> : null}
+          {["complete", "partial"].includes(data.repair.status) && data.repair.changed_items > 0 ? <Form method="post" style={{ marginTop: 14 }}>
+            <input type="hidden" name="intent" value="repair_restore" /><input type="hidden" name="store_id" value={data.store_id} /><input type="hidden" name="job_id" value={data.repair.id} />
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: ".82rem", color: "#4b5563" }}><input type="checkbox" name="confirmed" value="1" required /> Restore the saved originals. Any article edited since repair will be skipped.</label>
+            <button type="submit" disabled={busy} style={{ border: "1px solid #d1d5db", borderRadius: 999, background: "white", padding: "8px 14px", cursor: "pointer", marginTop: 9 }}>Restore original articles</button>
+          </Form> : null}
+          {!repairRunning && data.repair.status !== "awaiting_approval" ? <Form method="post" style={{ marginTop: 14 }}>
+            <input type="hidden" name="intent" value="repair_scan" /><input type="hidden" name="store_id" value={data.store_id} />
+            <button type="submit" disabled={busy} style={{ border: "1px solid #d1d5db", borderRadius: 999, background: "white", padding: "8px 14px", cursor: "pointer" }}>Run a new safe-repair preview</button>
+          </Form> : null}
+        </div> : <Form method="post">
+          <input type="hidden" name="intent" value="repair_scan" /><input type="hidden" name="store_id" value={data.store_id} />
+          <button type="submit" disabled={busy || !backendConfigured} style={primaryButton}>Preview safe repairs</button>
+        </Form>}
+      </s-section>
+
+      <s-section heading={`Prioritised opportunities (${data.opportunity_total.toLocaleString("en-GB")})`}>
+        <p style={{ color: "#6b7280", fontSize: ".85rem" }}>Scores rank measured urgency; they are not Google scores. Systemic app-generated findings are grouped, the full queue is retained, and workflow choices persist when the same issue appears in a later audit. Showing page {data.opportunity_page} of {opportunityPages}.</p>
         <div style={{ display: "grid", gap: 12 }}>
           {data.opportunities.map((item, index) => {
             const colour = item.severity === "high" ? "#dc2626" : item.severity === "medium" ? "#d97706" : "#16a34a";
             return <article key={item.id} style={{ border: "1px solid #e5e7eb", borderLeft: `4px solid ${colour}`, borderRadius: 12, padding: 16, background: "white" }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <h3 style={{ margin: 0, fontSize: "1rem" }}>{index + 1}. {item.title}</h3>
+                <h3 style={{ margin: 0, fontSize: "1rem" }}>{((data.opportunity_page - 1) * data.opportunity_page_size) + index + 1}. {item.title}</h3>
                 <span style={{ color: colour, fontWeight: 800, fontSize: ".72rem", textTransform: "uppercase", whiteSpace: "nowrap" }}>{item.severity} · {item.score}</span>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "9px 0" }}>
@@ -323,6 +423,10 @@ export default function SeoGrowthPage() {
           })}
           {!data.opportunities.length ? <Alert tone="info">Run the first audit to create an evidence-led opportunity queue.</Alert> : null}
         </div>
+        {opportunityPages > 1 ? <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 16 }}>
+          {data.opportunity_page > 1 ? <a href={`?opportunity_page=${data.opportunity_page - 1}`} style={{ color: "#005bd3" }}>← Previous 50</a> : <span />}
+          {data.opportunity_page < opportunityPages ? <a href={`?opportunity_page=${data.opportunity_page + 1}`} style={{ color: "#005bd3" }}>Next 50 →</a> : <span />}
+        </div> : null}
       </s-section>
     </> : <s-section><Alert tone="info">No completed SEO audit yet. The first run will inspect Shopify immediately, even if Search Console has not been connected.</Alert></s-section>}
 
@@ -338,6 +442,7 @@ export default function SeoGrowthPage() {
         <div style={{ display: "flex", flexWrap: "wrap", gap: 18, margin: "12px 0", fontSize: ".85rem" }}>
           <label><input type="checkbox" name="use_ga4_credentials" value="1" defaultChecked={data.settings.use_ga4_credentials} /> Reuse saved GA4 credentials if separate credentials are blank {data.settings.ga4_credentials_available ? "(available)" : "(not currently available)"}</label>
           <label><input type="checkbox" name="auto_enabled" value="1" defaultChecked={data.settings.auto_enabled} /> Audit automatically once a week</label>
+          <label><input type="checkbox" name="auto_safe_repairs" value="1" defaultChecked={data.settings.auto_safe_repairs} /> After weekly audits, automatically apply only allow-listed safe repairs with backups</label>
           {data.settings.gsc_credentials_saved ? <label><input type="checkbox" name="clear_gsc_credentials" value="1" /> Remove separate Search Console credentials</label> : null}
         </div>
         <button type="submit" disabled={busy || !backendConfigured} style={{ ...primaryButton, opacity: busy ? .6 : 1 }}>Save SEO connections</button>
