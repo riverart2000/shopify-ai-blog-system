@@ -2,6 +2,8 @@
   "name": "ai-blog-generator-app",
   "private": true,
   "scripts": {
+    "preinstall": "node scripts/production-resource-guard.cjs",
+    "prebuild": "node scripts/production-resource-guard.cjs",
     "build": "npm run check:theme-js && react-router build",
     "check:theme-js": "node --check extensions/product-related-guide/assets/wellness-quiz.js && node --check extensions/product-related-guide/assets/customer-reviews.js",
     "dev": "shopify app dev",

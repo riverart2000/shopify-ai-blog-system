@@ -37,13 +37,43 @@ The services are managed by `ai-blog-generator-python-server/service.sh` and are
 Deployments are completely automated from the local dev machine using the script:
 `./deploy_shopify_ai_blog_generator.sh`
 
+### Critical rule: never build the frontend on production
+
+The production server does not have enough spare CPU/RAM for a React/Vite build.
+Running any of the following on production can exhaust the server and take the
+live application down:
+
+- `npm install`
+- `npm run build`
+- `vite build`
+- `react-router build`
+
+The Shopify React app must always be compiled on the local development machine
+(or a separate Linux build/CI machine). Only the completed
+`ai-blog-generator-app/build/` directory is transferred to production. The
+deployment script enforces this workflow: it builds locally, uploads the bundle
+to a staging directory, swaps the bundle on the server, and then restarts the
+services. Production must only pull source, apply lightweight database
+migrations when needed, swap prebuilt artefacts, and restart services.
+
+The repository root on production contains a sentinel file named
+`.production-no-frontend-build`. The React app's `preinstall` and `prebuild`
+guards detect it and stop `npm install` or `npm run build` with an explanatory
+message before they consume production resources. The deploy script creates the
+sentinel automatically. Do not delete or bypass it on the live server.
+
+If `package.json` or `package-lock.json` adds a new runtime dependency, do not
+install it on the live server. Prepare and verify a Linux-compatible runtime
+bundle away from production before deploying it.
+
 The deploy script:
 1. Pushes local changes to GitHub `main` branch.
-2. SSHes into the server.
-3. Pulls `main` branch on the server.
-4. Selectively runs `pip install` (if requirements.txt changed) and `npm install & build` (if frontend changed).
-5. Restarts all services via `service.sh`.
-6. Runs health checks on `:4000` (FastAPI) and `:3001` (React).
+2. Installs/builds the React app locally and uploads the completed build bundle.
+3. SSHes into the server and pulls `main`.
+4. Selectively runs `pip install` only if Python requirements changed; it never compiles the frontend on production.
+5. Atomically swaps in the prebuilt frontend bundle.
+6. Restarts all services via `service.sh`.
+7. Runs health checks on `:4000` (FastAPI) and `:3001` (React).
 
 ## Logs & Process Management
 Logs are located at: `/home/ubuntu/shopify-ai-blog-system/ai-blog-generator-python-server/logs/`

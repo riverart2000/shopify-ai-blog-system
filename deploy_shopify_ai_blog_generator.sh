@@ -7,12 +7,14 @@
 # What it does:
 #   1. Commits any uncommitted local changes (auto or custom message)
 #   2. Pushes to GitHub (origin/main)
-#   3. SSHes into production, fast-forwards the repo, and:
+#   3. Builds the React app LOCALLY and uploads the completed build bundle
+#   4. SSHes into production, fast-forwards the repo, and:
 #        • pip-installs only if requirements.txt changed
-#        • npm install + build + prisma migrate only if the React app changed
+#        • swaps in the prebuilt React bundle (never compiles on production)
+#        • applies lightweight Prisma migrations when required
 #        • restarts services via service.sh (FastAPI, scheduler, React, Caddy)
-#   4. Runs health checks on the backend (:4000) and frontend (:3001)
-#   5. Exits with a clear success or failure message
+#   5. Runs health checks on the backend (:4000) and frontend (:3001)
+#   6. Exits with a clear success or failure message
 #
 # Usage:
 #   ./deploy_shopify_ai_blog_generator.sh                      # auto commit msg
@@ -22,9 +24,9 @@
 #   ./deploy_shopify_ai_blog_generator.sh --skip-frontend      # never touch the React app
 #   ./deploy_shopify_ai_blog_generator.sh --no-restart         # pull/build only, don't restart
 #
-# Smart detection: the React app is only rebuilt when files under
-# ai-blog-generator-app/ change; Python deps are only reinstalled when
-# requirements.txt changes. Backend-only edits take the fast path (restart only).
+# IMPORTANT: the production host cannot safely run npm install or a Vite/React
+# build. Frontend compilation always happens locally. Python deps are only
+# reinstalled on production when requirements.txt changes.
 #
 # No passwords required — connection details are read from this script.
 # =============================================================================
@@ -42,6 +44,8 @@ REMOTE_APP_DIR="/home/ubuntu/shopify-ai-blog-system"
 REMOTE_SERVER_DIR="${REMOTE_APP_DIR}/ai-blog-generator-python-server"
 REMOTE_SECONDARY_SERVER_DIR="${REMOTE_APP_DIR}/python-server-theplayersgolfhouse"
 REMOTE_FRONTEND_DIR="${REMOTE_APP_DIR}/ai-blog-generator-app"
+REMOTE_STAGED_FRONTEND_DIR="${REMOTE_APP_DIR}/.deploy/frontend-build"
+LOCAL_FRONTEND_DIR="${SCRIPT_DIR}/ai-blog-generator-app"
 
 # Health probes (run on the server, against localhost)
 BACKEND_PORT="4000"      # FastAPI / uvicorn — any HTTP response means up (303 = redirect to /login)
@@ -108,7 +112,26 @@ done
 
 [[ -z "$COMMIT_MSG" ]] && COMMIT_MSG="chore: deploy $(date '+%Y-%m-%d %H:%M')"
 
-# ── Step 1: Stage & commit any local changes ───────────────────────────────────
+# ── Step 1: Build frontend locally ───────────────────────────────────────────
+# Never move this build onto the production host. The server is deliberately
+# treated as a runtime-only machine because npm/Vite compilation can exhaust it.
+if [[ $SKIP_FRONTEND -eq 1 ]]; then
+  warn "Skipping local React build and bundle upload (--skip-frontend)"
+else
+  log "Installing frontend dependencies and building locally..."
+  (
+    cd "$LOCAL_FRONTEND_DIR"
+    npm install --silent
+    npm run build
+  )
+  [[ -f "${LOCAL_FRONTEND_DIR}/build/server/index.js" ]] || {
+    err "Local React build did not produce build/server/index.js"
+    exit 1
+  }
+  ok "React production bundle built locally"
+fi
+
+# ── Step 2: Stage & commit any local changes ───────────────────────────────────
 if [[ -n "$(git status --porcelain)" ]]; then
   log "Staging all local changes..."
   git add -A
@@ -118,7 +141,7 @@ else
   ok "Working tree clean — no local changes to commit"
 fi
 
-# ── Step 2: Push to GitHub ─────────────────────────────────────────────────────
+# ── Step 3: Push to GitHub ─────────────────────────────────────────────────────
 if [[ $NO_PUSH -eq 1 ]]; then
   warn "Skipping git push (--no-push) — deploying whatever is already on origin/${BRANCH}"
 else
@@ -127,7 +150,23 @@ else
   ok "GitHub up to date at $(git rev-parse --short HEAD)"
 fi
 
-# ── Step 3: Remote update + restart ────────────────────────────────────────────
+# ── Step 4: Upload the locally built frontend bundle ──────────────────────────
+if [[ $SKIP_FRONTEND -eq 0 ]]; then
+  log "Uploading prebuilt React bundle to production staging..."
+  ssh \
+    -o ConnectTimeout=15 \
+    -o StrictHostKeyChecking=accept-new \
+    -i "$SSH_KEY" \
+    "${PROD_USER}@${PROD_HOST}" \
+    "mkdir -p '${REMOTE_STAGED_FRONTEND_DIR}' && touch '${REMOTE_APP_DIR}/.production-no-frontend-build'"
+  rsync -az --delete \
+    -e "ssh -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i ${SSH_KEY}" \
+    "${LOCAL_FRONTEND_DIR}/build/" \
+    "${PROD_USER}@${PROD_HOST}:${REMOTE_STAGED_FRONTEND_DIR}/"
+  ok "Prebuilt React bundle uploaded"
+fi
+
+# ── Step 5: Remote update + bundle swap + restart ─────────────────────────────
 printf '\n%b\n\n' "${BOLD}  ── Production server output ──────────────────────────${NC}"
 
 # The remote routine is sent over stdin so we can interpolate local flags while
@@ -142,7 +181,8 @@ ssh \
   "FORCE_FRONTEND='${FORCE_FRONTEND}' SKIP_FRONTEND='${SKIP_FRONTEND}' NO_RESTART='${NO_RESTART}' \
    BRANCH='${BRANCH}' APP_DIR='${REMOTE_APP_DIR}' SERVER_DIR='${REMOTE_SERVER_DIR}' \
     SECONDARY_SERVER_DIR='${REMOTE_SECONDARY_SERVER_DIR}' \
-   FRONTEND_DIR='${REMOTE_FRONTEND_DIR}' BACKEND_PORT='${BACKEND_PORT}' \
+   FRONTEND_DIR='${REMOTE_FRONTEND_DIR}' STAGED_FRONTEND_DIR='${REMOTE_STAGED_FRONTEND_DIR}' \
+   BACKEND_PORT='${BACKEND_PORT}' \
     SECONDARY_BACKEND_PORT='${SECONDARY_BACKEND_PORT}' FRONTEND_PORT='${FRONTEND_PORT}' bash -s" <<'REMOTE'
 set -euo pipefail
 
@@ -214,27 +254,30 @@ if [[ "$SECONDARY_PRESENT" == "1" ]]; then
   fi
 fi
 
-# ── React app: rebuild only when its files changed ───────────────────────────
+# ── React app: swap the prebuilt local bundle; never build on production ─────
 FRONTEND_TOUCHED=0
 if grep -qE '^ai-blog-generator-app/' <<<"$CHANGED"; then FRONTEND_TOUCHED=1; fi
 
 if [[ "$SKIP_FRONTEND" == "1" ]]; then
-  rwarn "Skipping React app build (--skip-frontend)"
-elif [[ "$FORCE_FRONTEND" == "1" || "$FRONTEND_TOUCHED" == "1" ]]; then
-  if [[ "$FORCE_FRONTEND" == "1" ]]; then
-    rlog "Rebuilding React app (forced)..."
-  else
-    rlog "React app changed — installing deps and rebuilding..."
-  fi
-  cd "$FRONTEND_DIR"
-  npm install --silent
-  npm run build
-  npx prisma generate >/dev/null 2>&1 || true
-  npx prisma migrate deploy
-  rok "React app rebuilt and migrations applied"
-  cd "$APP_DIR"
+  rwarn "Skipping prebuilt React bundle swap (--skip-frontend)"
 else
-  rok "React app unchanged — skipping npm build"
+  [[ -f "${STAGED_FRONTEND_DIR}/server/index.js" ]] || {
+    rerr "Prebuilt frontend bundle is missing from ${STAGED_FRONTEND_DIR}"
+    exit 1
+  }
+  rlog "Swapping in the prebuilt local React bundle (no production compilation)..."
+  rm -rf "${FRONTEND_DIR}/build.previous"
+  if [[ -d "${FRONTEND_DIR}/build" ]]; then
+    mv "${FRONTEND_DIR}/build" "${FRONTEND_DIR}/build.previous"
+  fi
+  mv "$STAGED_FRONTEND_DIR" "${FRONTEND_DIR}/build"
+  rok "Prebuilt React bundle installed; previous bundle retained at build.previous"
+
+  if grep -qE '^ai-blog-generator-app/prisma/' <<<"$CHANGED"; then
+    rlog "Prisma migrations changed — applying migrations without rebuilding..."
+    ( cd "$FRONTEND_DIR" && ./node_modules/.bin/prisma migrate deploy )
+    rok "Prisma migrations applied"
+  fi
 fi
 
 # ── Restart services ──────────────────────────────────────────────────────────
