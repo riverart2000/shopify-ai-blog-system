@@ -115,8 +115,10 @@ async def _gemma(sctx: StoreContext, live: bool) -> Check:
         return _check("gemma", "error", f"Gemma at {ai.base_url} failed: {type(exc).__name__}: {exc}. "
                       "Is the oMLX app running?")
     ok = result.get("ok", result.get("status") == "ok")
+    # The LLM result has its own name/status/message keys; keep them out of the check's details.
+    details = {k: v for k, v in result.items() if k not in ("name", "status", "message")}
     return _check("gemma", "ok" if ok else "error", result.get("message") or
-                  f"{ai.model} responded in {result.get('latency_ms', '?')} ms", **result)
+                  f"{ai.model} responded in {result.get('latency_ms', '?')} ms", **details)
 
 
 async def _ffmpeg() -> Check:

@@ -307,6 +307,25 @@ async def test_check_llm_reports_status(se_db):
     assert down["status"] == "unreachable" and not down["ok"]
 
 
+@pytest.mark.asyncio
+async def test_doctor_gemma_check_live(sctx):
+    """The live doctor check must not crash on check_llm's own status/message keys."""
+    from services.social_engine.health import _gemma
+
+    def models(request, body):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "gemma-4-26b-a4b-it-8bit"}]})
+        return chat_response('{"status": "ok"}')
+
+    FakeLLM(models).install()
+    check = await _gemma(sctx, live=True)
+    assert check["name"] == "gemma" and check["status"] == "ok", check
+    assert "status" not in check["details"] and check["details"]["model_listed"]
+    FakeLLM(httpx.ConnectError("refused")).install()
+    down = await _gemma(sctx, live=True)
+    assert down["status"] == "error", down
+
+
 # ---------------------------------------------------------------------------
 # Captions: deterministic limits under adversarial model output
 # ---------------------------------------------------------------------------
