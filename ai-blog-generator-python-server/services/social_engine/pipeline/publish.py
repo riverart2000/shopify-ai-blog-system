@@ -176,6 +176,9 @@ async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
             if when != target.get("scheduled_at"):
                 await post_store.update_target(target["id"], scheduled_at=when)
             target["scheduled_at"] = when
+        if mode == "now" and post.get("scheduled_at") != now:
+            # Lists and the calendar show the post when it actually went out.
+            await post_store.update_post(store_id, post_id, scheduled_at=now)
 
         asset_ids = {aid for t in pending for aid in t.get("media_ids") or []}
         media = await _upload_assets(publisher, store_id, asset_ids, post_id)

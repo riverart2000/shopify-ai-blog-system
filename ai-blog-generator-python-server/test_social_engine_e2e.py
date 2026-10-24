@@ -279,3 +279,19 @@ async def test_autofill_leaves_merchant_smartq_alone(se_db, cdn):
     result = await ensure_autofill_campaign(se_db)
     assert result == {"action": "exists", "campaign_id": mine}
     assert len(await config_store.list_campaigns(se_db)) == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_now_moves_post_time_to_now(se_db, cdn):
+    await _setup(se_db)
+    later = int(time.time()) + 20 * 3600
+    created = await actions.create_manual_post(
+        se_db, content_type="single_product", product_ids=["2"], channel_ids=["dry-instagram"], scheduled_at=later,
+    )
+    await Worker(run_periodic=False).run_once()
+    await actions.publish_now(se_db, created["post_id"])
+    await Worker(run_periodic=False).run_once()
+    post = await post_store.get_post(se_db, created["post_id"])
+    assert post["status"] in ("scheduled", "published"), post["error_message"]
+    assert abs(post["scheduled_at"] - time.time()) < 120
+    assert all(abs(t["scheduled_at"] - time.time()) < 120 for t in post["targets"])
