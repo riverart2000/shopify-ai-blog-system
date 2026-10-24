@@ -44,6 +44,18 @@ api_version = "2026-07"
   uri = "/webhooks/app/scopes_update"
   topics = [ "app/scopes_update" ]
 
+  # Social Autopilot: keep the synced catalogue current (read_products is already granted).
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/products"
+  topics = [
+    "products/create",
+    "products/update",
+    "products/delete",
+    "collections/create",
+    "collections/update",
+    "collections/delete"
+  ]
+
 [auth]
 redirect_urls = [ "https://revenuemindproai.com:8443/auth/callback" ]
 

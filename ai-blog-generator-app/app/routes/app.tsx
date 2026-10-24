@@ -21,7 +21,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Blog Studio</s-link>
         <s-link href="/app/product-blogs">Product Blogs</s-link>
-        <s-link href="/app/social-posts">Social Posts</s-link>
+        <s-link href="/app/social">Social Autopilot</s-link>
         <s-link href="/app/landing-pages">Landing Pages</s-link>
         <s-link href="/app/wellness-quiz">Wellness Quiz</s-link>
         <s-link href="/app/reviews">Reviews</s-link>

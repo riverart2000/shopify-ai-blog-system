@@ -1,0 +1,511 @@
+{
+ "facebook": {
+  "maxLength": 63206,
+  "rules": "Facebook posts can be text only, or include photos or a video. If it's a story, it must have at least one attachment (photo or video), and each media is published as a separate story. Video posts (not stories) can carry an optional title.",
+  "settings": {
+   "properties": {
+    "url": {
+     "format": "url",
+     "type": "string"
+    },
+    "post_type": {
+     "type": "string",
+     "enum": [
+      "post",
+      "story"
+     ]
+    },
+    "text_format_preset_id": {
+     "type": "string"
+    },
+    "title": {
+     "type": "string",
+     "description": "Title of the video, used only for video (non-story) posts"
+    }
+   },
+   "type": "object"
+  },
+  "tools": []
+ },
+ "gmb": {
+  "maxLength": 1500,
+  "rules": "Google My Business posts can have text content and optionally one image. Posts can be updates, events, or offers.",
+  "settings": {
+   "properties": {
+    "topicType": {
+     "type": "string",
+     "enum": [
+      "STANDARD",
+      "EVENT",
+      "OFFER"
+     ]
+    },
+    "callToActionType": {
+     "type": "string",
+     "enum": [
+      "NONE",
+      "BOOK",
+      "ORDER",
+      "SHOP",
+      "LEARN_MORE",
+      "SIGN_UP",
+      "GET_OFFER",
+      "CALL"
+     ]
+    },
+    "callToActionUrl": {
+     "format": "url",
+     "type": "string"
+    },
+    "eventTitle": {
+     "type": "string"
+    },
+    "eventStartDate": {
+     "type": "string"
+    },
+    "eventEndDate": {
+     "type": "string"
+    },
+    "eventStartTime": {
+     "type": "string"
+    },
+    "eventEndTime": {
+     "type": "string"
+    },
+    "offerCouponCode": {
+     "type": "string"
+    },
+    "offerRedeemUrl": {
+     "format": "url",
+     "type": "string"
+    },
+    "offerTerms": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "tools": []
+ },
+ "instagram-standalone": {
+  "maxLength": 2200,
+  "rules": "Instagram should have at least one attachment, if it's a story, it can have only one picture",
+  "settings": {
+   "properties": {
+    "post_type": {
+     "not": {
+      "type": "null"
+     },
+     "type": "string",
+     "enum": [
+      "post",
+      "story"
+     ]
+    },
+    "is_trial_reel": {},
+    "graduation_strategy": {
+     "type": "string",
+     "enum": [
+      "MANUAL",
+      "SS_PERFORMANCE"
+     ]
+    },
+    "collaborators": {
+     "items": {
+      "properties": {
+       "label": {
+        "type": "string",
+        "not": {
+         "type": "null"
+        }
+       }
+      },
+      "type": "object",
+      "required": [
+       "label"
+      ]
+     },
+     "type": "array"
+    },
+    "audio": {
+     "properties": {
+      "id": {
+       "type": "string",
+       "not": {
+        "type": "null"
+       }
+      },
+      "title": {
+       "type": "string"
+      },
+      "artist": {
+       "type": "string"
+      },
+      "image": {
+       "type": "string"
+      },
+      "audio_volume": {
+       "maximum": 100,
+       "type": "number",
+       "minimum": 0
+      },
+      "video_volume": {
+       "maximum": 100,
+       "type": "number",
+       "minimum": 0
+      }
+     },
+     "type": "object",
+     "required": [
+      "id"
+     ]
+    }
+   },
+   "type": "object",
+   "required": [
+    "post_type"
+   ]
+  },
+  "tools": []
+ },
+ "linkedin-page": {
+  "maxLength": 3000,
+  "rules": "LinkedIn can have maximum one attachment when selecting video, when choosing a carousel on LinkedIn minimum amount of attachment must be two, and only pictures, if uploading a video, LinkedIn can have only one attachment",
+  "settings": {
+   "properties": {
+    "post_as_images_carousel": {
+     "type": "boolean"
+    },
+    "carousel_name": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "tools": [
+   {
+    "methodName": "mention",
+    "description": "Find a company page to tag by its exact vanity name (the part after linkedin.com/company/). Tag it in the post content with <span data-mention-id=\"{id}\" data-mention-label=\"{label}\">@{label}</span>",
+    "dataSchema": [
+     {
+      "key": "query",
+      "type": "string",
+      "description": "Company page vanity name"
+     }
+    ]
+   }
+  ]
+ },
+ "linkedin": {
+  "maxLength": 3000,
+  "rules": "LinkedIn can have maximum one attachment when selecting video, when choosing a carousel on LinkedIn minimum amount of attachment must be two, and only pictures, if uploading a video, LinkedIn can have only one attachment",
+  "settings": {
+   "properties": {
+    "post_as_images_carousel": {
+     "type": "boolean"
+    },
+    "carousel_name": {
+     "type": "string"
+    }
+   },
+   "type": "object"
+  },
+  "tools": [
+   {
+    "methodName": "mention",
+    "description": "Find a company page to tag by its exact vanity name (the part after linkedin.com/company/). Tag it in the post content with <span data-mention-id=\"{id}\" data-mention-label=\"{label}\">@{label}</span>",
+    "dataSchema": [
+     {
+      "key": "query",
+      "type": "string",
+      "description": "Company page vanity name"
+     }
+    ]
+   }
+  ]
+ },
+ "pinterest": {
+  "maxLength": 500,
+  "rules": "Pinterest requires at least one media, if posting a video, you must have two attachment, one for video, one for the cover picture, When posting a video, there can be only one, if posting images, there can be maximum 5",
+  "settings": {
+   "properties": {
+    "title": {
+     "maxLength": 100,
+     "type": "string"
+    },
+    "link": {
+     "format": "url",
+     "type": "string"
+    },
+    "dominant_color": {
+     "type": "string"
+    },
+    "board": {
+     "pattern": "^\\d+$",
+     "type": "string",
+     "minLength": 1,
+     "not": {
+      "type": "null"
+     },
+     "description": "The numeric id of the board (from the boards list of the channel), not the board name"
+    }
+   },
+   "type": "object",
+   "required": [
+    "board"
+   ]
+  },
+  "tools": [
+   {
+    "methodName": "boards",
+    "description": "List of boards",
+    "dataSchema": []
+   }
+  ]
+ },
+ "threads": {
+  "maxLength": 500,
+  "rules": "",
+  "settings": "No additional settings required",
+  "tools": []
+ },
+ "tiktok-business": {
+  "maxLength": 2200,
+  "rules": "TikTok Business can have one video or one picture or multiple pictures (up to 35), it cannot be without an attachment. content_posting_method=DIRECT_POST publishes the post to the account. content_posting_method=UPLOAD does NOT publish: it only saves the media as a draft in the user inbox of the TikTok app, where the user must manually complete and publish it. Use DIRECT_POST unless the user explicitly asks to review or edit the post inside the TikTok app first. With content_posting_method=UPLOAD, TikTok ignores every setting except the title / post content. Never tell the user that video_made_with_ai, privacy_level, duet, stitch, comment, autoAddMusic, brand_content_toggle or brand_organic_toggle will be applied in UPLOAD mode - they are silently discarded. If the user asks for any of those settings, tell them it requires DIRECT_POST. video_made_with_ai, duet and stitch apply to video posts only. privacy_level and autoAddMusic apply to photo posts only - the TikTok Business API has no privacy field for video posts, so those settings are discarded when the attachment is a video. The music setting attaches a commercial music library track (found via the musicSearch function) to a video or photo post, and the location setting tags the post with a location (found via the locationSearch function). Both apply only with content_posting_method=DIRECT_POST. music.audio_volume / music.video_volume (0-100, default 50) apply to video posts only. For photos, autoAddMusic=yes attaches a RANDOM commercial music library track and overrides any music selection - use autoAddMusic=no when the user wants a specific track. Media is pulled by TikTok from its URL, so the media must be uploaded to Postiz and the media domain must be a verified URL property of the TikTok Business app.",
+  "settings": {
+   "properties": {
+    "title": {
+     "maxLength": 90,
+     "type": "string",
+     "description": "Used as the title of the post. The only setting TikTok keeps when content_posting_method=UPLOAD."
+    },
+    "privacy_level": {
+     "type": "string",
+     "enum": [
+      "PUBLIC_TO_EVERYONE",
+      "MUTUAL_FOLLOW_FRIENDS",
+      "FOLLOWER_OF_CREATOR",
+      "SELF_ONLY"
+     ],
+     "description": "Applied only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD."
+    },
+    "duet": {
+     "type": "boolean",
+     "description": "Video posts only, and only when content_posting_method=DIRECT_POST. TikTok has no duet setting for photo posts."
+    },
+    "stitch": {
+     "type": "boolean",
+     "description": "Video posts only, and only when content_posting_method=DIRECT_POST. TikTok has no stitch setting for photo posts."
+    },
+    "comment": {
+     "type": "boolean",
+     "description": "Applied only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD."
+    },
+    "autoAddMusic": {
+     "type": "string",
+     "enum": [
+      "yes",
+      "no"
+     ],
+     "description": "Photo posts only, and only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD. On TikTok Business, \"yes\" attaches a random commercial music library track and overrides the music setting; on legacy TikTok, \"yes\" lets TikTok auto-add its recommended music."
+    },
+    "brand_content_toggle": {
+     "type": "boolean",
+     "description": "Applied only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD."
+    },
+    "video_made_with_ai": {
+     "type": "boolean",
+     "description": "Labels the post as AI generated. Video posts only, and only when content_posting_method=DIRECT_POST. TikTok has no AI-generated label for photo posts, and discards it on UPLOAD."
+    },
+    "brand_organic_toggle": {
+     "type": "boolean",
+     "description": "Applied only when content_posting_method=DIRECT_POST. Ignored by TikTok on UPLOAD."
+    },
+    "music": {
+     "properties": {
+      "id": {
+       "type": "string",
+       "not": {
+        "type": "null"
+       },
+       "description": "The commercial music library track id, taken from the \"id\" returned by the musicSearch function."
+      },
+      "title": {
+       "type": "string"
+      },
+      "artist": {
+       "type": "string"
+      },
+      "image": {
+       "type": "string"
+      },
+      "audio_volume": {
+       "maximum": 100,
+       "type": "number",
+       "minimum": 0
+      },
+      "video_volume": {
+       "maximum": 100,
+       "type": "number",
+       "minimum": 0
+      }
+     },
+     "type": "object",
+     "required": [
+      "id"
+     ],
+     "description": "TikTok Business only, and only when content_posting_method=DIRECT_POST. Attaches a commercial music library track to the post (use the musicSearch function to find one). audio_volume / video_volume apply to video posts only. For photos, ignored when autoAddMusic is \"yes\" (a random track is attached instead)."
+    },
+    "location": {
+     "properties": {
+      "id": {
+       "type": "string",
+       "not": {
+        "type": "null"
+       },
+       "description": "The location tag id, taken from the \"id\" returned by the locationSearch function."
+      },
+      "name": {
+       "type": "string",
+       "not": {
+        "type": "null"
+       }
+      },
+      "address": {
+       "type": "string"
+      }
+     },
+     "type": "object",
+     "required": [
+      "id",
+      "name"
+     ],
+     "description": "TikTok Business only, and only when content_posting_method=DIRECT_POST. Tags the post with a location (use the locationSearch function to find one)."
+    },
+    "content_posting_method": {
+     "type": "string",
+     "enum": [
+      "DIRECT_POST",
+      "UPLOAD"
+     ],
+     "description": "Required. Use \"DIRECT_POST\" to actually publish the post to TikTok. \"UPLOAD\" does NOT publish: it only sends the media to the user's TikTok app inbox, where they must manually finish and publish it within 24 hours or it is discarded, and it makes TikTok ignore every other setting here. Only use \"UPLOAD\" when the user explicitly asks to review or edit the post inside the TikTok app before publishing."
+    }
+   },
+   "type": "object",
+   "required": [
+    "privacy_level",
+    "duet",
+    "stitch",
+    "comment",
+    "autoAddMusic",
+    "brand_content_toggle",
+    "brand_organic_toggle",
+    "content_posting_method"
+   ]
+  },
+  "tools": [
+   {
+    "methodName": "musicSearch",
+    "description": "Load commercial music library tracks that can be attached to a post via the \"music\" setting",
+    "dataSchema": [
+     {
+      "key": "genre",
+      "type": "string",
+      "description": "Genre to filter the tracks by (for example POP, ROCK, ELECTRONIC), leave empty for all genres"
+     }
+    ]
+   },
+   {
+    "methodName": "locationSearch",
+    "description": "Search location tags that can be attached to a post via the \"location\" setting",
+    "dataSchema": [
+     {
+      "key": "q",
+      "type": "string",
+      "description": "Search query for the location"
+     }
+    ]
+   }
+  ]
+ },
+ "x": {
+  "maxLength": 280,
+  "rules": "X can have maximum 4 pictures, or maximum one video, it can also be without attachments, it can also be published as a long-form article (draft or published) when post_type is set to article, in an article pictures go inside the content as <img src=\"...\"> where they should appear (the src must be a picture from the media library, upload it with uploadFromUrlTool first) do not add links, they will be stripped from the post",
+  "settings": {
+   "properties": {
+    "community": {
+     "pattern": "^(https:\\/\\/x\\.com\\/i\\/communities\\/\\d+)?$",
+     "type": "string"
+    },
+    "who_can_reply_post": {
+     "type": "string",
+     "enum": [
+      "everyone",
+      "following",
+      "mentionedUsers",
+      "subscribers",
+      "verified"
+     ]
+    },
+    "post_type": {
+     "type": "string",
+     "enum": [
+      "post",
+      "article"
+     ],
+     "description": "post = a regular short post (plain text). article = a long-form X article: write the post content as HTML (p, h1, h2, h3, ul, ol, li, strong, u, a) - the formatting is kept in the article"
+    },
+    "article_title": {
+     "minLength": 1,
+     "type": "string",
+     "description": "The title of the article, required when post_type is article"
+    },
+    "article_status": {
+     "type": "string",
+     "enum": [
+      "draft",
+      "published"
+     ],
+     "description": "draft = save the article as a draft on X, published = publish it right away, required when post_type is article"
+    },
+    "article_cover": {
+     "properties": {
+      "id": {
+       "not": {
+        "type": "null"
+       },
+       "type": "string"
+      },
+      "path": {
+       "type": "string",
+       "not": {
+        "type": "null"
+       }
+      },
+      "alt": {
+       "type": "string"
+      },
+      "thumbnail": {
+       "format": "url",
+       "type": "string"
+      }
+     },
+     "type": "object",
+     "required": [
+      "id",
+      "path"
+     ],
+     "description": "Optional cover image for the article, only used when post_type is article"
+    },
+    "made_with_ai": {
+     "type": "boolean"
+    },
+    "paid_partnership": {
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "tools": []
+ }
+}

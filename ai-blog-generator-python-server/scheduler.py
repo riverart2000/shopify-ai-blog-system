@@ -309,6 +309,19 @@ async def main() -> None:
 
     await _initialise_next_run_times()
 
+    # Social Engine worker (Outfy-style auto-posting via Postiz) shares this
+    # process. Set SOCIAL_ENGINE_WORKER_ENABLED=0 to switch it off.
+    social_worker_task = None
+    if os.environ.get("SOCIAL_ENGINE_WORKER_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        from services.social_engine.jobs.worker import Worker
+
+        social_worker_task = asyncio.create_task(Worker().run_forever(), name="social-engine-worker")
+        social_worker_task.add_done_callback(
+            lambda task: task.cancelled() or task.exception() is None
+            or logger.error("Social Engine worker stopped unexpectedly: %r", task.exception())
+        )
+        logger.info("Social Engine worker started inside the scheduler process")
+
     while True:
         try:
             await _tick()

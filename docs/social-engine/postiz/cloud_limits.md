@@ -1,0 +1,96 @@
+> ## Documentation Index
+> Fetch the complete documentation index at: https://docs.postiz.com/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Limits and what happens when you hit them
+
+> Every cap, the error it produces, and how to clear it
+
+<Snippet file="audience/cloud-only.mdx" />
+
+## The caps
+
+| Limit | Enforced when | Standard | Team | Pro | Ultimate |
+| - | - | - | - | - | - |
+| Channels | Connecting or enabling one past the cap | 5 | 10 | 30 | 100 |
+| AI images per month | Generating an image with no credits left | 20 | 100 | 300 | 500 |
+| AI videos per month | Generating a video with no credits left | 3 | 10 | 30 | 60 |
+| Clipping minutes per month | Clipping a video longer than the minutes left | 60 | 120 | 300 | 600 |
+| Webhooks | Saving one past the cap | 2 | 10 | 30 | 10,000 |
+
+Team members are unlimited on the plans that include them, and posts per month
+are effectively unlimited on every paid plan.
+
+## Channels
+
+> You have reached the maximum number of channels
+
+**Free a slot** by disabling a channel you are not using: Calendar, channel
+`...` menu, **Disable Channel**. Disabling keeps its history and you can
+re-enable it later. See [Manage a channel](https://docs.postiz.com/general/channels/manage.md).
+
+**Or raise the cap** by upgrading, see [Plans](https://docs.postiz.com/cloud/plans.md).
+
+Two things that do **not** count against the cap: reconnecting an existing
+channel, and channels that are currently flagged as needing reconnection.
+
+## AI credits
+
+Image and video credits are separate pools. Each successful generation spends
+one; a failed generation does not.
+
+They reset monthly on the anniversary of your subscription, not on the first of
+the month, so a subscription started on the 12th resets on the 12th.
+
+When you are out, image generation stops returning results and video generation
+returns an error pointing at billing. Waiting for the reset or upgrading are
+the two options.
+
+## Clipping minutes
+
+> No clipping minutes are left on this account for this month
+
+[Video clipping](https://docs.postiz.com/general/clipping.md) spends one minute for every minute of the
+source video. A video longer than the minutes you have left is refused before
+anything is charged, and a clipping that fails without producing a clip gives
+its minutes back.
+
+The minutes reset on the same monthly anniversary as the AI credits. Waiting
+for the reset, clipping a shorter video or upgrading are the options.
+
+Three caps are the same on every plan: one clipping at a time, 20 clippings a
+day, and 180 minutes for a single video.
+
+## Webhooks
+
+The Webhooks tab shows how many you have against your allowance in its header.
+Delete one to add another, or upgrade.
+
+## API rate limit
+
+The Public API is limited to **90 requests per hour** on the create-post
+endpoint. This is a fixed value, not something that scales with your plan:
+plans tier on channels, not on API throughput.
+
+It also does not mean 90 posts per hour. One request can carry many posts, so
+batch them rather than looping. See
+[Public API](https://docs.postiz.com/public-api/introduction.md).
+
+## Upload limits
+
+Images are capped at 10 MB and video at 1 GB per file, on every plan. See
+[Media](https://docs.postiz.com/general/composer/media.md).
+
+## What a limit error looks like
+
+Anything you do that exceeds a plan limit fails with a message naming the
+limit and a link to the billing page. Nothing is silently truncated or
+partially applied.
+
+## Losing a limit
+
+Downgrading to a plan with lower caps does not ask you what to keep. See
+[Downgrades](https://docs.postiz.com/cloud/downgrades.md) before you change plan.
+
+
+This documentation is built and hosted on [Mintlify](https://mintlify.com), a developer documentation platform.

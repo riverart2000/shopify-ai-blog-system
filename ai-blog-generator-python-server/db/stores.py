@@ -84,6 +84,10 @@ async def delete_store(store_id: str) -> None:
             "seo_growth_runs", "seo_growth_opportunities", "seo_backlink_prospects",
             "seo_repair_items", "seo_repair_jobs",
             "wellness_quiz_products", "wellness_quiz_events",
+            # Social Engine
+            "social_products", "social_collections", "social_product_events", "social_channels",
+            "social_templates", "social_campaigns", "social_planned_posts", "social_post_targets",
+            "social_media_assets", "social_post_metrics", "social_channel_metrics",
         ):
             col = "store_id" if tbl != "stores" else "id"
             await db.execute(f"DELETE FROM {tbl} WHERE {col}=?", (store_id,))

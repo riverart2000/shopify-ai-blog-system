@@ -570,6 +570,9 @@ async def init_db() -> None:
         await _migrate_v1_to_v2(db)
         await db.commit()
 
+        from .social_engine.schema import ensure_schema as _ensure_social_engine_schema
+        await _ensure_social_engine_schema(db)
+
     logger.info("Database initialised at %s", _DB_PATH)
 
 

@@ -35,6 +35,11 @@ set -euo pipefail
 
 # ── Local config ───────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/.runtime/m5/PRODUCTION_ACTIVE" ]]; then
+  echo "Production now runs on this M5. The legacy AWS deployment is disabled." >&2
+  echo "See the M5 deployment and rollback instructions in SERVER_README.md." >&2
+  exit 1
+fi
 PROD_HOST="18.134.80.37"
 PROD_USER="ubuntu"
 BRANCH="main"

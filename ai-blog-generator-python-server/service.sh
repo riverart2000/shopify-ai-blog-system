@@ -29,6 +29,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR"
 WORKSPACE_DIR="$(cd "$APP_DIR/.." && pwd)"
+if [[ ( -f "$WORKSPACE_DIR/.m5-migrated" || -f "$WORKSPACE_DIR/.runtime/m5/PRODUCTION_ACTIVE" ) && ( "${1:-}" == "start" || "${1:-}" == "restart" || "${1:-}" == "stop" ) ]]; then
+    echo "Production is managed by the M5 launch agents. This legacy service command is disabled to prevent conflicts or duplicate publishing. See SERVER_README.md." >&2
+    exit 1
+fi
 FRONTEND_DIR="${FRONTEND_DIR:-$WORKSPACE_DIR/ai-blog-generator-app}"
 SECONDARY_APP_DIR="${SECONDARY_APP_DIR:-$WORKSPACE_DIR/python-server-theplayersgolfhouse}"
 SECONDARY_BACKEND_PORT="${SECONDARY_BACKEND_PORT:-4001}"

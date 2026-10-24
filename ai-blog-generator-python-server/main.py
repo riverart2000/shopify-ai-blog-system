@@ -35,7 +35,9 @@ from routes.intelligence_api import router as intelligence_api_router
 from routes.wellness_quiz_api import router as wellness_quiz_api_router
 from routes.reviews_api import router as reviews_api_router
 from routes.seo_growth_api import router as seo_growth_api_router
+from routes.social_engine import ROUTERS as social_engine_routers, social_engine_error_handler
 from security import AuthMiddleware, RootPathRedirectMiddleware, SecurityHeadersMiddleware, limiter
+from services.social_engine.errors import SocialEngineError
 from services.system_events import install_logging_handler
 
 # ---------------------------------------------------------------------------
@@ -185,6 +187,7 @@ async def report_unhandled_exception(request, exc: Exception):
 # Rate limiter state
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(SocialEngineError, social_engine_error_handler)
 
 # Middleware — order matters: outermost runs first on request, last on response.
 # SessionMiddleware must wrap AuthMiddleware so sessions are available to it.
@@ -212,6 +215,8 @@ app.include_router(intelligence_api_router)
 app.include_router(wellness_quiz_api_router)
 app.include_router(reviews_api_router)
 app.include_router(seo_growth_api_router)
+for _social_engine_router in social_engine_routers:
+    app.include_router(_social_engine_router)
 
 _STATIC_DIR = _here / "static"
 _STATIC_DIR.mkdir(exist_ok=True)

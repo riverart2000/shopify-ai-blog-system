@@ -1,0 +1,48 @@
+# Cloudflare Tunnel connects to this loopback listener. Public :8443 is the
+# Shopify app; ordinary HTTPS on the same hostname remains the AWS website.
+{
+    admin off
+    auto_https off
+}
+
+http://:8787 {
+    bind 127.0.0.1
+
+    @shopify expression `{http.request.hostport} in ["revenuemindproai.com:8443", "m5-origin.revenuemindproai.com:8443"]`
+    handle @shopify {
+        header X-Shopify-Origin "m5"
+
+        handle /publar/rss-landingpages {
+            rewrite * /api/landing-pages/rss
+            reverse_proxy 127.0.0.1:4000 {
+                header_up X-Forwarded-Proto https
+            }
+        }
+
+        # These RSS endpoints were already unavailable on AWS at migration.
+        # Retain their existing destination; do not send them to Shopify auth.
+        @rss path /apps/rss* /publar*
+        handle @rss {
+            reverse_proxy 127.0.0.1:18090
+        }
+
+        handle {
+            reverse_proxy 127.0.0.1:3001 {
+                header_up X-Forwarded-Proto https
+            }
+        }
+    }
+
+    @website host revenuemindproai.com m5-origin.revenuemindproai.com
+    handle @website {
+        reverse_proxy https://18.134.80.37 {
+            header_up Host revenuemindproai.com
+            header_up X-Forwarded-Proto https
+            transport http {
+                tls_server_name revenuemindproai.com
+            }
+        }
+    }
+
+    respond "Unknown host" 404
+}
