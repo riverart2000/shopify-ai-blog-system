@@ -86,6 +86,7 @@ async def notifications_poll(ctx: JobContext) -> dict:
 @job("campaigns.evaluate", lane="default", max_attempts=2, timeout_seconds=900, backoff_base=60)
 async def campaigns_evaluate(ctx: JobContext) -> dict:
     """Run due auto-pilot campaigns (or one campaign when campaign_id is given)."""
+    from ..campaigns.autofill import ensure_autofill_campaign
     from ..campaigns.engine import evaluate_campaign, evaluate_due_campaigns
     from ..scheduling.fill import reslot_missed_approvals
 
@@ -94,7 +95,9 @@ async def campaigns_evaluate(ctx: JobContext) -> dict:
     if campaign_id:
         result = await evaluate_campaign(ctx.store_id, campaign_id)
     else:
+        autofill = await ensure_autofill_campaign(ctx.store_id)   # every channel keeps its daily posts
         result = await evaluate_due_campaigns(ctx.store_id)
+        result["autofill"] = autofill
     result["missed_approvals"] = missed
     return result
 

@@ -210,3 +210,72 @@ async def test_promotion_preview_never_cancels_smartq_posts(se_db, cdn):
     after = {p["id"]: p["status"] for p in await post_store.list_posts(se_db, campaign_id=smartq)}
     assert after == before
     assert not await post_store.list_posts(se_db, campaign_id=promo)
+
+
+# ---------------------------------------------------------------------------
+# Daily auto-fill: every channel always gets its daily posts
+# ---------------------------------------------------------------------------
+
+def test_autofill_mix_adds_up_to_the_daily_target():
+    from services.social_engine.campaigns.autofill import autofill_mix
+
+    assert autofill_mix(2) == {"single_product": 1, "product_video": 1}
+    assert autofill_mix(1) == {"single_product": 1}
+    assert sum(autofill_mix(7).values()) == 7 and max(autofill_mix(20).values()) <= 3
+
+
+@pytest.mark.asyncio
+async def test_autofill_creates_campaign_and_fills_tomorrow(se_db, cdn):
+    from services.social_engine.campaigns.autofill import AUTOFILL_NAME, ensure_autofill_campaign
+    from services.social_engine.campaigns.engine import evaluate_due_campaigns
+    from services.social_engine.scheduling.fill import daily_fill_status
+
+    await _setup(se_db)
+    created = await ensure_autofill_campaign(se_db)
+    assert created["action"] == "created"
+    campaign = await config_store.get_campaign(se_db, created["campaign_id"])
+    assert campaign["name"] == AUTOFILL_NAME and campaign["status"] == "active"
+    assert campaign["approval_mode"] == "ai_review" and campaign["channel_ids"] == []
+    assert campaign["config"]["posts_per_day"] == {"single_product": 1, "product_video": 1}
+
+    await evaluate_due_campaigns(se_db)
+    tomorrow = (await daily_fill_status(se_db, days=2))[1]
+    assert all(c["full"] for c in tomorrow["channels"]), tomorrow
+    assert (await ensure_autofill_campaign(se_db))["action"] == "exists"   # no duplicates
+
+
+@pytest.mark.asyncio
+async def test_autofill_respects_pause_setting_and_comes_back_after_delete(se_db, cdn):
+    from services.social_engine.campaigns.autofill import ensure_autofill_campaign
+
+    await _setup(se_db)
+    first = (await ensure_autofill_campaign(se_db))["campaign_id"]
+    campaign = await config_store.get_campaign(se_db, first)
+    await config_store.save_campaign(se_db, {**campaign, "status": "paused"})
+    assert (await ensure_autofill_campaign(se_db))["action"] == "exists"   # a pause is respected
+
+    await config_store.delete_campaign(se_db, first)
+    again = await ensure_autofill_campaign(se_db)
+    assert again["action"] == "created" and again["campaign_id"] != first
+
+    await save_settings(se_db, {"schedule": {"posts_per_channel_per_day": 3}})
+    assert (await ensure_autofill_campaign(se_db))["action"] == "updated"
+    updated = await config_store.get_campaign(se_db, again["campaign_id"])
+    assert sum(updated["config"]["posts_per_day"].values()) == 3
+
+    await save_settings(se_db, {"schedule": {"always_fill_daily_slots": False}})
+    assert (await ensure_autofill_campaign(se_db))["action"] == "off"
+
+
+@pytest.mark.asyncio
+async def test_autofill_leaves_merchant_smartq_alone(se_db, cdn):
+    from services.social_engine.campaigns.autofill import ensure_autofill_campaign
+
+    await _setup(se_db)
+    mine = await config_store.save_campaign(se_db, {
+        "name": "My SmartQ", "rule_type": "smartq", "status": "active", "approval_mode": "manual",
+        "config": {"order": "least_posted", "posts_per_day": {"single_product": 1}},
+    })
+    result = await ensure_autofill_campaign(se_db)
+    assert result == {"action": "exists", "campaign_id": mine}
+    assert len(await config_store.list_campaigns(se_db)) == 1

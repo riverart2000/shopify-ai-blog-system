@@ -201,11 +201,18 @@ async def _recent_problems(sctx: StoreContext) -> Check:
 async def _daily_fill(sctx: StoreContext) -> Check:
     from .scheduling.fill import daily_fill_status
 
-    active = [c for c in await config_store.list_campaigns(sctx.store_id, statuses=("active",))
+    smartq = [c for c in await config_store.list_campaigns(sctx.store_id, statuses=("active", "paused"))
               if c["rule_type"] == "smartq"]
-    if not active:
+    if not any(c["status"] == "active" for c in smartq):
+        if smartq:
+            return _check("daily_fill", "warning",
+                          f"'{smartq[0]['name']}' is paused — daily slots won't be filled until you resume it.")
+        if sctx.settings.enabled and sctx.settings.schedule.always_fill_daily_slots:
+            return _check("daily_fill", "ok",
+                          "The Daily auto-fill campaign is created at the next planning run (within 5 minutes).")
         return _check("daily_fill", "warning" if sctx.settings.enabled else "skipped",
-                      "No active SmartQ campaign — daily slots won't be filled automatically.")
+                      "No active SmartQ campaign and 'Always fill daily slots' is off — daily slots won't be "
+                      "filled automatically.")
     days = await daily_fill_status(sctx.store_id, days=2)
     tomorrow = days[1]
     short = [f"{c['name']} ({c['provider']}) {c['planned']}/{c['target']}" for c in tomorrow["channels"] if not c["full"]]

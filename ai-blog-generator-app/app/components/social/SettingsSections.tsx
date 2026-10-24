@@ -148,7 +148,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
             <Toggle
               checked={draft.always_fill_daily_slots} onChange={(value) => update({ always_fill_daily_slots: value })}
               label="Always fill every daily slot"
-              help="SmartQ tops up each channel's slots for the day; a post still waiting for approval when its time passes is moved once, then released."
+              help="Every channel always gets its daily posts. If you have no SmartQ campaign, a 'Daily auto-fill' campaign is created for you (Gemma checks each post; anything flagged waits for you). Failed or rejected posts are replaced while the day's window is open; promotions take priority. A post still waiting for approval when its time passes is moved once, then released."
             />
             <fieldset className="sa-fieldset">
               <legend>Posting days</legend>
