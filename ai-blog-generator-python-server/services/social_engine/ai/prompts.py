@@ -470,9 +470,11 @@ def vision_prompt(*, product_titles: list[str], headline: str, expects_product: 
         f"Look at this social media image.{headline_line}\n"
         f"1. {product_line}\n"
         "2. Is all text on the image legible (good contrast, not cut off, not overlapping)?\n"
-        "3. Any visual problems (cropping, distortion, blank areas, misspelt text)?\n"
+        "3. Copy word for word any text in the image (including inside the product photo) that claims a health, "
+        'weight-loss, fat-loss, slimming or body-shaping result, e.g. "Reduce Leg Fat". Empty list if none.\n'
+        "4. Any visual problems (cropping, distortion, blank areas)? At most 3, no repeats.\n"
         'Reply: {"product_visible": true/false, "text_legible": true/false, "has_text": true/false, '
-        '"issues": ["short descriptions"]}'
+        '"claims": ["exact text"], "issues": ["short descriptions"]}'
     )
 
 

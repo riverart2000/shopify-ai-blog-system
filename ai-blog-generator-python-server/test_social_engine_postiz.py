@@ -817,6 +817,10 @@ SETTINGS_CASES = [
     ("gmb", {"link_url": "https://shop.test/p"},
      {"__type": "gmb", "topicType": "STANDARD", "callToActionType": "LEARN_MORE", "callToActionUrl": "https://shop.test/p"}),
     ("gmb", {}, {"__type": "gmb", "topicType": "STANDARD"}),
+    # Postiz can't send Google's required offer title/dates, so offers become standard posts.
+    ("gmb", {"link_url": "https://shop.test/p", "settings": {"topicType": "OFFER", "callToActionType": "SHOP",
+                                                             "offerCouponCode": "HALLOWEEN20"}},
+     {"__type": "gmb", "topicType": "STANDARD", "callToActionType": "SHOP", "callToActionUrl": "https://shop.test/p"}),
     ("gmb", {"title": "Launch night", "settings": {"topicType": "EVENT", "callToActionType": "CALL",
                                                     "eventStartDate": "2026-11-20"}},
      {"__type": "gmb", "topicType": "EVENT", "callToActionType": "CALL", "eventTitle": "Launch night",

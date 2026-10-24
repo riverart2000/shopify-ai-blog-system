@@ -593,7 +593,7 @@ def _review_handler(review: dict, vision: dict | None):
         if body.get("model") == "mlx-community--Qwen3-VL-8B-Instruct-8bit":
             if vision is None:
                 return httpx.Response(404, json={"error": "model not found"})
-            return chat_response(json.dumps(vision), model=body["model"])
+            return chat_response(vision if isinstance(vision, str) else json.dumps(vision), model=body["model"])
         return chat_response(json.dumps(review))
     return handler
 
@@ -631,6 +631,29 @@ async def test_review_rejects_low_score_critical_issues_and_failed_vision(sctx, 
     FakeLLM(_review_handler({"score": 9, "critical_issues": ["Invented 20% discount"]}, None)).install()
     critical = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
     assert not critical.approve and critical.issues[0] == "Critical: Invented 20% discount"
+
+
+@pytest.mark.asyncio
+async def test_vision_check_salvages_cut_off_reply_and_flags_image_claims(sctx, tmp_path):
+    from PIL import Image
+
+    image = tmp_path / "post.png"
+    Image.new("RGB", (64, 64), (200, 200, 200)).save(image)
+    captions = _result(f"Magnesium contributes to a reduction of tiredness and fatigue. {PRODUCT_URL}")
+    post = {"id": "post_3", "content_type": "single_product"}
+    # Real reply shape from the live vision model: spaced keys, repeats, cut off at the token limit.
+    cut_off = ('{\n  "product visible": true,\n  "text legible": true,\n  "has text": true,\n  "issues": [\n'
+               '    "Logo is small",\n    "Logo is small",\n    "Price is close to the edge",\n    "miss')
+    FakeLLM(_review_handler({"score": 9, "critical_issues": [], "issues": []}, cut_off)).install()
+    review = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM], media_paths=[str(image)])
+    assert review.approve, review.issues
+    assert not any("skipped" in issue for issue in review.issues)
+    assert [i for i in review.issues if i.startswith("Vision:")] == ["Vision: Logo is small", "Vision: Price is close to the edge"]
+
+    claims = {"product_visible": True, "text_legible": True, "has_text": True, "claims": ["Reduce Leg Fat"], "issues": []}
+    FakeLLM(_review_handler({"score": 9, "critical_issues": [], "issues": []}, claims)).install()
+    held = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM], media_paths=[str(image)])
+    assert not held.approve and any('"Reduce Leg Fat"' in issue for issue in held.issues)
 
     FakeLLM(_review_handler({"score": 5, "critical_issues": []}, None)).install()
     low = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])

@@ -547,6 +547,11 @@ def _listmonk(inp: _Input) -> dict[str, Any]:
 
 def _gmb(inp: _Input) -> dict[str, Any]:
     topic = inp.choice("topicType", GMB_TOPICS, "STANDARD")
+    if topic == "OFFER":
+        # Google requires an offer's title and dates, but Postiz only sends those for
+        # EVENT posts, so every OFFER via Postiz is rejected ("Invalid post content").
+        # Send a standard post instead; the coupon is in the post text.
+        topic = "STANDARD"
     out: dict[str, Any] = {"__type": "gmb", "topicType": topic}
     cta = inp.choice("callToActionType", GMB_CTAS, "LEARN_MORE" if inp.link_url else None)
     if cta:
@@ -564,12 +569,6 @@ def _gmb(inp: _Input) -> dict[str, Any]:
         for key in ("eventStartDate", "eventEndDate", "eventStartTime", "eventEndTime"):
             if inp.get(key):
                 out[key] = clean_text(inp.get(key))
-    if topic == "OFFER":
-        for key in ("offerCouponCode", "offerTerms"):
-            if inp.get(key):
-                out[key] = clean_text(inp.get(key))
-        if inp.get("offerRedeemUrl"):
-            out["offerRedeemUrl"] = inp.url("offerRedeemUrl", inp.get("offerRedeemUrl"))
     return out
 
 

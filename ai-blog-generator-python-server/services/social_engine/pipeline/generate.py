@@ -73,14 +73,9 @@ def _format_for(channel: dict, content_type: str) -> tuple[str, str] | None:
 def _platform_settings(channel: dict, content_type: str, texts: dict, link: str) -> dict[str, Any]:
     """Per-network defaults derived from the post (e.g. Google Business offer posts)."""
     if channel.get("provider") == "gmb":
-        settings: dict[str, Any] = {"callToActionType": "SHOP", "callToActionUrl": link} if link else {}
-        if content_type in (ContentType.SALE_PROMO, ContentType.COUNTDOWN):
-            settings["topicType"] = "OFFER"
-            if texts.get("coupon_code"):
-                settings["offerCouponCode"] = texts["coupon_code"]
-            if link:
-                settings["offerRedeemUrl"] = link
-        return settings
+        # Sales go out as standard posts with a Shop button (Google offer posts
+        # can't be sent through Postiz; see postiz_settings._gmb).
+        return {"callToActionType": "SHOP", "callToActionUrl": link} if link else {}
     return {}
 
 
