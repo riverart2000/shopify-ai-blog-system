@@ -92,6 +92,7 @@ class VisionDraft(BaseModel):
 
 _VISION_FLAG = re.compile(r'"(product[ _.\-]?visible|text[ _.\-]?legible|has[ _.\-]?text)"\s*:\s*(true|false)',
                           re.IGNORECASE)
+_SPELLING_NOISE = re.compile(r"misspel|spelling|typo", re.IGNORECASE)
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
@@ -172,7 +173,10 @@ async def _vision_check(
         quoted = ", ".join(f'"{claim}"' for claim in draft.claims[:3])
         issues.append(f"Vision: the image shows a health or body claim ({quoted}) — use another photo or product.")
         critical = True
-    issues.extend(f"Vision: {item}" for item in draft.issues[:4])
+    # Our on-image text is drawn from exact strings, so "misspelt" reports from the
+    # small vision model are noise; keep the other observations.
+    observations = [item for item in draft.issues if not _SPELLING_NOISE.search(item)]
+    issues.extend(f"Vision: {item}" for item in observations[:4])
     try:
         await observability.record_decision(
             store_id=sctx.store_id, decision_type="review.vision", subject_id=subject_id, model=response.model,

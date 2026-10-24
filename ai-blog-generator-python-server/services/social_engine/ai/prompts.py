@@ -432,8 +432,8 @@ def review_prompt(
         f"POST TYPE: {CONTENT_TYPE_LABELS.get(content_type, content_type or 'unknown')}",
         f"Expected language: {language_name(language)}",
     ]
-    if post.get("angle"):
-        sections.append(f"Planned angle: {post['angle']}")
+    # The planner's angle is an internal brief that is never published, so it is not
+    # shown here: the review judges only what followers will see.
     sections.append(products_text)
     image_lines = [f"- {key}: {value}" for key, value in on_image.items() if value]
     if image_lines:
@@ -442,6 +442,8 @@ def review_prompt(
     if guard_notes:
         sections.append("AUTOMATED CHECKS ALREADY FOUND\n" + "\n".join(f"- {note}" for note in guard_notes))
     sections.append(
+        "Judge only what will be published: the captions and the on-image text. The product's own name and web "
+        "address come from the store's catalogue — at most mention them as a minor issue, never as critical.\n"
         "Score the post 0–10: 9–10 publish as is; 7–8 good with minor polish; 5–6 needs edits; 0–4 do not publish.\n"
         "Authorised-style wording taken from the product data ('contributes to the normal …', or the paraphrase "
         "'supports normal …') is compliant — do not flag it. Using only some of the authorised claims, or one "

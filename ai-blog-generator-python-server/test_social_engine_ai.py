@@ -643,7 +643,8 @@ async def test_vision_check_salvages_cut_off_reply_and_flags_image_claims(sctx, 
     post = {"id": "post_3", "content_type": "single_product"}
     # Real reply shape from the live vision model: spaced keys, repeats, cut off at the token limit.
     cut_off = ('{\n  "product visible": true,\n  "text legible": true,\n  "has text": true,\n  "issues": [\n'
-               '    "Logo is small",\n    "Logo is small",\n    "Price is close to the edge",\n    "miss')
+               '    "Logo is small",\n    "Logo is small",\n    "Text \'Bowl\' misspelled as \'Bowl\'",\n'
+               '    "Price is close to the edge",\n    "miss')
     FakeLLM(_review_handler({"score": 9, "critical_issues": [], "issues": []}, cut_off)).install()
     review = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM], media_paths=[str(image)])
     assert review.approve, review.issues
@@ -843,3 +844,15 @@ async def test_live_gemma_captions(sctx):
         "Live captions: %s", json.dumps({cid: item.caption for cid, item in result.channel_captions.items()},
                                         indent=2, ensure_ascii=False),
     )
+
+
+def test_review_prompt_judges_only_published_text():
+    from services.social_engine.ai import prompts
+    from services.social_engine.settings import BrandKit
+
+    text = prompts.review_prompt(
+        brand=BrandKit(), post={"content_type": "single_product", "angle": "Find your inner calm"},
+        products_text="PRODUCT: Singing bowl", on_image={"headline": "Bronze bowl"},
+        channel_texts=["[facebook] A bronze bowl."], guard_notes=[], language="en",
+    )
+    assert "inner calm" not in text and "Judge only what will be published" in text
