@@ -91,3 +91,52 @@ Passwords are write-only: they go to the macOS Keychain and are never returned.
 | POST | `/api/telegram/test` | | `{"telegram", "message"}`: sends a test message (needs /start first) |
 | POST | `/api/telegram/unlink` | | `{"telegram", "message"}`: the next /start from the username links again |
 | POST | `/api/telegram/disconnect` | | `{"telegram", "message"}`: removes the token |
+
+## Event promotion, cloning and the shared browser
+
+All agents share **one browser profile** (`profiles/shared`, real Google Chrome). A login done once — by Joe in a
+login window, or by an agent — is used by every later task.
+
+**JobSummary** also has `"parent_id": int|null`. A promotion's per-place jobs have `parent_id` = the promotion's
+job id; `GET /api/jobs` hides them unless `?include_children=1`.
+
+**JobDetail** also has `"template_values": {name: value}|null` (what the task was created with, for Clone; a
+title Joe typed is in `"_title"`) and
+`"promotion": Promotion|null` (only for `promote_event` jobs).
+
+**Promotion**
+```json
+{"event": EventDetails|null, "reused_from": 12|null,
+ "counts": {"queued": 4, "posted": 3, "needs_you": 1},
+ "targets": [Target]}
+```
+**EventDetails** (all strings except `online`): `{"title", "starts_at" ("2026-11-15T19:00", UK time), "ends_at",
+"venue", "address", "town", "online": bool, "online_url", "price", "ticket_url", "organiser", "description",
+"category", "image_url"}`.
+
+**Target** (one place to promote on)
+```json
+{"id": 5, "kind": "listing|group|forum|own_social", "name": "AllEvents", "url": "https://…", "why": "…",
+ "account": "Facebook: joe.bains", "source": "found|reused",
+ "status": "planned|queued|working|posted|already_listed|needs_you|skipped|failed",
+ "job_id": 14|null, "scheduled_at": "…|null", "result_url": "…|null", "note": "…|null",
+ "need": {"site": "meetup", "url": "https://…", "reason": "Enter the code Meetup emailed you"}|null,
+ "updated_at": "…"}
+```
+`needs_you`: the page is open in the shared browser on the Mac (and a Telegram card was sent). After Joe finishes
+there, `done` puts the place back in the queue straight away; it otherwise waits up to 24 hours, then is skipped.
+
+**Template** `fields[]` items also have `"multiline": bool` (show a textarea: lists of URLs, accounts, notes).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/jobs` | also `"clone_of"?: int` | Cloning a promotion reuses the places that worked last time (and still looks for new ones). |
+| POST | `/api/targets/{id}/done` | | `{"target", "message"}`: Joe finished what the site needed (needs_you → queued now) |
+| POST | `/api/targets/{id}/skip` | | `{"target", "message"}`: don't post there (its job is cancelled) |
+| POST | `/api/targets/{id}/retry` | | `{"target", "message"}`: failed/skipped → queued again |
+| GET | `/api/browser` | | `{"browser": BrowserStatus}` |
+| POST | `/api/browser/open` | `{"url"?: str}` | `{"browser", "message"}`: shows the shared browser on the Mac (default: a blank Google page) so Joe can log in to anything |
+
+**BrowserStatus**: `{"running": bool, "visible": bool, "open_tabs": int, "login_tabs": ["meetup", …],
+"profile_saved": bool, "busy_job_id": int|null}`. `GET /api/accounts` also returns `"browser": BrowserStatus`.
+`POST /api/accounts/{site}/login-window` now opens that site's login page as a tab in the shared browser.

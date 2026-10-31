@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from task_agent.db import iso, now
+from task_agent.promotion import KIND_LABELS, PromotionStore
 from task_agent.social import SocialError
 from task_agent.telegram.client import TelegramAPI, TelegramError
 
@@ -20,6 +21,7 @@ log = logging.getLogger("task_agent.telegram")
 
 APPROVE_REJECT = "post"
 EMAIL = "approval"
+NEED = "need"
 
 
 def post_buttons(post_id: str) -> list[list[dict[str, str]]]:
@@ -56,7 +58,16 @@ class Notifier:
         _, chat = self.tg.owner()
         if chat is None:
             return
-        for step in (self.post_cards, self.approval_cards, self.task_updates, self.social_errors, self.morning):
+        steps = (
+            self.post_cards,
+            self.approval_cards,
+            self.need_cards,
+            self.task_updates,
+            self.promotion_updates,
+            self.social_errors,
+            self.morning,
+        )
+        for step in steps:
             try:
                 await step(api, chat)
             except (SocialError, TelegramError) as exc:
@@ -149,6 +160,8 @@ class Notifier:
         for job in sorted(jobs, key=lambda j: j.finished_at or ""):
             if not job.finished_at or job.finished_at < since or self.tg.sent("task", f"{job.id}:{job.finished_at}"):
                 continue
+            if job.parent_id is not None or (job.type == "promote_event" and job.status == "done"):
+                continue  # a promotion reports its places itself (promotion_updates)
             if job.status == "failed":
                 message = await api.send_message(
                     chat,
@@ -161,6 +174,94 @@ class Notifier:
             else:
                 continue
             self.tg.mark_sent("task", f"{job.id}:{job.finished_at}", chat, message["message_id"])
+
+    # ── event promotions ────────────────────────────────────────────────────
+
+    async def need_cards(self, api: TelegramAPI, chat: int) -> None:
+        """A place that needs Joe (captcha, code, verification): one card with Done / Skip."""
+        ps = PromotionStore(self.ctx.store)
+        waiting = {t["id"]: t for t in ps.needing_joe()}
+        for target_id, target in waiting.items():
+            ref = f"{target_id}:{target['asks']}"
+            if self.tg.sent(NEED, ref):
+                continue
+            promotion = self.ctx.store.get(int(target["promotion_id"]))
+            text = (
+                f"🔐 {target['name']} needs you\n{target.get('need_reason') or ''}\n\n"
+                "It's open in the browser on the Mac. Do that there, then press Done and it carries on. "
+                "It waits a day, then skips this place." + (f"\n\n📣 {promotion.title}" if promotion else "")
+            )
+            buttons = [
+                [
+                    {"text": "✅ Done", "callback_data": f"need:{target_id}:d"},
+                    {"text": "⏭ Skip this place", "callback_data": f"need:{target_id}:s"},
+                ]
+            ]
+            message = await api.send_message(chat, text, buttons)
+            self.tg.mark_sent(NEED, ref, chat, message["message_id"])
+        for card in self.tg.open_cards(NEED):
+            target_id = int(card["ref"].split(":")[0])
+            if target_id in waiting and card["ref"] == f"{target_id}:{waiting[target_id]['asks']}":
+                continue
+            with contextlib.suppress(Exception):
+                target = ps.get(target_id)
+                await api.finish_card(
+                    card["chat_id"], card["message_id"],
+                    f"🔐 {target['name']}: {target['status'].replace('_', ' ')} (no longer waiting for you)",
+                )  # fmt: skip
+            self.tg.close_card(NEED, card["ref"])
+
+    async def promotion_updates(self, api: TelegramAPI, chat: int) -> None:
+        """The plan once it's made, and one report when every place has finished."""
+        since = self.tg.get("since_task_finished")
+        if since is None:
+            return
+        ps = PromotionStore(self.ctx.store)
+        jobs, _ = self.ctx.store.search(["done"], limit=30, include_children=False)
+        for job in jobs:
+            if job.type != "promote_event" or not job.finished_at or job.finished_at < since:
+                continue
+            targets = ps.for_promotion(job.id)
+            if not self.tg.sent("promo-plan", str(job.id)):
+                message = await api.send_message(chat, self.plan_text(job, targets))
+                self.tg.mark_sent("promo-plan", str(job.id), chat, message["message_id"])
+            if targets and ps.is_finished(job.id) and not self.tg.sent("promo-done", str(job.id)):
+                message = await api.send_message(chat, self.report_text(job, targets))
+                self.tg.mark_sent("promo-done", str(job.id), chat, message["message_id"])
+
+    def plan_text(self, job: Any, targets: list[dict[str, Any]]) -> str:
+        notes = str((job.result or {}).get("notes") or "")
+        if not targets:
+            return f"📣 {job.title}: I didn't find anywhere suitable to post it.\n{notes}"[:1500]
+        queued = [t for t in targets if t["status"] in ("queued", "working")]
+        listings = sum(1 for t in queued if t["kind"] == "listing")
+        paced = sorted(t["scheduled_at"] for t in queued if t["kind"] in ("group", "forum") and t["scheduled_at"])
+        lines = [f"📣 {job.title}: {len(targets)} place(s) planned"]
+        if listings:
+            lines.append(f"• {listings} listing site(s), starting now")
+        if paced:
+            first = datetime.fromisoformat(paced[0]).timestamp()
+            last = datetime.fromisoformat(paced[-1]).timestamp()
+            lines.append(f"• {len(paced)} group/forum post(s), {self.ctx.when(first)} to {self.ctx.when(last)}")
+        own = [t for t in targets if t["kind"] == "own_social"]
+        for t in own:
+            lines.append(f"• {t['name']}: {t['status'].replace('_', ' ')}")
+        skipped = [t for t in targets if t["status"] == "skipped"]
+        if skipped:
+            lines.append(f"• {len(skipped)} skipped: " + "; ".join(f"{t['name']} ({t['note']})" for t in skipped[:3]))
+        if notes:
+            lines.append(f"\n{notes}")
+        lines.append("\nI'll message you if a site needs you, and when it's all done.")
+        return "\n".join(lines)[:3500]
+
+    def report_text(self, job: Any, targets: list[dict[str, Any]]) -> str:
+        ok = [t for t in targets if t["status"] in ("posted", "already_listed")]
+        lines = [f"✅ {job.title}: finished. Live in {len(ok)} of {len(targets)} place(s)."]
+        for t in targets:
+            mark = {"posted": "✅", "already_listed": "✅", "skipped": "⏭", "failed": "❌"}.get(t["status"], "•")
+            detail = t.get("result_url") or t.get("note") or ""
+            lines.append(f"{mark} {KIND_LABELS.get(t['kind'], t['kind'])}: {t['name']} {detail}"[:300])
+        return "\n".join(lines)[:4000]
 
     # ── Social Autopilot errors ─────────────────────────────────────────────
 

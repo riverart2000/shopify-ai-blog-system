@@ -187,7 +187,9 @@ async def recent_errors(rc: RunContext[AssistantDeps], hours: int = 24) -> str:
 
 async def tasks(rc: RunContext[AssistantDeps], status: str = "") -> str:
     """Task Agent tasks, newest first (status: queued, running, done, failed, cancelled; blank = all)."""
-    jobs, total = rc.deps.ctx.store.search([s for s in status.split(",") if s] or None, limit=15)
+    jobs, total = rc.deps.ctx.store.search(
+        [s for s in status.split(",") if s] or None, limit=15, include_children=False
+    )
     return _data(
         "tasks",
         {
@@ -205,10 +207,23 @@ async def task_result(rc: RunContext[AssistantDeps], job_id: int) -> str:
     job = rc.deps.ctx.store.get(job_id)
     if job is None:
         return f"There is no task {job_id}."
-    return _data(
-        f"task {job_id}",
-        {"id": job.id, "title": job.title, "status": job.status, "error": job.error, "result": job.result},
-    )
+    data: dict[str, Any] = {
+        "id": job.id,
+        "title": job.title,
+        "status": job.status,
+        "error": job.error,
+        "template": job.template_key,
+        "values": job.template_values,
+        "result": job.result,
+    }
+    if job.type == "promote_event":
+        from task_agent.promotion import PromotionStore
+
+        data["places"] = [
+            {k: t[k] for k in ("id", "kind", "name", "status", "result_url", "note", "scheduled_at")}
+            for t in PromotionStore(rc.deps.ctx.store).for_promotion(job.id)
+        ]
+    return _data(f"task {job_id}", data)
 
 
 async def templates(rc: RunContext[AssistantDeps]) -> str:
@@ -287,17 +302,25 @@ async def propose_auto_promotions(rc: RunContext[AssistantDeps], enabled: bool) 
 
 
 async def propose_task(
-    rc: RunContext[AssistantDeps], template_key: str, values: dict[str, str], title: str = ""
+    rc: RunContext[AssistantDeps],
+    template_key: str,
+    values: dict[str, str],
+    title: str = "",
+    clone_of: int | None = None,
 ) -> str:
-    """Propose queueing a Task Agent task from a template (see templates()), with its blanks filled in."""
+    """Propose queueing a Task Agent task from a template (see templates()), with its blanks filled in.
+    To repeat an earlier task with changes (e.g. "promote this other event like last time"), pass its id as
+    clone_of and start from its values (task_result shows them), changing only what Joe changed."""
     try:
         template = rc.deps.ctx.templates.get(template_key)
         job_title, _ = rc.deps.ctx.templates.build_job(template, values, title)
+        if clone_of is not None:
+            rc.deps.ctx.store.require(clone_of)
     except (LookupError, TemplateError) as exc:
         raise ModelRetry(f"{exc}. Fill in the blanks from what Joe said, or ask him.") from exc
-    return _propose(
-        rc, "queue_task", {"template_key": template_key, "values": values, "title": title}, f"Queue task: {job_title}"
-    )
+    params = {"template_key": template_key, "values": values, "title": title, "clone_of": clone_of}
+    summary = f"Queue task: {job_title}" + (f" (reusing task {clone_of}'s places)" if clone_of else "")
+    return _propose(rc, "queue_task", params, summary)
 
 
 async def propose_cancel_task(rc: RunContext[AssistantDeps], job_id: int) -> str:

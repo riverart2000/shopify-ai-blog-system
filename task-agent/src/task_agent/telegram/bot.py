@@ -17,6 +17,7 @@ from pydantic_ai.models import Model
 
 from task_agent.config import Settings
 from task_agent.db import JobStore, now
+from task_agent.promotion import target_done, target_skip
 from task_agent.social import SocialClient
 from task_agent.telegram.actions import BotContext, execute
 from task_agent.telegram.assistant import AssistantDeps, answer
@@ -51,7 +52,9 @@ class TelegramBot:
         model: Model | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         social_transport: httpx.AsyncBaseTransport | None = None,
+        browser: Any = None,
     ) -> None:
+        self.browser = browser  # the shared browser, so Done / Skip can close the page Joe used
         self.tg = TelegramStore(store, settings)
         self.ctx = BotContext(store, settings, SocialClient(settings, social_transport))
         self.model = model
@@ -227,6 +230,13 @@ class TelegramBot:
                 await finish(("✅ " if choice == "a" else "✖ ") + result)
             elif kind == "task" and choice == "retry":
                 await finish("🔁 " + await execute(self.ctx, "retry_task", {"job_id": int(ref)}))
+            elif kind == "need":
+                if choice == "d":
+                    _, result = await target_done(self.ctx.store, int(ref), self.browser)
+                    await finish("✅ " + result)
+                else:
+                    _, result = await target_skip(self.ctx.store, int(ref), self.browser)
+                    await finish("⏭ " + result)
             elif kind == "act":
                 await self._confirm(int(ref), choice == "y", finish)
             else:

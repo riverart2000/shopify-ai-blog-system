@@ -35,7 +35,83 @@ export const APPROVAL_STATUS: Record<string, StatusInfo> = {
 
 export const TASK_TYPE_LABELS: Record<string, string> = {
   research: "Research",
+  promote_event: "Promote an event",
+  promote_post: "Post to one place",
 };
+
+/** One place a promotion posts to (`Target.status`). */
+export const TARGET_STATUS: Record<string, StatusInfo> = {
+  planned: { label: "Planned", tone: "neutral", help: "Found, not queued yet" },
+  queued: { label: "Queued", tone: "info", help: "Waiting for its turn" },
+  working: { label: "Posting now", tone: "attention", help: "The agent is on this site right now" },
+  posted: { label: "Posted", tone: "success" },
+  already_listed: { label: "Already listed", tone: "success", help: "The event was already on this site" },
+  needs_you: { label: "Needs you", tone: "attention", help: "The site needs you to do something in the browser on the Mac" },
+  skipped: { label: "Skipped", tone: "neutral" },
+  failed: { label: "Failed", tone: "critical", help: "Open its task to see what went wrong" },
+};
+
+/** Statuses of a place that can still change by themselves (keep the page refreshing). */
+export const ACTIVE_TARGET_STATUSES = ["planned", "queued", "working", "needs_you"];
+
+export const TARGET_KIND_LABELS: Record<string, string> = {
+  listing: "Listing site",
+  group: "Facebook group",
+  forum: "Forum",
+  own_social: "Your channels",
+};
+
+export function targetKindLabel(kind: string): string {
+  return TARGET_KIND_LABELS[kind] || kind.replace(/[_-]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+const UK_DAY = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
+type EventMoment = { dayKey: string; day: string; time: string };
+
+/** "2026-11-15T19:00" (UK local, as the API sends it) → "Sun 15 Nov" + "19:00". Times with an offset are shown in UK time. */
+function eventMoment(value: string | null | undefined): EventMoment | null {
+  const text = (value || "").trim();
+  if (!text) return null;
+  let parts: number[] | null = null;
+  let hasTime = false;
+  if (/T\d{2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    const ms = Date.parse(text);
+    if (!Number.isFinite(ms)) return null;
+    const p = new Intl.DateTimeFormat("en-US", {
+      timeZone: AGENT_TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    }).formatToParts(new Date(ms));
+    const get = (type: string) => Number(p.find((part) => part.type === type)?.value || 0);
+    parts = [get("year"), get("month"), get("day"), get("hour") % 24, get("minute")];
+    hasTime = true;
+  } else {
+    const match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(text);
+    if (!match) return null;
+    parts = [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4] || 0), Number(match[5] || 0)];
+    hasTime = match[4] !== undefined;
+  }
+  const [year, month, day, hour, minute] = parts;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(date.getTime())) return null;
+  const sameYear = year === new Date().getUTCFullYear();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    dayKey: `${year}-${pad(month)}-${pad(day)}`,
+    day: sameYear ? UK_DAY.format(date) : `${UK_DAY.format(date)} ${year}`,
+    time: hasTime ? `${pad(hour)}:${pad(minute)}` : "",
+  };
+}
+
+/** When an event is on, UK-readable: "Sun 15 Nov, 19:00–22:00" or "Sat 14 Nov, 19:00 to Sun 15 Nov, 02:00". */
+export function formatEventWhen(startsAt: string | null | undefined, endsAt?: string | null): string {
+  const start = eventMoment(startsAt);
+  if (!start) return (startsAt || "").trim();
+  const startText = start.time ? `${start.day}, ${start.time}` : start.day;
+  const end = eventMoment(endsAt);
+  if (!end) return startText;
+  if (end.dayKey === start.dayKey) return end.time && end.time !== start.time ? `${startText}–${end.time}` : startText;
+  return `${startText} to ${end.time ? `${end.day}, ${end.time}` : end.day}`;
+}
 
 export function LoadError({ error }: { error?: string }) {
   if (!error) return null;

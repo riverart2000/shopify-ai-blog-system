@@ -208,3 +208,53 @@ async def test_errors_never_leak_the_token(bot):
         with pytest.raises(TelegramError) as caught:
             await TelegramAPI(TOKEN).get_me()
     assert TOKEN not in str(caught.value) and "secret" not in str(caught.value)
+
+
+async def test_place_that_needs_joe_gets_one_card_and_done_requeues_it(bot, tg, store):
+    from task_agent.promotion import PromotionStore
+
+    await link(bot)
+    promotion, _ = store.enqueue("promote_event", "Promote: Breathwork", {}, [])
+    store.claim_next()
+    store.finish(promotion, {"event": {"title": "Breathwork"}, "places": [], "notes": ""})
+    child, _ = store.enqueue("promote_post", "Breathwork → Meetup", {}, [], parent_id=promotion)
+    ps = PromotionStore(store)
+    target = ps.add(promotion, kind="listing", name="Meetup", url="https://www.meetup.com/")
+    ps.update(target, status="needs_you", job_id=child, need_reason="Enter the code Meetup emailed you")
+
+    api = bot.api()
+    await bot.notifier.need_cards(api, 4242)
+    await bot.notifier.need_cards(api, 4242)
+    cards = [m for m in sent(tg, "sendMessage") if "needs you" in m["text"]]
+    assert len(cards) == 1 and "Enter the code" in cards[0]["text"]
+    done = cards[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+    assert done == f"need:{target}:d"
+
+    await bot.handle_update(api, button(done))
+    assert ps.get(target)["status"] == "queued"
+    assert "back in the queue" in sent(tg, "editMessageText")[-1]["text"]
+
+
+async def test_promotion_plan_and_final_report_are_sent_once(bot, tg, store):
+    from task_agent.promotion import PromotionStore
+
+    await link(bot)
+    api = bot.api()
+    await bot.notifier.task_updates(api, 4242)  # sets the starting point
+    promotion, _ = store.enqueue("promote_event", "Promote: Breathwork", {}, [])
+    store.claim_next()
+    store.finish(promotion, {"event": {"title": "Breathwork"}, "places": [], "notes": ""})
+    ps = PromotionStore(store)
+    meetup = ps.add(promotion, kind="listing", name="Meetup", url="https://www.meetup.com/", status="queued")
+
+    await bot.notifier.task_updates(api, 4242)  # no generic "done" message for a promotion
+    await bot.notifier.promotion_updates(api, 4242)
+    await bot.notifier.promotion_updates(api, 4242)
+    texts = [m["text"] for m in sent(tg, "sendMessage")]
+    assert sum("1 place(s) planned" in t for t in texts) == 1 and not any("finished" in t for t in texts)
+
+    ps.update(meetup, status="posted", result_url="https://www.meetup.com/x/events/1")
+    await bot.notifier.promotion_updates(api, 4242)
+    await bot.notifier.promotion_updates(api, 4242)
+    reports = [m["text"] for m in sent(tg, "sendMessage") if "finished" in m["text"]]
+    assert len(reports) == 1 and "Live in 1 of 1" in reports[0] and "events/1" in reports[0]

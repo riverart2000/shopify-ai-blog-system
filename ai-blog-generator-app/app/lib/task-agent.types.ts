@@ -18,6 +18,8 @@ export type JobSummary = {
   created_by: string;
   cancel_requested: boolean;
   step_count: number;
+  /** A promotion's per-place jobs point at the promotion's job (the list hides them). Older backends omit it. */
+  parent_id?: number | null;
 };
 
 export type ResearchSource = { url: string; title: string; used_for: string };
@@ -34,7 +36,77 @@ export type JobDetail = JobSummary & {
   payload: Record<string, unknown>;
   result: Record<string, unknown> | null;
   tools_allowed: string[];
+  /** What the task was created with (for Clone). Null for tasks made before cloning existed. */
+  template_values?: Record<string, unknown> | null;
+  /** Only for `promote_event` jobs. */
+  promotion?: Promotion | null;
 };
+
+/** The event a promotion is for, read from its pages. Times are UK local, e.g. "2026-11-15T19:00". */
+export type EventDetails = {
+  title?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  venue?: string | null;
+  address?: string | null;
+  town?: string | null;
+  online?: boolean | null;
+  online_url?: string | null;
+  price?: string | null;
+  ticket_url?: string | null;
+  organiser?: string | null;
+  description?: string | null;
+  category?: string | null;
+  image_url?: string | null;
+};
+
+export type PromotionTargetKind = "listing" | "group" | "forum" | "own_social";
+
+export type PromotionTargetStatus =
+  | "planned" | "queued" | "working" | "posted" | "already_listed" | "needs_you" | "skipped" | "failed";
+
+/** What a site needs Joe to do (the page is open in the shared browser on the Mac). */
+export type PromotionTargetNeed = { site?: string | null; url?: string | null; reason?: string | null };
+
+/** One place to promote an event on. */
+export type PromotionTarget = {
+  id: number;
+  kind: PromotionTargetKind | string;
+  name: string;
+  url?: string | null;
+  why?: string | null;
+  account?: string | null;
+  source?: "found" | "reused" | string | null;
+  status: PromotionTargetStatus | string;
+  job_id?: number | null;
+  scheduled_at?: string | null;
+  result_url?: string | null;
+  note?: string | null;
+  need?: PromotionTargetNeed | null;
+  updated_at?: string | null;
+};
+
+export type Promotion = {
+  event?: EventDetails | null;
+  /** The promotion this one was cloned from (its places were reused). */
+  reused_from?: number | null;
+  counts?: Partial<Record<PromotionTargetStatus, number>> | null;
+  targets?: PromotionTarget[] | null;
+};
+
+export type TargetActionResponse = { target: PromotionTarget; message: string };
+
+/** The one browser profile every agent shares (real Google Chrome on the Mac). */
+export type BrowserStatus = {
+  running: boolean;
+  visible: boolean;
+  open_tabs: number;
+  login_tabs: string[];
+  profile_saved: boolean;
+  busy_job_id: number | null;
+};
+
+export type BrowserResponse = { browser: BrowserStatus; message?: string };
 
 export type Step = {
   n: number;
@@ -46,7 +118,14 @@ export type Step = {
   created_at: string;
 };
 
-export type TemplateField = { name: string; label: string; required: boolean; default: string | null };
+export type TemplateField = {
+  name: string;
+  label: string;
+  required: boolean;
+  default: string | null;
+  /** Show a textarea (lists of URLs, accounts, notes). Older backends omit it. */
+  multiline?: boolean;
+};
 
 export type Template = {
   key: string;
@@ -158,7 +237,7 @@ export type SettingsResponse = {
   recommended_model: string;
 };
 
-export type AccountsResponse = { accounts: Account[]; email: EmailAccount };
+export type AccountsResponse = { accounts: Account[]; email: EmailAccount; browser?: BrowserStatus | null };
 export type AccountSaveResponse = { account: Account; message: string };
 export type EmailSaveResponse = { email: EmailAccount; message: string };
 export type EmailTestResponse = { ok: boolean; message: string; email: EmailAccount };

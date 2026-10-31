@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
     started_at       TEXT,
     finished_at      TEXT,
     template_key     TEXT,
-    cancel_requested INTEGER NOT NULL DEFAULT 0
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    parent_id        INTEGER,       -- a promotion's per-place jobs point at the promotion job
+    template_values  TEXT           -- what the task was created with (JSON), so it can be cloned
 );
 """
 
@@ -47,6 +49,34 @@ SCHEMA = (
     JOBS_TABLE
     + """
 CREATE INDEX IF NOT EXISTS idx_agent_jobs_ready ON agent_jobs (status, run_at, priority);
+
+CREATE TABLE IF NOT EXISTS promotion_targets (
+    id            INTEGER PRIMARY KEY,
+    promotion_id  INTEGER NOT NULL REFERENCES agent_jobs (id),
+    kind          TEXT NOT NULL CHECK (kind IN ('listing', 'group', 'forum', 'own_social')),
+    name          TEXT NOT NULL,
+    url           TEXT NOT NULL DEFAULT '',
+    why           TEXT NOT NULL DEFAULT '',
+    account       TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL DEFAULT 'found' CHECK (source IN ('found', 'reused')),
+    status        TEXT NOT NULL DEFAULT 'planned'
+                  CHECK (status IN ('planned', 'queued', 'working', 'posted', 'already_listed', 'needs_you',
+                                    'skipped', 'failed')),
+    job_id        INTEGER,
+    scheduled_at  TEXT,
+    result_url    TEXT,
+    note          TEXT,
+    asks          INTEGER NOT NULL DEFAULT 0,
+    need_site     TEXT,
+    need_url      TEXT,
+    need_reason   TEXT,
+    need_until    TEXT,
+    data          TEXT,          -- extra JSON, e.g. the Social Autopilot channel ids
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_promotion_targets ON promotion_targets (promotion_id);
+CREATE INDEX IF NOT EXISTS idx_promotion_targets_job ON promotion_targets (job_id);
 
 CREATE TABLE IF NOT EXISTS agent_steps (
     id              INTEGER PRIMARY KEY,
@@ -122,6 +152,9 @@ CREATE TABLE IF NOT EXISTS worker_state (
 """
 )
 
+# Columns added to agent_jobs after the rebuild (ALTER TABLE is enough for these).
+JOB_COLUMNS = {"parent_id": "INTEGER", "template_values": "TEXT"}
+
 # Columns added to site_profiles after the first release.
 SITE_PROFILE_COLUMNS = {
     "label": "TEXT NOT NULL DEFAULT ''",
@@ -162,6 +195,8 @@ class Job:
     finished_at: str | None
     template_key: str | None = None
     cancel_requested: bool = False
+    parent_id: int | None = None
+    template_values: dict[str, Any] | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Job:
@@ -170,6 +205,8 @@ class Job:
         data["tools_allowed"] = json.loads(data["tools_allowed"] or "[]")
         data["result"] = json.loads(data["result"]) if data["result"] else None
         data["cancel_requested"] = bool(data.get("cancel_requested"))
+        values = data.get("template_values")
+        data["template_values"] = json.loads(values) if values else None
         return cls(**data)
 
 
@@ -184,6 +221,11 @@ class JobStore:
         self._migrate_jobs_table()
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
+            have_jobs = {r["name"] for r in db.execute("PRAGMA table_info(agent_jobs)")}
+            if have_jobs:
+                for column, ddl in JOB_COLUMNS.items():
+                    if column not in have_jobs:
+                        db.execute(f"ALTER TABLE agent_jobs ADD COLUMN {column} {ddl}")
             db.executescript(SCHEMA)
             have = {r["name"] for r in db.execute("PRAGMA table_info(site_profiles)")}
             for column, ddl in SITE_PROFILE_COLUMNS.items():
@@ -245,6 +287,8 @@ class JobStore:
         idempotency_key: str | None = None,
         created_by: str = "cli",
         template_key: str | None = None,
+        parent_id: int | None = None,
+        template_values: dict[str, Any] | None = None,
     ) -> tuple[int, bool]:
         """Add a job. Returns (job_id, created). A repeated idempotency key returns the existing job."""
         stamp = iso(now())
@@ -255,8 +299,9 @@ class JobStore:
                     return row["id"], False
             cur = db.execute(
                 """INSERT INTO agent_jobs (type, title, payload, tools_allowed, priority, run_at,
-                       idempotency_key, created_by, created_at, updated_at, template_key)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       idempotency_key, created_by, created_at, updated_at, template_key, parent_id,
+                       template_values)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     type,
                     title,
@@ -269,6 +314,8 @@ class JobStore:
                     stamp,
                     stamp,
                     template_key,
+                    parent_id,
+                    json.dumps(template_values) if template_values is not None else None,
                 ),
             )
             return int(cur.lastrowid), True
@@ -384,6 +431,35 @@ class JobStore:
             )
         return self.require(job_id)
 
+    def rename(self, job_id: int, title: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE agent_jobs SET title = ?, updated_at = ? WHERE id = ?", (title[:120], iso(now()), job_id)
+            )
+
+    def wait_for_joe(self, job_id: int, until: datetime, reason: str) -> None:
+        """Park a job until Joe has done something on a site (or the wait runs out). It starts over then."""
+        with self._connect() as db:
+            db.execute(
+                """UPDATE agent_jobs SET status = 'queued', attempts = 0, checkpoint = NULL, error = ?,
+                       run_at = ?, updated_at = ? WHERE id = ?""",
+                (f"Waiting for you: {reason}"[:500], iso(until), iso(now()), job_id),
+            )
+
+    def wake(self, job_id: int) -> None:
+        """Run a queued job now instead of at its scheduled time."""
+        stamp = iso(now())
+        with self._connect() as db:
+            db.execute(
+                "UPDATE agent_jobs SET run_at = ?, updated_at = ? WHERE id = ? AND status = 'queued'",
+                (stamp, stamp, job_id),
+            )
+
+    def children(self, parent_id: int) -> list[Job]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM agent_jobs WHERE parent_id = ? ORDER BY id", (parent_id,)).fetchall()
+        return [Job.from_row(r) for r in rows]
+
     def get(self, job_id: int) -> Job | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM agent_jobs WHERE id = ?", (job_id,)).fetchone()
@@ -400,10 +476,18 @@ class JobStore:
         return jobs
 
     def search(
-        self, statuses: list[str] | None = None, q: str = "", *, limit: int = 20, offset: int = 0
+        self,
+        statuses: list[str] | None = None,
+        q: str = "",
+        *,
+        limit: int = 20,
+        offset: int = 0,
+        include_children: bool = True,
     ) -> tuple[list[Job], int]:
         """Jobs newest first, filtered by status and title text. Returns (page, total matching)."""
         where, params = [], []
+        if not include_children:
+            where.append("parent_id IS NULL")
         if statuses:
             where.append(f"status IN ({', '.join('?' for _ in statuses)})")
             params.extend(statuses)

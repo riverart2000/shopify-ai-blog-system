@@ -9,9 +9,9 @@ from task_agent.templates import BUILTINS, TemplateError, TemplateStore, render,
 def test_fields_from_placeholders():
     fields = template_fields("Find {how_many=5} in {location}. {details?} Again {location}.")
     assert fields == [
-        {"name": "how_many", "label": "How many", "required": False, "default": "5"},
-        {"name": "location", "label": "Location", "required": True, "default": ""},
-        {"name": "details", "label": "Details", "required": False, "default": ""},
+        {"name": "how_many", "label": "How many", "required": False, "default": "5", "multiline": False},
+        {"name": "location", "label": "Location", "required": True, "default": "", "multiline": False},
+        {"name": "details", "label": "Details", "required": False, "default": "", "multiline": False},
     ]
 
 
@@ -25,9 +25,9 @@ def test_render_fills_defaults_drops_empty_optionals_and_reports_missing():
 
 @pytest.mark.parametrize("template", BUILTINS, ids=lambda t: t.key)
 def test_every_builtin_builds_a_valid_job(store, template):
-    values = {f["name"]: "Example" for f in template.fields}
-    title, payload = TemplateStore(store).build_job(template, values)
     spec = TASKS[template.task_type]
+    values = {f["name"]: spec.sample_values.get(f["name"], "Example") for f in template.fields}
+    title, payload = TemplateStore(store).build_job(template, values)
     assert spec.payload_model.model_validate(payload)
     assert "{" not in payload[spec.prompt_field] and title
 

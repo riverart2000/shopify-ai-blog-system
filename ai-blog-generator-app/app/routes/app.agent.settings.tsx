@@ -6,8 +6,9 @@ import { AgentTime, LoadError } from "../components/agent/parts";
 import { ActionBanner, Badge, Banner, Card, EmptyState, Field, Hidden, Toggle, useBusy, usePolling } from "../components/social/ui";
 import {
   TaskAgentError, errorMessage, formBool, formInt, formString, runAgentIntent, taFetch,
-  type Account, type AccountSaveResponse, type AccountsResponse, type AgentActionResult, type EmailAccount,
-  type EmailSaveResponse, type EmailTestResponse, type MessageResponse, type SettingsResponse,
+  type Account, type AccountSaveResponse, type AccountsResponse, type AgentActionResult, type BrowserResponse,
+  type BrowserStatus, type EmailAccount, type EmailSaveResponse, type EmailTestResponse, type MessageResponse,
+  type SettingsResponse,
   type TelegramResponse, type TelegramStatus,
 } from "../lib/task-agent.server";
 import { seg } from "../lib/task-agent.shared";
@@ -32,6 +33,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     accounts: accountsResult.status === "fulfilled" ? accountsResult.value.accounts : ([] as Account[]),
     email: accountsResult.status === "fulfilled" ? accountsResult.value.email : (null as EmailAccount | null),
     accountsError: accountsResult.status === "rejected" ? errorMessage(accountsResult.reason) : "",
+    browser: accountsResult.status === "fulfilled" ? accountsResult.value.browser ?? null : null,
     telegram: telegramResult.status === "fulfilled" ? telegramResult.value.telegram : (null as TelegramStatus | null),
     telegramError: telegramResult.status === "rejected" ? errorMessage(telegramResult.reason) : "",
     editSite,
@@ -150,6 +152,20 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SettingsA
       const deleted = await taFetch<MessageResponse>(`/accounts/${seg(site)}/delete`, { method: "POST" });
       return { message: deleted.message };
     }, site);
+    return { ...result, section: "logins" };
+  }
+
+  if (intent === "open_browser") {
+    const result = await runAgentIntent(intent, async () => {
+      let url = formString(form, "url");
+      // "meetup.com" is fine too: add the https:// for them.
+      if (url && !/^https?:\/\//i.test(url)) {
+        if (/\s/.test(url) || !url.includes(".")) throw new TaskAgentError("That doesn't look like a web address. Try something like https://www.meetup.com/login/, or leave it blank.");
+        url = `https://${url}`;
+      }
+      const opened = await taFetch<BrowserResponse>("/browser/open", { body: url ? { url } : {}, timeoutMs: 45_000 });
+      return { message: opened.message || "The shared browser is open on the Mac." };
+    });
     return { ...result, section: "logins" };
   }
 
@@ -407,8 +423,59 @@ function AccountEditor({ account }: { account: Account | null }) {
   );
 }
 
-function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }: {
-  accounts: Account[]; editSite: string; newAccount: boolean; savedAccount: string; result?: SettingsActionResult;
+function BrowserState({ browser }: { browser: BrowserStatus }) {
+  const loginTabs = browser.login_tabs || [];
+  return (
+    <div className="sa-row sa-small">
+      {!browser.running ? (
+        <Badge tone="neutral" title="It starts by itself when a task or a login needs it">Shared browser closed</Badge>
+      ) : browser.visible ? (
+        <Badge tone="success">Shared browser open on the Mac</Badge>
+      ) : (
+        <Badge tone="info" title="An agent is using it out of sight">Shared browser running in the background</Badge>
+      )}
+      {browser.running && browser.open_tabs ? <span className="sa-muted">{browser.open_tabs} tab{browser.open_tabs === 1 ? "" : "s"}</span> : null}
+      {loginTabs.length ? <Badge tone="attention" title="Log in on the Mac, then close the tab">Login tabs open: {loginTabs.join(", ")}</Badge> : null}
+      {browser.busy_job_id ? (
+        <span className="sa-muted">In use by <Link to={`/app/agent/tasks/${seg(browser.busy_job_id)}`}>task {browser.busy_job_id}</Link></span>
+      ) : null}
+      {!browser.profile_saved ? <span className="sa-muted">No logins saved yet</span> : null}
+    </div>
+  );
+}
+
+function SharedBrowserPanel({ browser }: { browser: BrowserStatus | null }) {
+  const { busy, isSubmitting } = useBusy();
+  return (
+    <Card muted>
+      <div className="sa-stack-sm">
+        <strong>Shared browser</strong>
+        <p className="sa-small">
+          All agents share one browser. Log in to a site once (here or when a task asks you on Telegram) and every task can use it.
+        </p>
+        {browser ? <BrowserState browser={browser} /> : null}
+        <Form method="post" className="sa-row" preventScrollReset>
+          <Hidden values={{ intent: "open_browser" }} />
+          <input
+            type="text"
+            name="url"
+            inputMode="url"
+            placeholder="Page to open (optional), e.g. https://www.meetup.com/login/"
+            aria-label="Page to open (optional)"
+            style={{ flex: "1 1 260px", minWidth: 0 }}
+          />
+          <button type="submit" className="sa-btn" disabled={busy} title="Shows the shared browser on the Mac so you can log in to anything">
+            {isSubmitting("open_browser") ? "Opening…" : "Open shared browser"}
+          </button>
+        </Form>
+      </div>
+    </Card>
+  );
+}
+
+function LoginsSection({ accounts, browser, editSite, newAccount, savedAccount, result }: {
+  accounts: Account[]; browser: BrowserStatus | null; editSite: string; newAccount: boolean; savedAccount: string;
+  result?: SettingsActionResult;
 }) {
   const { busy, isSubmitting } = useBusy();
   const editing = editSite ? accounts.find((account) => account.site === editSite) || null : null;
@@ -421,16 +488,17 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
       {savedAccount && !result ? (
         <Banner tone="success">
           Saved the {accounts.find((account) => account.site === savedAccount)?.label || savedAccount} login.
-          {accounts.find((account) => account.site === savedAccount)?.has_profile ? "" : " Next: click “Open login window” and log in once on the Mac."}
+          {accounts.find((account) => account.site === savedAccount)?.has_profile ? "" : " Next: click “Open login window” and log in once in the shared browser on the Mac."}
         </Banner>
       ) : null}
       <div className="sa-spread" style={{ marginBottom: 10 }}>
         <p className="sa-muted" style={{ maxWidth: 640 }}>
-          Accounts the agent can use, like a member of staff would. Each site gets its own saved browser login on the Mac.
-          &ldquo;Open login window&rdquo; opens a browser window on the Mac. Log in by hand, including any 2-step code, then close the window to save the login.
+          Accounts the agent can use, like a member of staff would. &ldquo;Open login window&rdquo; opens that site&apos;s login page as a
+          tab in the shared browser on the Mac. Log in by hand, including any 2-step code, then close the tab.
         </p>
         {!showEditor ? <Link to="?new_account=1#logins" className="sa-btn sa-btn-primary" preventScrollReset>Add a site login</Link> : null}
       </div>
+      <div style={{ marginBottom: 12 }}><SharedBrowserPanel browser={browser} /></div>
       {showEditor ? <div style={{ marginBottom: 12 }}><AccountEditor account={editing} /></div> : null}
       {accounts.length ? (
         <div className="sa-table-wrap">
@@ -448,11 +516,11 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
                   <td>{account.has_password ? <Badge tone="success" title="Stored in the Mac's Keychain">Saved</Badge> : <Badge tone="neutral">None</Badge>}</td>
                   <td className="sa-nowrap">
                     {account.login_window_open ? (
-                      <Badge tone="attention" title="Log in on the Mac, then close the window">Window open</Badge>
+                      <Badge tone="attention" title="Log in on the Mac, then close the tab">Tab open</Badge>
                     ) : account.has_profile ? (
                       <Badge tone="success">Saved</Badge>
                     ) : (
-                      <Badge tone="warning" title="Open the login window once to save it">Not logged in yet</Badge>
+                      <Badge tone="warning" title="Open the login window and log in once">Not logged in yet</Badge>
                     )}
                     {account.last_login_ok_at ? <div className="sa-small sa-muted">Saved <AgentTime iso={account.last_login_ok_at} relative /></div> : null}
                   </td>
@@ -464,7 +532,7 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
                           type="submit"
                           className="sa-btn sa-btn-sm sa-btn-primary"
                           disabled={busy || account.login_window_open}
-                          title="Opens a browser window on the Mac. Log in by hand, including any 2-step code, then close the window to save the login."
+                          title="Opens this site's login page as a tab in the shared browser on the Mac. Log in by hand, including any 2-step code, then close the tab."
                         >
                           {isSubmitting("login_window", ["site", account.site]) ? "Opening…" : "Open login window"}
                         </button>
@@ -475,7 +543,7 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
                         className="sa-inline-form"
                         preventScrollReset
                         onSubmit={(event) => {
-                          if (!window.confirm(`Delete the ${account.label} login? This removes its password from the Keychain and its saved browser login.`)) event.preventDefault();
+                          if (!window.confirm(`Delete the ${account.label} login? Its saved username and password are removed.`)) event.preventDefault();
                         }}
                       >
                         <Hidden values={{ intent: "delete_account", site: account.site }} />
@@ -490,7 +558,7 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
         </div>
       ) : !showEditor ? (
         <EmptyState title="No site logins yet">
-          Add the sites the agent should use, like Eventbrite or Meetup. Then open the login window once to save the login.
+          Add the sites the agent should use, like Eventbrite or Meetup. Then open the login window and log in once.
         </EmptyState>
       ) : null}
     </s-section>
@@ -501,7 +569,9 @@ export default function AgentSettings() {
   const data = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>() as SettingsActionResult | undefined;
   usePolling(
-    data.accounts.some((account) => account.login_window_open) || Boolean(data.telegram?.configured && !data.telegram.linked),
+    data.accounts.some((account) => account.login_window_open)
+      || Boolean(data.browser?.login_tabs?.length)
+      || Boolean(data.telegram?.configured && !data.telegram.linked),
     4_000,
   );
   const unscoped = result && !result.section ? result : undefined;
@@ -524,7 +594,14 @@ export default function AgentSettings() {
         <s-section heading="Email account and site logins"><LoadError error={data.accountsError} /></s-section>
       )}
       {data.email ? (
-        <LoginsSection accounts={data.accounts} editSite={data.editSite} newAccount={data.newAccount} savedAccount={data.savedAccount} result={result} />
+        <LoginsSection
+          accounts={data.accounts}
+          browser={data.browser}
+          editSite={data.editSite}
+          newAccount={data.newAccount}
+          savedAccount={data.savedAccount}
+          result={result}
+        />
       ) : null}
       {!data.settings && !data.email && !data.settingsError && !data.accountsError ? (
         <s-section><EmptyState title="Nothing to show" /></s-section>

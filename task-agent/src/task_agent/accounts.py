@@ -1,15 +1,14 @@
-"""Site logins: a label, login page and username per site, its password in the Keychain, and a saved
-browser profile (cookies), so the agent can work on the site as Joe without logging in every time.
+"""Site logins: a label, login page and username per site, its password in the Keychain. Every site shares the
+one saved browser (task_agent.browser), so a login done once — by Joe or by an agent — works for every task.
 
-"Open login window" shows a real browser on the Mac with that site's profile. Joe logs in by hand
-(2-step codes work); closing the window saves the login.
+"Open login window" opens the site's login page as a tab in the shared browser, shown on the Mac. Joe logs in
+by hand (2-step codes work); the login is kept in the shared profile. Closing the tab marks it as done.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-import shutil
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,7 @@ from urllib.parse import urlsplit
 
 import structlog
 
+from task_agent.browser import BrowserHub
 from task_agent.db import JobStore, iso, now
 from task_agent.keychain import delete_secret, get_secret, has_secret, set_secret
 
@@ -32,20 +32,37 @@ def secret_name(site: str) -> str:
     return f"site:{site}"
 
 
+SHARED_PROFILE = "shared"
+
+
 class AccountStore:
     def __init__(self, store: JobStore, profiles_dir: Path) -> None:
         self.store = store
         self.profiles_dir = profiles_dir
 
-    def profile_dir(self, site: str) -> Path:
-        path = (self.profiles_dir / site).resolve()
-        if path.parent != self.profiles_dir.resolve():
-            raise AccountError("Bad site name.")
-        return path
+    @property
+    def shared_profile(self) -> Path:
+        return self.profiles_dir / SHARED_PROFILE
 
     def has_profile(self, site: str) -> bool:
-        path = self.profile_dir(site)
-        return path.is_dir() and any(path.iterdir())
+        """The shared browser has been used and this site's login has worked there at least once."""
+        path = self.shared_profile
+        with self.store._connect() as db:
+            row = db.execute("SELECT last_login_ok_at FROM site_profiles WHERE site = ?", (site,)).fetchone()
+        return bool(path.is_dir() and any(path.iterdir()) and row and row["last_login_ok_at"])
+
+    def password(self, site: str) -> str:
+        return get_secret(secret_name(site)) or ""
+
+    def find_by_host(self, host: str) -> dict[str, Any] | None:
+        host = host.lower().removeprefix("www.")
+        for account in self.list():
+            login_host = (urlsplit(account["login_url"]).hostname or "").lower().removeprefix("www.")
+            if login_host and (
+                host == login_host or host.endswith("." + login_host) or login_host.endswith("." + host)
+            ):
+                return account
+        return None
 
     def list(self) -> list[dict[str, Any]]:
         with self.store._connect() as db:
@@ -89,18 +106,16 @@ class AccountStore:
                 db.execute(
                     """INSERT INTO site_profiles (site, profile_dir, label, login_url, username, notes,
                            created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (site, str(self.profile_dir(site)), label, login_url, username, notes.strip(), stamp, stamp),
+                    (site, str(self.shared_profile), label, login_url, username, notes.strip(), stamp, stamp),
                 )
         if password:
             set_secret(secret_name(site), password)
         return self.get(site)
 
     def delete(self, site: str) -> None:
+        """Forget the login and its password. The shared browser keeps its cookies (log out there if needed)."""
         self.get(site)
         delete_secret(secret_name(site))
-        path = self.profile_dir(site)
-        if path.exists():
-            shutil.rmtree(path)
         with self.store._connect() as db:
             db.execute("DELETE FROM site_profiles WHERE site = ?", (site,))
 
@@ -131,60 +146,78 @@ class AccountStore:
 
 
 class LoginWindows:
-    """At most one visible login window per site, each in its own saved browser profile."""
+    """Login tabs in the shared browser, shown on the Mac. At most one per site; each closes itself after a while."""
 
-    def __init__(self, accounts: AccountStore, minutes: int = 30) -> None:
+    def __init__(self, accounts: AccountStore, browser: BrowserHub, minutes: int = 30) -> None:
         self.accounts = accounts
+        self.browser = browser
         self.minutes = minutes
-        self._open: dict[str, asyncio.Task[None]] = {}
+        self._timers: dict[str, asyncio.Task[None]] = {}
+        browser.on_login_closed = self._closed
 
     def is_open(self, site: str) -> bool:
-        task = self._open.get(site)
-        return bool(task and not task.done())
+        return self.browser.has_tab(f"login:{site}")
 
     def open(self, site: str) -> None:
         account = self.accounts.get(site)
         if self.is_open(site):
-            raise AccountError(f"A login window for {account['label']} is already open on the Mac.")
-        self._open[site] = asyncio.create_task(self._run(account), name=f"login-window:{site}")
+            raise AccountError(f"A login tab for {account['label']} is already open on the Mac.")
+        self._timers[site] = asyncio.create_task(self._run(account), name=f"login-window:{site}")
+
+    async def show(self, owner_site: str, url: str, minutes: int) -> None:
+        """Open any page for Joe (used when a task needs him), closed again after `minutes`."""
+        await self.browser.show(f"login:{owner_site}", url)
+        self._close_later(owner_site, minutes)
+
+    async def close(self, site: str) -> None:
+        timer = self._timers.pop(site, None)
+        if timer:
+            timer.cancel()
+        await self.browser.release(f"login:{site}")
 
     async def close_all(self) -> None:
-        for task in list(self._open.values()):
+        for task in list(self._timers.values()):
             task.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await task
+        self._timers.clear()
 
-    async def _run(self, account: dict[str, Any]) -> None:
-        from playwright.async_api import async_playwright
+    def _close_later(self, site: str, minutes: int) -> None:
+        old = self._timers.pop(site, None)
+        if old and old is not asyncio.current_task():
+            old.cancel()
 
-        site = account["site"]
-        profile = self.accounts.profile_dir(site)
-        profile.mkdir(parents=True, exist_ok=True, mode=0o700)
-        log.info("login_window.open", site=site)
-        try:
-            async with async_playwright() as pw:
-                context = await pw.chromium.launch_persistent_context(
-                    str(profile), headless=False, viewport=None, args=["--no-first-run", "--no-default-browser-check"]
-                )
-                closed = asyncio.Event()
-                context.on("close", lambda _ctx: closed.set())
-                page = context.pages[0] if context.pages else await context.new_page()
-                await page.goto(account["login_url"], wait_until="domcontentloaded", timeout=60_000)
-                await _prefill(page, account["username"], get_secret(secret_name(site)) or "")
-                try:
-                    await asyncio.wait_for(closed.wait(), timeout=self.minutes * 60)
-                except TimeoutError:
-                    log.info("login_window.timeout", site=site)
-                    await context.close()
+        async def later() -> None:
+            await asyncio.sleep(minutes * 60)
+            log.info("login_window.timeout", site=site)
+            await self.browser.release(f"login:{site}")
+
+        self._timers[site] = asyncio.create_task(later(), name=f"login-timeout:{site}")
+
+    def _closed(self, site: str) -> None:
+        timer = self._timers.pop(site, None)
+        if timer and timer is not asyncio.current_task():
+            timer.cancel()
+        with suppress(LookupError):
+            self.accounts.get(site)
             self.accounts.mark_login_saved(site)
             log.info("login_window.saved", site=site)
+
+    async def _run(self, account: dict[str, Any]) -> None:
+        site = account["site"]
+        log.info("login_window.open", site=site)
+        try:
+            page = await self.browser.show(f"login:{site}", account["login_url"])
+            await prefill(page, account["username"], self.accounts.password(site))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             log.warning("login_window.failed", site=site, error=f"{type(exc).__name__}: {exc}")
+            return
+        self._close_later(site, self.minutes)
 
 
-async def _prefill(page: Any, username: str, password: str) -> None:
+async def prefill(page: Any, username: str, password: str) -> None:
     """Best effort: type the saved username and password into the login form. Never submits it."""
     with suppress(Exception):
         if username:

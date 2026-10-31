@@ -2,25 +2,77 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, Link, useActionData, useLoaderData } from "react-router";
 
 import { taskTypeLabel, LoadError } from "../components/agent/parts";
-import { ActionBanner, Badge, Card, EmptyState, Field, Hidden, useBusy } from "../components/social/ui";
+import { ActionBanner, Badge, Banner, Card, EmptyState, Field, Hidden, useBusy } from "../components/social/ui";
 import {
   TaskAgentError, errorMessage, formString, runAgentIntent, taFetch,
-  type AgentActionResult, type JobActionResponse, type PreviewResponse, type Template, type TemplatesResponse,
+  type AgentActionResult, type JobActionResponse, type JobResponse, type PreviewResponse, type Template,
+  type TemplateField, type TemplatesResponse,
 } from "../lib/task-agent.server";
+import { seg } from "../lib/task-agent.shared";
 import { authenticate } from "../shopify.server";
 
 export const handle = { title: "New task" };
 
+/** The task being cloned (`?clone=<jobId>`): its template, title and the values it was created with. */
+type CloneInfo = {
+  id: number;
+  templateKey: string;
+  title: string;
+  priority: number;
+  /** Null when the task is older than cloning, so its values weren't kept. */
+  values: Record<string, string> | null;
+  error: string;
+};
+
+/** A saved template value → the text to put back in its box (lists go one per line). */
+function cloneValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map((item) => (typeof item === "string" ? item : JSON.stringify(item))).join("\n");
+  return JSON.stringify(value);
+}
+
+async function loadClone(raw: string): Promise<CloneInfo> {
+  const id = /^\d+$/.test(raw) ? Number(raw) : 0;
+  const empty: CloneInfo = { id, templateKey: "", title: "", priority: 0, values: null, error: "" };
+  if (!id) return { ...empty, error: `“${raw}” isn't a task number.` };
+  try {
+    const { job } = await taFetch<JobResponse>(`/jobs/${seg(id)}`);
+    if (!job.template_key) return { ...empty, error: `Task ${id} wasn't made from a template, so it can't be copied.` };
+    const saved = job.template_values && typeof job.template_values === "object" ? job.template_values : null;
+    // Only a title Joe typed is copied ("_title"); a made-up one would name the old event.
+    const typedTitle = saved && typeof saved._title === "string" ? saved._title : "";
+    return {
+      ...empty,
+      templateKey: job.template_key,
+      title: typedTitle,
+      priority: Number.isInteger(job.priority) ? job.priority : 0,
+      values: saved ? Object.fromEntries(Object.entries(saved).map(([name, value]) => [name, cloneValue(value)])) : null,
+    };
+  } catch (error) {
+    return { ...empty, error: errorMessage(error) };
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
-  const selectedKey = new URL(request.url).searchParams.get("template") || "";
-  try {
-    const data = await taFetch<TemplatesResponse>("/templates");
-    const templates = data.templates.filter((template) => template.enabled);
-    return { templates, taskTypes: data.task_types, selectedKey, error: "" };
-  } catch (error) {
-    return { templates: [] as Template[], taskTypes: [] as TemplatesResponse["task_types"], selectedKey, error: errorMessage(error) };
+  const params = new URL(request.url).searchParams;
+  const cloneRaw = (params.get("clone") || "").trim();
+  const [templatesResult, clone] = await Promise.all([
+    taFetch<TemplatesResponse>("/templates").then(
+      (data) => ({ data, error: "" }),
+      (error: unknown) => ({ data: null, error: errorMessage(error) }),
+    ),
+    cloneRaw ? loadClone(cloneRaw) : Promise.resolve(null),
+  ]);
+  // Cloning picks the old task's template, whatever ?template= says.
+  const selectedKey = clone?.templateKey || params.get("template") || "";
+  if (!templatesResult.data) {
+    return { templates: [] as Template[], taskTypes: [] as TemplatesResponse["task_types"], selectedKey, clone, error: templatesResult.error };
   }
+  const templates = templatesResult.data.templates.filter((template) => template.enabled);
+  return { templates, taskTypes: templatesResult.data.task_types, selectedKey, clone, error: "" };
 };
 
 type NewTaskResult = AgentActionResult & { preview?: PreviewResponse };
@@ -28,7 +80,8 @@ type NewTaskResult = AgentActionResult & { preview?: PreviewResponse };
 function fieldValues(form: FormData): Record<string, string> {
   const values: Record<string, string> = {};
   for (const [key, value] of form.entries()) {
-    if (key.startsWith("field:") && typeof value === "string") values[key.slice(6)] = value.trim();
+    // Textareas submit line breaks as \r\n; keep them, as plain \n.
+    if (key.startsWith("field:") && typeof value === "string") values[key.slice(6)] = value.replace(/\r\n?/g, "\n").trim();
   }
   return values;
 }
@@ -61,8 +114,13 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<NewTaskRe
       const priorityRaw = formString(form, "priority") || "0";
       const priority = Number(priorityRaw);
       if (!Number.isInteger(priority)) throw new TaskAgentError(`Priority must be a whole number (got “${priorityRaw}”).`);
+      const cloneOf = formString(form, "clone_of");
+      if (cloneOf && !/^\d+$/.test(cloneOf)) throw new TaskAgentError(`“${cloneOf}” isn't a task number.`);
       const created = await taFetch<JobActionResponse>("/jobs", {
-        body: { template_key: templateKey, values, ...(title ? { title } : {}), priority },
+        body: {
+          template_key: templateKey, values, ...(title ? { title } : {}), priority,
+          ...(cloneOf ? { clone_of: Number(cloneOf) } : {}),
+        },
       });
       jobId = created.job.id;
       return { message: created.message };
@@ -101,44 +159,69 @@ function TemplatePicker({ templates, selectedKey }: { templates: Template[]; sel
   );
 }
 
-function TaskForm({ template, result }: { template: Template; result?: NewTaskResult }) {
+/** A blank whose default is "yes" or "no" is a yes/no question: show a choice instead of a text box. */
+function isYesNo(field: TemplateField): boolean {
+  return /^(yes|no)$/i.test((field.default ?? "").trim());
+}
+
+function FieldInput({ field, value }: { field: TemplateField; value: string }) {
+  const name = `field:${field.name}`;
+  if (field.multiline) {
+    return <textarea name={name} rows={4} defaultValue={value} required={field.required} aria-required={field.required} />;
+  }
+  if (isYesNo(field)) {
+    return (
+      <select name={name} defaultValue={/^n/i.test(value.trim()) ? "no" : "yes"}>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    );
+  }
+  return <input type="text" name={name} defaultValue={value} required={field.required} aria-required={field.required} />;
+}
+
+function TaskForm({ template, result, clone }: { template: Template; result?: NewTaskResult; clone: CloneInfo | null }) {
   const { busy, isSubmitting } = useBusy();
   const preview = result?.intent === "preview" ? result.preview : undefined;
   const missing = new Set(preview?.missing || []);
+  const valueFor = (field: TemplateField) => clone?.values?.[field.name] ?? field.default ?? "";
 
   return (
-    <Form method="post" className="sa-stack" key={template.key}>
-      <Hidden values={{ template_key: template.key }} />
+    <Form method="post" className="sa-stack" key={`${template.key}:${clone?.id || ""}`}>
+      <Hidden values={{ template_key: template.key, ...(clone ? { clone_of: clone.id } : {}) }} />
       {template.fields.length ? (
         <div className="sa-grid-2">
-          {template.fields.map((field) => (
-            <Field
-              key={field.name}
-              label={<>{field.label}{field.required ? <span className="sa-error-text"> *</span> : <span className="sa-muted"> (optional)</span>}</>}
-              error={missing.has(field.name) ? "Please fill this in." : undefined}
-            >
-              <input
-                type="text"
-                name={`field:${field.name}`}
-                defaultValue={field.default ?? ""}
-                required={field.required}
-                aria-required={field.required}
-              />
-            </Field>
-          ))}
+          {template.fields.map((field) => {
+            const box = (
+              <Field
+                key={field.name}
+                label={<>{field.label}{field.required ? <span className="sa-error-text"> *</span> : <span className="sa-muted"> (optional)</span>}</>}
+                error={missing.has(field.name) ? "Please fill this in." : undefined}
+              >
+                <FieldInput field={field} value={valueFor(field)} />
+              </Field>
+            );
+            // Lists of links, accounts and notes get the full width.
+            return field.multiline ? <div key={field.name} style={{ gridColumn: "1 / -1" }}>{box}</div> : box;
+          })}
         </div>
       ) : (
         <p className="sa-muted">This template has no blanks to fill in — it&apos;s ready to queue.</p>
       )}
 
-      <details>
+      <details open={Boolean(clone?.title)}>
         <summary className="sa-small">More options</summary>
         <div className="sa-grid-2" style={{ marginTop: 8 }}>
-          <Field label="Task name (optional)" help="Shown in the task list. Leave blank to name it from the details above.">
-            <input type="text" name="title" maxLength={120} />
+          <Field
+            label="Task name (optional)"
+            help={clone?.title
+              ? `Copied from task ${clone.id}. Change it if it no longer fits, or clear it to name it from the details above.`
+              : "Shown in the task list. Leave blank to name it from the details above."}
+          >
+            <input type="text" name="title" maxLength={120} defaultValue={clone?.title || ""} />
           </Field>
           <Field label="Priority" help="Higher numbers run first. 0 is normal.">
-            <input type="number" name="priority" defaultValue={0} min={-10} max={10} step={1} />
+            <input type="number" name="priority" defaultValue={clone?.priority ?? 0} min={-10} max={10} step={1} />
           </Field>
         </div>
       </details>
@@ -168,10 +251,36 @@ function TaskForm({ template, result }: { template: Template; result?: NewTaskRe
   );
 }
 
+/** What happened when copying `?clone=` (shown above the form). */
+function CloneNote({ clone, selected }: { clone: CloneInfo; selected: Template | null }) {
+  const task = <Link to={`/app/agent/tasks/${seg(clone.id)}`}>task {clone.id}</Link>;
+  if (clone.error) {
+    return <Banner tone="warning" title={clone.id ? `Couldn't copy task ${clone.id}` : "Couldn't copy that task"}>{clone.error}</Banner>;
+  }
+  if (!selected) {
+    return (
+      <Banner tone="warning" title={`Couldn't copy task ${clone.id}`}>
+        Its template (“{clone.templateKey}”) is switched off or was deleted. Turn it back on in{" "}
+        <Link to="/app/agent/templates">Templates</Link>, or pick another template below.
+      </Banner>
+    );
+  }
+  if (!clone.values) {
+    return (
+      <Banner tone="warning">
+        Picked the same template as {task}, but its details couldn&apos;t be copied (it&apos;s an older task). Fill them in again below.
+      </Banner>
+    );
+  }
+  return <Banner tone="info">Copied from {task}. Change what&apos;s different (e.g. the event links) and queue it.</Banner>;
+}
+
 export default function AgentNewTask() {
-  const { templates, selectedKey, error } = useLoaderData<typeof loader>();
+  const { templates, selectedKey, clone, error } = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>() as NewTaskResult | undefined;
   const selected = templates.find((template) => template.key === selectedKey) || null;
+  // Only copy values into the template they came from.
+  const cloneForForm = clone && !clone.error && selected && clone.templateKey === selected.key ? clone : null;
 
   if (!templates.length) {
     return (
@@ -191,6 +300,7 @@ export default function AgentNewTask() {
       <LoadError error={error} />
       {result && result.intent !== "preview" ? <ActionBanner result={result} /> : null}
       {result?.intent === "preview" && !result.ok ? <ActionBanner result={result} /> : null}
+      {clone ? <CloneNote clone={clone} selected={selected} /> : null}
       <s-section heading="1. Pick a template">
         <p className="sa-muted" style={{ marginBottom: 10 }}>
           Each template is a ready-made task. You fill in the blanks; the agent does the legwork and reports back with its sources.{" "}
@@ -200,7 +310,7 @@ export default function AgentNewTask() {
       </s-section>
       {selected ? (
         <s-section heading={`2. Fill in the details — ${selected.name}`}>
-          <TaskForm template={selected} result={result} />
+          <TaskForm template={selected} result={result} clone={cloneForForm} />
         </s-section>
       ) : (
         <s-section>

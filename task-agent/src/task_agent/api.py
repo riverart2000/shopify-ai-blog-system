@@ -17,13 +17,16 @@ from pydantic import BaseModel, Field, ValidationError
 
 from task_agent import runtime
 from task_agent.accounts import AccountError, AccountStore, LoginWindows
+from task_agent.browser import BrowserHub
 from task_agent.config import Settings
 from task_agent.db import JOB_STATUSES, Job, JobError, JobStore, now
 from task_agent.email_account import EmailError, EmailStore
-from task_agent.tasks import TASKS
+from task_agent.promotion import PromotionStore, target_done, target_retry, target_skip
+from task_agent.tasks import TASKS, TEMPLATE_TYPES
 from task_agent.telegram.client import TelegramAPI, TelegramError
 from task_agent.telegram.store import TelegramStore
 from task_agent.templates import TemplateError, TemplateStore, default_title, render
+from task_agent.tools.web import BlockedURL, check_public_url
 
 NON_CHAT_MODELS = ("tts", "whisper", "bge", "embed", "asr", "rerank")
 
@@ -37,18 +40,23 @@ class AppContext:
     windows: LoginWindows
     email: EmailStore
     telegram: TelegramStore
+    browser: BrowserHub
+    promotions: PromotionStore
 
     @classmethod
-    def build(cls, store: JobStore, settings: Settings) -> AppContext:
+    def build(cls, store: JobStore, settings: Settings, browser: BrowserHub | None = None) -> AppContext:
         accounts = AccountStore(store, settings.path(settings.profiles_dir))
+        browser = browser or BrowserHub(accounts.shared_profile)
         return cls(
             store=store,
             settings=settings,
             templates=TemplateStore(store),
             accounts=accounts,
-            windows=LoginWindows(accounts, settings.login_window_minutes),
+            windows=LoginWindows(accounts, browser, settings.login_window_minutes),
             email=EmailStore(store),
             telegram=TelegramStore(store, settings),
+            browser=browser,
+            promotions=PromotionStore(store),
         )
 
 
@@ -60,6 +68,11 @@ class JobCreate(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     title: str = Field("", max_length=120)
     priority: int = Field(0, ge=-10, le=10)
+    clone_of: int | None = None
+
+
+class BrowserOpen(BaseModel):
+    url: str = Field("", max_length=1_000)
 
 
 class TemplatePreview(BaseModel):
@@ -125,6 +138,7 @@ def job_summary(job: Job, step_count: int = 0) -> dict[str, Any]:
         "created_by": job.created_by,
         "cancel_requested": job.cancel_requested,
         "step_count": step_count,
+        "parent_id": job.parent_id,
     }
 
 
@@ -210,7 +224,7 @@ def create_app(ctx: AppContext) -> FastAPI:
     @app.get("/api/status", dependencies=auth)
     async def status() -> dict[str, Any]:
         rt = runtime.current(ctx.settings, ctx.store)
-        jobs, _ = ctx.store.search(limit=5)
+        jobs, _ = ctx.store.search(limit=5, include_children=False)
         return {
             "worker": worker_status(ctx),
             "model": rt.llm_model,
@@ -223,13 +237,17 @@ def create_app(ctx: AppContext) -> FastAPI:
     # Jobs ----------------------------------------------------------------------
 
     @app.get("/api/jobs", dependencies=auth)
-    async def list_jobs(status: str = "", q: str = "", page: int = 1, page_size: int = 20) -> dict[str, Any]:
+    async def list_jobs(
+        status: str = "", q: str = "", page: int = 1, page_size: int = 20, include_children: bool = False
+    ) -> dict[str, Any]:
         wanted = [s for s in (part.strip() for part in status.split(",")) if s]
         unknown = [s for s in wanted if s not in JOB_STATUSES]
         if unknown:
             raise JobError(f"Unknown status: {', '.join(unknown)}")
         page, page_size = max(1, page), min(max(1, page_size), 100)
-        jobs, total = ctx.store.search(wanted or None, q, limit=page_size, offset=(page - 1) * page_size)
+        jobs, total = ctx.store.search(
+            wanted or None, q, limit=page_size, offset=(page - 1) * page_size, include_children=include_children
+        )
         return {
             "jobs": summaries(ctx.store, jobs),
             "total": total,
@@ -247,6 +265,8 @@ def create_app(ctx: AppContext) -> FastAPI:
             "payload": job.payload,
             "result": job.result,
             "tools_allowed": job.tools_allowed,
+            "template_values": job.template_values,
+            "promotion": ctx.promotions.promotion_view(job) if job.type == "promote_event" else None,
         }
         keys = ("n", "tool", "args", "result_summary", "tokens", "duration_ms", "created_at")
         return {"job": detail, "steps": [{k: s.get(k) for k in keys} for s in steps]}
@@ -256,8 +276,16 @@ def create_app(ctx: AppContext) -> FastAPI:
         template = ctx.templates.get(body.template_key)
         if not template.enabled:
             raise TemplateError(f"The template '{template.name}' is switched off.")
-        title, payload = ctx.templates.build_job(template, body.values, body.title)
         spec = TASKS[template.task_type]
+        values = dict(body.values)
+        if body.clone_of is not None:
+            ctx.store.require(body.clone_of)
+            if "reuse_from" in spec.value_fields:
+                values["reuse_from"] = body.clone_of
+        title, payload = ctx.templates.build_job(template, values, body.title)
+        saved = {k: v for k, v in body.values.items() if k != "reuse_from"}
+        if body.title.strip():
+            saved["_title"] = body.title.strip()  # copied by Clone only when Joe typed it
         job_id, _ = ctx.store.enqueue(
             spec.type,
             title,
@@ -266,6 +294,7 @@ def create_app(ctx: AppContext) -> FastAPI:
             priority=body.priority,
             created_by="admin",
             template_key=template.key,
+            template_values=saved,
         )
         paused = runtime.current(ctx.settings, ctx.store).paused
         message = (
@@ -295,7 +324,9 @@ def create_app(ctx: AppContext) -> FastAPI:
         return {
             "templates": [t.to_dict() for t in ctx.templates.list()],
             "task_types": [
-                {"type": s.type, "summary": s.summary, "prompt_field": s.prompt_field} for s in TASKS.values()
+                {"type": s.type, "summary": s.summary, "prompt_field": s.prompt_field}
+                for s in TASKS.values()
+                if s.type in TEMPLATE_TYPES
             ],
         }
 
@@ -375,7 +406,11 @@ def create_app(ctx: AppContext) -> FastAPI:
 
     @app.get("/api/accounts", dependencies=auth)
     async def list_accounts() -> dict[str, Any]:
-        return {"accounts": [account_view(a) for a in ctx.accounts.list()], "email": ctx.email.get()}
+        return {
+            "accounts": [account_view(a) for a in ctx.accounts.list()],
+            "email": ctx.email.get(),
+            "browser": ctx.browser.status(),
+        }
 
     @app.post("/api/accounts", dependencies=auth)
     async def save_account(body: AccountSave) -> dict[str, Any]:
@@ -392,24 +427,72 @@ def create_app(ctx: AppContext) -> FastAPI:
     @app.post("/api/accounts/{site}/delete", dependencies=auth)
     async def delete_account(site: str) -> dict[str, Any]:
         if ctx.windows.is_open(site):
-            raise HTTPException(409, "Close the login window on the Mac first.")
+            raise HTTPException(409, "Close the login tab on the Mac first.")
         label = ctx.accounts.get(site)["label"]
         ctx.accounts.delete(site)
-        return {"message": f"Removed the login for {label}, its saved password and its browser login."}
+        return {
+            "message": (
+                f"Removed the login for {label} and its saved password. The shared browser may still be logged "
+                "in there: log out in the browser if you want that gone too."
+            )
+        }
 
     @app.post("/api/accounts/{site}/login-window", dependencies=auth)
     async def open_login_window(site: str) -> dict[str, Any]:
         if ctx.windows.is_open(site):
-            raise HTTPException(409, "A login window for this site is already open on the Mac.")
+            raise HTTPException(409, "A login tab for this site is already open on the Mac.")
         ctx.windows.open(site)
         account = ctx.accounts.get(site)
         return {
             "account": account_view(account),
             "message": (
-                f"A browser window for {account['label']} is opening on the Mac. Log in there "
-                "(including any 2-step code), then close the window to save the login."
+                f"{account['label']}'s login page is opening in the shared browser on the Mac. Log in there "
+                "(including any 2-step code), then close the tab. Every task can use the login after that."
             ),
         }
+
+    # Shared browser and promotion places ------------------------------------------
+
+    @app.get("/api/browser", dependencies=auth)
+    async def browser_status() -> dict[str, Any]:
+        return {"browser": ctx.browser.status()}
+
+    @app.post("/api/browser/open", dependencies=auth)
+    async def browser_open(body: BrowserOpen | None = None) -> dict[str, Any]:
+        url = (body.url if body else "").strip() or "https://www.google.com/"
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        try:
+            await check_public_url(url)
+        except BlockedURL as exc:
+            raise JobError(str(exc)) from exc
+        await ctx.windows.show("manual", url, ctx.settings.login_window_minutes)
+        return {
+            "browser": ctx.browser.status(),
+            "message": (
+                "The shared browser is open on the Mac. Log in to any sites you like; every task can use those "
+                f"logins. Close the tab when you're done (it closes itself after {ctx.settings.login_window_minutes} "
+                "minutes)."
+            ),
+        }
+
+    def target_view(target: dict[str, Any]) -> dict[str, Any]:
+        return PromotionStore.view(target)
+
+    @app.post("/api/targets/{target_id}/done", dependencies=auth)
+    async def target_is_done(target_id: int) -> dict[str, Any]:
+        target, message = await target_done(ctx.store, target_id, ctx.browser)
+        return {"target": target_view(target), "message": message}
+
+    @app.post("/api/targets/{target_id}/skip", dependencies=auth)
+    async def target_is_skipped(target_id: int) -> dict[str, Any]:
+        target, message = await target_skip(ctx.store, target_id, ctx.browser)
+        return {"target": target_view(target), "message": message}
+
+    @app.post("/api/targets/{target_id}/retry", dependencies=auth)
+    async def target_again(target_id: int) -> dict[str, Any]:
+        target, message = await target_retry(ctx.store, target_id, ctx.settings)
+        return {"target": target_view(target), "message": message}
 
     @app.post("/api/email", dependencies=auth)
     async def save_email(body: EmailSave) -> dict[str, Any]:

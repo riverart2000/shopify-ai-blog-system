@@ -18,6 +18,7 @@ USER_AGENT = (
 )
 TEXT_TYPES = ("text/html", "application/xhtml", "text/plain", "application/json", "text/xml", "application/xml")
 MAX_REDIRECTS = 5
+SEARCH_BACKENDS = ("auto", "bing")
 MAX_BYTES = 3_000_000
 
 
@@ -99,14 +100,21 @@ async def search(query: str, max_results: int = 8) -> str:
     from ddgs import DDGS
     from ddgs.exceptions import DDGSException
 
-    try:
-        results = await asyncio.to_thread(lambda: DDGS().text(query, max_results=max_results))
-    except DDGSException as exc:
-        # An empty or failed search is a normal result for the agent, not a job failure.
-        if "no results" in str(exc).lower():
-            return wrap_untrusted(f"search: {query}", "[No results]")
-        return f"[Search failed ({type(exc).__name__}). Try a different query.]"
+    results: list[dict] = []
+    failed: Exception | None = None
+    # The free search backends often come back empty for a moment; a second engine usually has the answer.
+    for backend in SEARCH_BACKENDS:
+        try:
+            results = await asyncio.to_thread(lambda b=backend: DDGS().text(query, max_results=max_results, backend=b))
+        except DDGSException as exc:
+            failed = None if "no results" in str(exc).lower() else exc
+            continue
+        if results:
+            break
     if not results:
+        # An empty or failed search is a normal result for the agent, not a job failure.
+        if failed is not None:
+            return f"[Search failed ({type(failed).__name__}). Try a different query.]"
         return wrap_untrusted(f"search: {query}", "[No results]")
     lines = [
         f"{i}. {r.get('title', '').strip()}\n   {r.get('href', '')}\n   {r.get('body', '').strip()}"

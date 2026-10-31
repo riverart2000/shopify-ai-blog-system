@@ -7,15 +7,35 @@ with thinking turned on for agent work). Spec: `../TASK-AGENT.md`.
 ## Status
 - **Done:** job queue (SQLite), worker, audit log, crash-safe resume, cancel/pause, `research` task,
   task templates, the **Task Agent** page in the Shopify admin app (tasks, templates, approvals,
-  settings, email account, site logins with saved browser profiles).
-- Next: B browser tools that use the saved logins (sign-ups, listings, Facebook Events),
-  C email (approval queue) + Postiz, D n8n triggers.
+  settings, email account, site logins), Telegram, and **event promotion** in one shared browser.
+- Next: C email (approval queue), D n8n triggers.
 
 ## Admin page
 Shopify admin → **Task Agent**. The app talks to the worker's private API on `127.0.0.1:4100`
 (contract: `API.md`) with `TASK_AGENT_API_KEY`, which must be the same in `task-agent/.env` and the
-live release `.env`. Passwords typed on the page go to the macOS Keychain (service `task-agent`);
-each site login gets its own browser profile in `profiles/<site>/`.
+live release `.env`. Passwords typed on the page go to the macOS Keychain (service `task-agent`).
+
+## One shared browser
+Every agent uses **one** Google Chrome profile, `profiles/shared/` (never committed). A login done once,
+by Joe in a login tab or by an agent, works for every later task. Chrome runs hidden while agents work
+alone, and is shown on the Mac while Joe has a tab open (Logins page → Open shared browser / Open login
+window, or a task asking for him). When the last tab closes, Chrome quits. Code, not the model, types
+passwords (from the Keychain); the model can't type into password or payment-card boxes.
+
+## Promote an event (template `promote-event`)
+1. `promote_event` reads the event pages (their schema.org data first), then plans up to 15 places:
+   listing sites (only for our own events), Facebook groups (starting with the ones Joe is in) and
+   forums. Every place must have come up in a search or page, or the plan is sent back.
+2. Each place becomes a `promote_post` job (`parent_id` = the promotion; hidden in the task list).
+   Listing sites go first. Groups and forums are paced: at most 5 a day per event, 20 minutes apart
+   (after any group post already planned), 09:00–21:00, never in the last 2 hours before the event.
+3. Joe's Social Autopilot channels (all, or the ones he listed) get a greeting-card post soon and a
+   reminder the day before, through the Social Engine with AI review.
+4. When a site needs Joe (captcha, code, verification email), the job hands its tab to him on the Mac,
+   sends a Telegram card (Done / Skip) and waits up to a day; Done restarts it straight away.
+5. A posted result must be an address the browser really opened. Telegram gets the plan and one
+   final report. **Clone** on a task copies its values; cloning a promotion reuses the places that
+   worked and still looks for new ones.
 
 ## Commands
 ```bash
@@ -75,3 +95,5 @@ Engine keeps it off. Images stay on `Qwen3-VL-8B`. Switching model is `LLM_MODEL
   at oMLX's admin API or the live server).
 - Research results may only cite pages the agent actually opened, or they're sent back.
 - The agent never pays; payment steps go to Joe. Outgoing email will wait in an approvals queue (Phase C).
+- Browser agents never see passwords (code types them from the Keychain), can't type into card fields,
+  and only keep the latest two page views in memory (older ones are trimmed to their address).

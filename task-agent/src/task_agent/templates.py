@@ -14,7 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from task_agent.db import JobStore, iso, now
-from task_agent.tasks import TASKS
+from task_agent.tasks import TASKS, TEMPLATE_TYPES
 
 PLACEHOLDER = re.compile(r"\{([a-z][a-z0-9_]{0,40})(\?|=([^{}]*))?\}")
 _KEY = re.compile(r"[^a-z0-9]+")
@@ -99,6 +99,17 @@ BUILTINS: tuple[Template, ...] = (
         builtin=True,
     ),
     Template(
+        "promote-event",
+        "Promote an event",
+        "Give it the event's links and your accounts. It finds listing sites, Facebook groups and forums that suit "
+        "the event, then posts it on each one by itself (groups at a careful pace) and on your own channels.",
+        "promote_event",
+        "Promote this event everywhere suitable. Event links: {event_urls}. Accounts to post from: {post_from?}. "
+        "Handles to tag: {tag?}. Email for new sign-ups: {signup_email}. Our own event: {my_event=yes}. {notes?}",
+        {"max_places": 15},
+        builtin=True,
+    ),
+    Template(
         "health-claim-check",
         "Check a health claim (UK)",
         "Whether a supplement claim is allowed in the UK, its conditions of use, and safer wording.",
@@ -117,8 +128,22 @@ class TemplateError(ValueError):
     """A template or its values can't be used (message shown to the user as-is)."""
 
 
+LABELS = {
+    "event_urls": "Event links (one per line)",
+    "post_from": "Accounts to post from (e.g. Facebook: joe.bains)",
+    "tag": "Handles to tag",
+    "signup_email": "Email for new sign-ups",
+    "my_event": "Our own event?",
+    "notes": "Notes",
+}
+
+
 def humanize(name: str) -> str:
-    return name.replace("_", " ").strip().capitalize()
+    return LABELS.get(name) or name.replace("_", " ").strip().capitalize()
+
+
+def is_multiline(name: str) -> bool:
+    return name in {f for spec in TASKS.values() for f in spec.multiline_fields} or name.endswith(("_urls", "_notes"))
 
 
 def template_fields(prompt: str) -> list[dict[str, Any]]:
@@ -132,6 +157,7 @@ def template_fields(prompt: str) -> list[dict[str, Any]]:
             "label": humanize(name),
             "required": marker is None,
             "default": (default or "").strip() if marker and marker.startswith("=") else "",
+            "multiline": is_multiline(name),
         }
     return list(seen.values())
 
@@ -191,15 +217,17 @@ class TemplateStore:
         if key in BUILTIN_KEYS:
             raise TemplateError("Built-in templates can't be changed. Duplicate it and edit the copy.")
         spec = TASKS.get(task_type)
-        if spec is None:
+        if spec is None or task_type not in TEMPLATE_TYPES:
             raise TemplateError(f"Unknown task type '{task_type}'.")
         if not prompt:
             raise TemplateError("The prompt can't be empty.")
         if spec.prompt_field in defaults:
             raise TemplateError(f"'{spec.prompt_field}' comes from the prompt, not the defaults.")
-        sample, _ = render(prompt, {f["name"]: "example value" for f in template_fields(prompt)})
+        samples = {f["name"]: spec.sample_values.get(f["name"], "example value") for f in template_fields(prompt)}
+        sample, _ = render(prompt, samples)
+        raw = {k: v for k, v in {**spec.sample_values, **samples}.items() if k in spec.value_fields}
         try:
-            spec.payload_model.model_validate({**defaults, spec.prompt_field: sample})
+            spec.payload_model.model_validate({**defaults, **raw, spec.prompt_field: sample})
         except ValidationError as exc:
             raise TemplateError(f"These settings don't work for a {task_type} task: {_short(exc)}") from exc
 
@@ -237,8 +265,10 @@ class TemplateStore:
         text, missing = render(template.prompt, values)
         if missing:
             raise TemplateError("Fill in: " + ", ".join(humanize(m) for m in missing))
+        # Some task types also take the values as they are (e.g. a list of event links), not only as prompt text.
+        raw = {k: v for k, v in (values or {}).items() if k in spec.value_fields and str(v or "").strip()}
         try:
-            payload = spec.payload_model.model_validate({**template.defaults, spec.prompt_field: text})
+            payload = spec.payload_model.model_validate({**template.defaults, **raw, spec.prompt_field: text})
         except ValidationError as exc:
             raise TemplateError(f"This task can't be queued: {_short(exc)}") from exc
         return (title.strip() or default_title(template, values, text))[:120], payload.model_dump(mode="json")

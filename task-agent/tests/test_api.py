@@ -143,13 +143,14 @@ async def test_site_logins_keep_passwords_in_keychain(client, ctx, memory_keyrin
 
     monkeypatch.setattr(ctx.windows, "_run", fake_run)
     response = await client.post("/api/accounts/eventbrite/login-window")
-    assert response.status_code == 200 and "close the window" in response.json()["message"]
+    assert response.status_code == 200 and "close the tab" in response.json()["message"]
 
-    profile = ctx.accounts.profile_dir("eventbrite")
+    # Deleting one site's login never wipes the browser profile every agent shares.
+    profile = ctx.accounts.shared_profile
     profile.mkdir(parents=True)
     (profile / "Cookies").write_text("x")
     assert (await client.post("/api/accounts/eventbrite/delete")).status_code == 200
-    assert not profile.exists() and ("task-agent", "site:eventbrite") not in memory_keyring.data
+    assert profile.exists() and ("task-agent", "site:eventbrite") not in memory_keyring.data
     assert opened == ["eventbrite"]
 
 

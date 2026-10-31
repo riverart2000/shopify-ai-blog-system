@@ -61,11 +61,24 @@ async def _auto_promotions(ctx: BotContext, p: dict[str, Any]) -> str:
 
 async def _queue_task(ctx: BotContext, p: dict[str, Any]) -> str:
     template = ctx.templates.get(p["template_key"])
-    title, payload = ctx.templates.build_job(template, p.get("values") or {}, p.get("title") or "")
     spec = TASKS[template.task_type]
+    values = {k: v for k, v in (p.get("values") or {}).items() if k != "reuse_from"}
+    build_values = dict(values)
+    if p.get("clone_of") and "reuse_from" in spec.value_fields:
+        build_values["reuse_from"] = int(p["clone_of"])
+    title, payload = ctx.templates.build_job(template, build_values, p.get("title") or "")
+    saved = {**values, **({"_title": p["title"]} if p.get("title") else {})}
     job_id, _ = ctx.store.enqueue(
-        spec.type, title, payload, spec.tool_names, created_by="telegram", template_key=template.key
+        spec.type,
+        title,
+        payload,
+        spec.tool_names,
+        created_by="telegram",
+        template_key=template.key,
+        template_values=saved,
     )
+    if spec.type == "promote_event":
+        return f"Queued task {job_id}. I'll send you the plan, anything a site needs from you, and the results."
     return f"Queued task {job_id}. I'll message you when it's done."
 
 
