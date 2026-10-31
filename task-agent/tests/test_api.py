@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from pydantic import SecretStr
@@ -188,3 +190,25 @@ async def test_approvals(client, store):
     assert decided["approval"]["status"] == "approved" and decided["approval"]["decided_by"] == "admin"
     again = await client.post(f"/api/approvals/{approval_id}/decide", json={"decision": "reject"})
     assert again.status_code == 400
+
+
+async def test_telegram_settings(client, ctx, memory_keyring):
+    import respx
+
+    me = "https://api.telegram.org/bot123:abc/getMe"
+    with respx.mock() as mock:
+        mock.post(me).mock(return_value=httpx.Response(200, json={"ok": True, "result": {"username": "joe_bot"}}))
+        mock.post("https://api.telegram.org/botbad/getMe").mock(
+            return_value=httpx.Response(401, json={"ok": False, "description": "Unauthorized"})
+        )
+        bad = await client.post("/api/telegram", json={"token": "bad"})
+        assert bad.status_code == 400 and "Unauthorized" in bad.json()["detail"]
+        saved = (await client.post("/api/telegram", json={"token": "123:abc", "owner_username": "@JoeBains"})).json()
+    assert memory_keyring.data[("task-agent", "telegram:bot_token")] == "123:abc"
+    view = saved["telegram"]
+    assert view["configured"] and view["bot_username"] == "joe_bot" and view["owner_username"] == "JoeBains"
+    assert "123:abc" not in json.dumps(saved) and "send /start" in saved["message"]
+    not_linked = await client.post("/api/telegram/test")
+    assert not_linked.status_code == 400 and "/start" in not_linked.json()["detail"]
+    gone = (await client.post("/api/telegram/disconnect")).json()["telegram"]
+    assert not gone["configured"] and ("task-agent", "telegram:bot_token") not in memory_keyring.data

@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     task_agent_api_key: SecretStr = SecretStr("")  # env TASK_AGENT_API_KEY; the app's .env has the same value
     login_window_minutes: int = 30  # a login window closes itself after this long
 
+    # Social Engine (the live Python server) — read data, approve posts, pause campaigns
+    social_api_url: str = "http://127.0.0.1:4000/api/social-engine"
+    social_api_key: SecretStr = SecretStr("")  # env SOCIAL_API_KEY (the server's AI_BLOG_BACKEND_API_KEY)
+    social_admin_url: str = ""  # optional link to the admin app, shown under Telegram cards
+
+    # Telegram (token: Keychain "telegram:bot_token", set on the Settings page; env fallback)
+    telegram_bot_token: SecretStr = SecretStr("")
+    telegram_owner_username: str = ""  # only this account may use the bot; locked to its numeric id on first message
+    telegram_summary_hour: int = 8  # morning summary, store time
+    store_timezone: str = "Europe/London"
+    telegram_notify_seconds: int = 60
+
     def path(self, value: Path) -> Path:
         return value if value.is_absolute() else ROOT / value
 

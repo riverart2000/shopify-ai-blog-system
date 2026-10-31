@@ -75,6 +75,21 @@ export type Account = {
   login_window_open: boolean;
 };
 
+/** Telegram bot: token in the Keychain; only `owner_username` may use it (locked to their id on first /start). */
+export type TelegramStatus = {
+  configured: boolean;
+  bot_username: string | null;
+  owner_username: string;
+  linked: boolean;
+  linked_username: string | null;
+  linked_at: string | null;
+  summary_hour: number;
+  social_connected: boolean;
+  last_error: string | null;
+};
+
+export type TelegramResponse = { telegram: TelegramStatus; message?: string };
+
 export type EmailAccount = {
   username: string;
   from_name: string;

@@ -21,6 +21,8 @@ from task_agent.config import Settings
 from task_agent.db import JOB_STATUSES, Job, JobError, JobStore, now
 from task_agent.email_account import EmailError, EmailStore
 from task_agent.tasks import TASKS
+from task_agent.telegram.client import TelegramAPI, TelegramError
+from task_agent.telegram.store import TelegramStore
 from task_agent.templates import TemplateError, TemplateStore, default_title, render
 
 NON_CHAT_MODELS = ("tts", "whisper", "bge", "embed", "asr", "rerank")
@@ -34,6 +36,7 @@ class AppContext:
     accounts: AccountStore
     windows: LoginWindows
     email: EmailStore
+    telegram: TelegramStore
 
     @classmethod
     def build(cls, store: JobStore, settings: Settings) -> AppContext:
@@ -45,6 +48,7 @@ class AppContext:
             accounts=accounts,
             windows=LoginWindows(accounts, settings.login_window_minutes),
             email=EmailStore(store),
+            telegram=TelegramStore(store, settings),
         )
 
 
@@ -84,6 +88,11 @@ class AccountSave(BaseModel):
     username: str = Field("", max_length=200)
     password: str = Field("", max_length=500)
     notes: str = Field("", max_length=1_000)
+
+
+class TelegramSave(BaseModel):
+    token: str = Field("", max_length=200)
+    owner_username: str | None = Field(None, max_length=64)
 
 
 class EmailSave(BaseModel):
@@ -412,5 +421,78 @@ def create_app(ctx: AppContext) -> FastAPI:
     async def test_email() -> dict[str, Any]:
         ok, message = await ctx.email.test()
         return {"ok": ok, "message": message, "email": ctx.email.get()}
+
+    # Telegram ------------------------------------------------------------------
+
+    def telegram_view() -> dict[str, Any]:
+        tg = ctx.telegram
+        user_id, _ = tg.owner()
+        return {
+            "configured": bool(tg.token()),
+            "bot_username": tg.get("bot_username"),
+            "owner_username": tg.owner_username(),
+            "linked": user_id is not None,
+            "linked_username": tg.get("owner_linked_username"),
+            "linked_at": tg.get("owner_linked_at"),
+            "summary_hour": ctx.settings.telegram_summary_hour,
+            "social_connected": bool(ctx.settings.social_api_key.get_secret_value()),
+            "last_error": tg.get("last_error"),
+        }
+
+    @app.get("/api/telegram", dependencies=auth)
+    async def telegram_status() -> dict[str, Any]:
+        return {"telegram": telegram_view()}
+
+    @app.post("/api/telegram", dependencies=auth)
+    async def telegram_save(body: TelegramSave) -> dict[str, Any]:
+        tg = ctx.telegram
+        notes = []
+        token = body.token.strip()
+        if token:
+            try:
+                me = await TelegramAPI(token).get_me()
+            except TelegramError as exc:
+                raise JobError(f"Telegram didn't accept that token: {exc}") from exc
+            tg.save_token(token)
+            tg.set("bot_username", me.get("username"))
+            notes.append(f"Connected to @{me.get('username')}.")
+        if body.owner_username is not None:
+            wanted = body.owner_username.strip().lstrip("@")
+            if wanted.lower() != tg.owner_username().lower():
+                tg.set("owner_username", wanted)
+                tg.unlink_owner()
+                notes.append(f"Only @{wanted} can use the bot." if wanted else "No one can use the bot.")
+        user_id, _ = tg.owner()
+        if tg.token() and user_id is None and tg.owner_username():
+            notes.append(f"Now open @{tg.get('bot_username')} in Telegram as @{tg.owner_username()} and send /start.")
+        return {"telegram": telegram_view(), "message": " ".join(notes) or "Saved."}
+
+    @app.post("/api/telegram/test", dependencies=auth)
+    async def telegram_test() -> dict[str, Any]:
+        tg = ctx.telegram
+        _, chat = tg.owner()
+        if not tg.token():
+            raise JobError("Add the bot token first.")
+        if chat is None:
+            raise JobError(f"Send /start to the bot from @{tg.owner_username()} first.")
+        try:
+            await TelegramAPI(tg.token()).send_message(chat, "👋 Test from the Task Agent page. All working.")
+        except TelegramError as exc:
+            raise JobError(str(exc)) from exc
+        return {"telegram": telegram_view(), "message": "Sent. Check Telegram."}
+
+    @app.post("/api/telegram/unlink", dependencies=auth)
+    async def telegram_unlink() -> dict[str, Any]:
+        ctx.telegram.unlink_owner()
+        return {
+            "telegram": telegram_view(),
+            "message": f"Unlinked. The next /start from @{ctx.telegram.owner_username()} links it again.",
+        }
+
+    @app.post("/api/telegram/disconnect", dependencies=auth)
+    async def telegram_disconnect() -> dict[str, Any]:
+        ctx.telegram.clear_token()
+        ctx.telegram.unlink_owner()
+        return {"telegram": telegram_view(), "message": "Disconnected. The bot token was removed from the Keychain."}
 
     return app

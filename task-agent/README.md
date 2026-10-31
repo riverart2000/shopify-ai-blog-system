@@ -39,6 +39,17 @@ tail -f logs/worker.log
 ```
 A stop or restart mid-job is safe: the job goes back in the queue and resumes from its last step.
 
+## Telegram
+Approve, ask and instruct from your phone. Set the bot token and your username on the **Settings** page,
+then send `/start` to the bot. Only that account can use it, locked to its permanent Telegram id on the first
+message. The bot runs inside the worker and long-polls Telegram, so no public address is needed.
+- **Sends:** posts and emails waiting for approval (with Approve/Reject buttons), failures, results of tasks
+  queued from Telegram, and a summary every morning (`TELEGRAM_SUMMARY_HOUR`, default 08:00).
+- **Answers:** questions from live Social Autopilot and Task Agent data, using the shared local model.
+- **Changes:** pause/resume campaigns, approve/reject posts, auto promotions on/off, queue/cancel/retry tasks.
+  The model only *proposes*; each change runs (by code, not the model) after you press Confirm.
+- Needs `SOCIAL_API_KEY` in `.env` (the live server's `AI_BLOG_BACKEND_API_KEY`).
+
 ## Model
 One text model for everything: `gemma-4-31b-it-8bit` with its speed-up drafter
 (`~/.omlx/drafters/gemma-4-31B-it-assistant-bf16`, set in oMLX's model settings), shared with the Social

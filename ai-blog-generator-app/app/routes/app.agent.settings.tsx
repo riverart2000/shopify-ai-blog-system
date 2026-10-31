@@ -8,6 +8,7 @@ import {
   TaskAgentError, errorMessage, formBool, formInt, formString, runAgentIntent, taFetch,
   type Account, type AccountSaveResponse, type AccountsResponse, type AgentActionResult, type EmailAccount,
   type EmailSaveResponse, type EmailTestResponse, type MessageResponse, type SettingsResponse,
+  type TelegramResponse, type TelegramStatus,
 } from "../lib/task-agent.server";
 import { seg } from "../lib/task-agent.shared";
 import { authenticate } from "../shopify.server";
@@ -20,9 +21,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const editSite = url.searchParams.get("account") || "";
   const newAccount = url.searchParams.get("new_account") === "1";
   const savedAccount = url.searchParams.get("saved_account") || "";
-  const [settingsResult, accountsResult] = await Promise.allSettled([
+  const [settingsResult, accountsResult, telegramResult] = await Promise.allSettled([
     taFetch<SettingsResponse>("/settings"),
     taFetch<AccountsResponse>("/accounts"),
+    taFetch<TelegramResponse>("/telegram"),
   ]);
   return {
     settings: settingsResult.status === "fulfilled" ? settingsResult.value : null,
@@ -30,6 +32,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     accounts: accountsResult.status === "fulfilled" ? accountsResult.value.accounts : ([] as Account[]),
     email: accountsResult.status === "fulfilled" ? accountsResult.value.email : (null as EmailAccount | null),
     accountsError: accountsResult.status === "rejected" ? errorMessage(accountsResult.reason) : "",
+    telegram: telegramResult.status === "fulfilled" ? telegramResult.value.telegram : (null as TelegramStatus | null),
+    telegramError: telegramResult.status === "rejected" ? errorMessage(telegramResult.reason) : "",
     editSite,
     newAccount,
     savedAccount,
@@ -84,6 +88,26 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SettingsA
       return { message: saved.message };
     });
     return { ...result, section: "email" };
+  }
+
+  if (intent === "save_telegram") {
+    const result = await runAgentIntent(intent, async () => {
+      const body: Record<string, string> = { owner_username: formString(form, "owner_username") };
+      const token = formString(form, "token");
+      if (token) body.token = token;
+      const saved = await taFetch<TelegramResponse>("/telegram", { body, timeoutMs: 30_000 });
+      return { message: saved.message || "Saved." };
+    });
+    return { ...result, section: "telegram" };
+  }
+
+  if (intent === "test_telegram" || intent === "unlink_telegram" || intent === "disconnect_telegram") {
+    const path = { test_telegram: "/telegram/test", unlink_telegram: "/telegram/unlink", disconnect_telegram: "/telegram/disconnect" }[intent];
+    const result = await runAgentIntent(intent, async () => {
+      const done = await taFetch<TelegramResponse>(path, { method: "POST", timeoutMs: 30_000 });
+      return { message: done.message || "Done." };
+    });
+    return { ...result, section: "telegram" };
   }
 
   if (intent === "test_email") {
@@ -286,6 +310,74 @@ function EmailSection({ email, result }: { email: EmailAccount; result?: Setting
   );
 }
 
+function TelegramSection({ telegram, result }: { telegram: TelegramStatus; result?: SettingsActionResult }) {
+  const { busy, isSubmitting } = useBusy();
+  const bot = telegram.bot_username ? `@${telegram.bot_username}` : "your bot";
+  return (
+    <s-section heading="Telegram">
+      <SectionResult result={result} section="telegram" />
+      <div className="sa-row" style={{ marginBottom: 10 }}>
+        {telegram.configured
+          ? <Badge tone="success">Bot connected{telegram.bot_username ? `: @${telegram.bot_username}` : ""}</Badge>
+          : <Badge tone="neutral">No bot yet</Badge>}
+        {telegram.linked
+          ? <Badge tone="success">Talking to @{telegram.linked_username || telegram.owner_username}</Badge>
+          : telegram.configured ? <Badge tone="warning">Waiting for /start from @{telegram.owner_username || "…"}</Badge> : null}
+        {!telegram.social_connected ? <Badge tone="critical">Social Autopilot key missing</Badge> : null}
+      </div>
+      <p className="sa-muted" style={{ marginBottom: 10 }}>
+        Approve posts and emails, ask questions (“what&apos;s posting tomorrow?”) and give instructions from your phone.
+        Nothing changes until you press Confirm in Telegram. You&apos;ll get posts and emails waiting for approval,
+        failures, and a summary every morning at {String(telegram.summary_hour).padStart(2, "0")}:00.
+      </p>
+      {telegram.configured && !telegram.linked ? (
+        <Banner tone="info" title="Last step">
+          Open <strong>{bot}</strong> in Telegram while signed in as <strong>@{telegram.owner_username}</strong> and send <code>/start</code>.
+          This page updates by itself once it&apos;s linked.
+        </Banner>
+      ) : null}
+      {telegram.last_error ? <Banner tone="warning" title="Telegram problem">{telegram.last_error}</Banner> : null}
+      <Form method="post" className="sa-stack">
+        <Hidden values={{ intent: "save_telegram" }} />
+        <div className="sa-grid-2">
+          <Field
+            label="Bot token"
+            help={telegram.configured
+              ? "Saved in the Mac's Keychain. Leave blank to keep it; paste a new one to replace it."
+              : "From @BotFather in Telegram (/newbot). Saved in the Mac's Keychain and never shown again."}
+          >
+            <input type="password" name="token" autoComplete="off" placeholder={telegram.configured ? "Saved in Keychain" : "123456789:AA…"} />
+          </Field>
+          <Field label="Your Telegram username" help="Only this account can use the bot. It locks to your account on the first /start.">
+            <input type="text" name="owner_username" defaultValue={telegram.owner_username} placeholder="JoeBains" required />
+          </Field>
+        </div>
+        <div className="sa-form-actions">
+          <button type="submit" className="sa-btn sa-btn-primary" disabled={busy}>{isSubmitting("save_telegram") ? "Checking with Telegram…" : "Save"}</button>
+        </div>
+      </Form>
+      {telegram.configured ? (
+        <div className="sa-row" style={{ marginTop: 12 }}>
+          <Form method="post" className="sa-inline-form" preventScrollReset>
+            <Hidden values={{ intent: "test_telegram" }} />
+            <button type="submit" className="sa-btn" disabled={busy || !telegram.linked}>{isSubmitting("test_telegram") ? "Sending…" : "Send a test message"}</button>
+          </Form>
+          {telegram.linked ? (
+            <Form method="post" className="sa-inline-form" preventScrollReset onSubmit={(event) => { if (!window.confirm("Unlink your Telegram account? The next /start from your username links it again.")) event.preventDefault(); }}>
+              <Hidden values={{ intent: "unlink_telegram" }} />
+              <button type="submit" className="sa-btn" disabled={busy}>Unlink</button>
+            </Form>
+          ) : null}
+          <Form method="post" className="sa-inline-form" preventScrollReset onSubmit={(event) => { if (!window.confirm("Disconnect the bot? Its token is removed from the Keychain.")) event.preventDefault(); }}>
+            <Hidden values={{ intent: "disconnect_telegram" }} />
+            <button type="submit" className="sa-btn sa-btn-critical" disabled={busy}>Disconnect</button>
+          </Form>
+        </div>
+      ) : null}
+    </s-section>
+  );
+}
+
 function AccountEditor({ account }: { account: Account | null }) {
   const { busy, isSubmitting } = useBusy();
   return (
@@ -408,7 +500,10 @@ function LoginsSection({ accounts, editSite, newAccount, savedAccount, result }:
 export default function AgentSettings() {
   const data = useLoaderData<typeof loader>();
   const result = useActionData<typeof action>() as SettingsActionResult | undefined;
-  usePolling(data.accounts.some((account) => account.login_window_open), 4_000);
+  usePolling(
+    data.accounts.some((account) => account.login_window_open) || Boolean(data.telegram?.configured && !data.telegram.linked),
+    4_000,
+  );
   const unscoped = result && !result.section ? result : undefined;
 
   return (
@@ -421,6 +516,9 @@ export default function AgentSettings() {
         </>
       ) : (
         <s-section heading="Worker, model and limits"><LoadError error={data.settingsError} /></s-section>
+      )}
+      {data.telegram ? <TelegramSection telegram={data.telegram} result={result} /> : (
+        <s-section heading="Telegram"><LoadError error={data.telegramError} /></s-section>
       )}
       {data.email ? <EmailSection email={data.email} result={result} /> : (
         <s-section heading="Email account and site logins"><LoadError error={data.accountsError} /></s-section>

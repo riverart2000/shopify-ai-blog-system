@@ -78,3 +78,16 @@ Passwords are write-only: they go to the macOS Keychain and are never returned.
 | POST | `/api/accounts/{site}/login-window` | | `{"account", "message"}`: opens a visible browser on the Mac with that site's profile; log in by hand (2FA works); closing the window saves the login. 409 if one is already open. |
 | POST | `/api/email` | `{"username", "from_name", "imap_host", "imap_port", "smtp_host", "smtp_port", "password"?: (blank keeps)}` | `{"email", "message"}` |
 | POST | `/api/email/test` | | `{"ok", "message", "email"}` (logs in to IMAP and SMTP; sends nothing) |
+
+## Telegram
+
+**TelegramStatus**: `{"configured", "bot_username", "owner_username", "linked", "linked_username", "linked_at",
+"summary_hour", "social_connected", "last_error"}`. The token is write-only (Keychain `telegram:bot_token`).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/telegram` | | `{"telegram": TelegramStatus}` |
+| POST | `/api/telegram` | `{"token"?: str, "owner_username"?: str}` | `{"telegram", "message"}`. The token is checked with Telegram before saving; a new username unlinks the old account. |
+| POST | `/api/telegram/test` | | `{"telegram", "message"}`: sends a test message (needs /start first) |
+| POST | `/api/telegram/unlink` | | `{"telegram", "message"}`: the next /start from the username links again |
+| POST | `/api/telegram/disconnect` | | `{"telegram", "message"}`: removes the token |

@@ -220,6 +220,9 @@ class Worker:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
 
+        from task_agent.telegram.bot import TelegramBot
+
+        bot_task = asyncio.create_task(TelegramBot(self.store, self.settings).run(stop), name="telegram")
         server, server_task, ctx = None, None, None
         if serve_api:
             from task_agent.api import AppContext, create_app
@@ -252,6 +255,9 @@ class Worker:
             server.should_exit = True
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(server_task, timeout=5)
+        bot_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await bot_task
         if ctx:
             await ctx.windows.close_all()
         log.info("worker.stopped")
