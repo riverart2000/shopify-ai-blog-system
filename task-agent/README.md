@@ -5,8 +5,17 @@ Gemma model served by oMLX (the same one the Social Engine uses,
 with thinking turned on for agent work). Spec: `../TASK-AGENT.md`.
 
 ## Status
-- **Phase A (done):** job queue (SQLite), worker, audit log, crash-safe resume, `research` task.
-- Next: B browser (sign-ups, logins, listings), C email (approval queue) + Postiz, D n8n + approvals page + 24/7 service.
+- **Done:** job queue (SQLite), worker, audit log, crash-safe resume, cancel/pause, `research` task,
+  task templates, the **Task Agent** page in the Shopify admin app (tasks, templates, approvals,
+  settings, email account, site logins with saved browser profiles).
+- Next: B browser tools that use the saved logins (sign-ups, listings, Facebook Events),
+  C email (approval queue) + Postiz, D n8n triggers.
+
+## Admin page
+Shopify admin → **Task Agent**. The app talks to the worker's private API on `127.0.0.1:4100`
+(contract: `API.md`) with `TASK_AGENT_API_KEY`, which must be the same in `task-agent/.env` and the
+live release `.env`. Passwords typed on the page go to the macOS Keychain (service `task-agent`);
+each site login gets its own browser profile in `profiles/<site>/`.
 
 ## Commands
 ```bash
