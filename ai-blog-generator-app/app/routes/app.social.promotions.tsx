@@ -12,7 +12,7 @@ import { ActionBanner, Badge, Banner, Card, EmptyState, Hidden, LoadError, Statu
 import { PROMOTION_STATUS, approvalLabel, contentTypeLabel, providerLabel } from "../components/social/vocab";
 import {
   SocialEngineError, errorMessage, formJson, formString, lookupProducts, runIntent, safeId, seFetch, seg,
-  type ActionResult, type CampaignPreview, type Channel, type ChannelsResponse, type Collection, type OccasionDate,
+  type ActionResult, type AutoOccasion, type AutoPromotions, type CampaignPreview, type Channel, type ChannelsResponse, type Collection, type OccasionDate,
   type ProductsResponse, type PromotionRow, type PromotionTheme, type PromotionsResponse,
 } from "../lib/social-engine.server";
 import { addDays, formatDateKey, isDateKey, todayKey } from "../lib/social-time";
@@ -105,6 +105,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "auto_toggle") {
+    const enabled = formString(form, "enabled") === "true";
+    return runIntent(intent, async () => {
+      await seFetch("/settings", { body: { patch: { auto_promotions: { enabled } } } });
+      return {
+        message: enabled
+          ? "Automatic occasion promotions are on. Each morning they create the code and start the promotion for an occasion that begins the next day."
+          : "Automatic occasion promotions are off. Promotions already created keep running.",
+      };
+    });
+  }
+
+  if (intent === "auto_check") {
+    return runIntent(intent, async () => {
+      const checked = await seFetch<{ results?: Array<{ action: string; code?: string; error?: string }> }>(
+        "/promotions/auto/check", { body: {}, timeoutMs: 300_000 },
+      );
+      const results = checked.results || [];
+      const created = results.filter((item) => item.action === "created").map((item) => item.code).filter(Boolean);
+      const failed = results.filter((item) => item.action === "failed");
+      if (failed.length) throw new SocialEngineError(failed.map((item) => item.error).join(" · "));
+      return {
+        message: created.length
+          ? `Created and started: ${created.join(", ")}.`
+          : "Nothing new to create today. Every occasion that's due already has its promotion.",
+      };
+    });
+  }
+
   const promotionId = formString(form, "promotion_id");
   return runIntent<PreviewData | { cancelled: number }>(intent, async () => {
     const id = safeId(promotionId);
@@ -140,6 +169,72 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 // ---------------------------------------------------------------------------- helpers
+
+function shortDate(value: string): string {
+  return value ? new Date(`${value}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : "";
+}
+
+const AUTO_STATUS: Record<AutoOccasion["status"], { label: string; tone: "success" | "info" | "neutral" }> = {
+  created: { label: "Created", tone: "success" },
+  manual: { label: "You set one up", tone: "info" },
+  planned: { label: "Will start automatically", tone: "neutral" },
+};
+
+function AutoOccasions({ auto }: { auto?: AutoPromotions }) {
+  const { busy, isSubmitting } = useBusy();
+  if (!auto) return null;
+  if (auto.error) return <Banner tone="warning" title="Automatic promotions couldn't load">{auto.error}</Banner>;
+  return (
+    <Card accent={auto.enabled ? "success" : undefined}>
+      <div className="sa-stack">
+        <div className="sa-spread">
+          <div className="sa-row">
+            <strong>Automatic occasion promotions</strong>
+            <Badge tone={auto.enabled ? "success" : "neutral"}>{auto.enabled ? "On" : "Off"}</Badge>
+          </div>
+          <div className="sa-row">
+            {auto.enabled ? (
+              <Form method="post" preventScrollReset>
+                <Hidden values={{ intent: "auto_check" }} />
+                <button type="submit" className="sa-btn" disabled={busy}>{isSubmitting("auto_check") ? "Checking…" : "Check now"}</button>
+              </Form>
+            ) : null}
+            <Form method="post" preventScrollReset>
+              <Hidden values={{ intent: "auto_toggle", enabled: auto.enabled ? "false" : "true" }} />
+              <button type="submit" className={`sa-btn ${auto.enabled ? "" : "sa-btn-primary"}`.trim()} disabled={busy}>
+                {isSubmitting("auto_toggle") ? "Saving…" : auto.enabled ? "Turn off" : "Turn on"}
+              </button>
+            </Form>
+          </div>
+        </div>
+        <p className="sa-muted">
+          Every morning from {String(auto.run_hour).padStart(2, "0")}:00, an occasion starting the next day gets a real Shopify code
+          ({auto.percent}% off everything, once per customer, doesn&apos;t combine with other discounts, no minimum order)
+          and a promotion that starts straight away. Both run from {auto.days_before} day before the occasion until {auto.days_after} day
+          after it ends. Gemma writes the promo lines; posts go out on every connected channel.
+          {auto.skipped_labels.length ? ` Never automatic: ${auto.skipped_labels.join(", ")}.` : ""}
+        </p>
+        {auto.upcoming.length ? (
+          <div className="sa-table-wrap">
+            <table className="sa-table">
+              <thead><tr><th>Occasion</th><th>Code valid</th><th>Code</th><th>Status</th></tr></thead>
+              <tbody>
+                {auto.upcoming.map((item) => (
+                  <tr key={`${item.theme_key}-${item.occasion_date}`}>
+                    <td>{item.emoji} {item.label} <span className="sa-muted">({shortDate(item.occasion_date)})</span></td>
+                    <td>{shortDate(item.start)} – {shortDate(item.end)}</td>
+                    <td><code>{item.code}</code></td>
+                    <td><Badge tone={AUTO_STATUS[item.status].tone}>{AUTO_STATUS[item.status].label}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
 
 const GROUPS: Array<{ status: string; title: string }> = [
   { status: "running", title: "Running now" },
@@ -428,6 +523,10 @@ export default function PromotionsPage() {
           />
         </s-section>
       ) : null}
+
+      <s-section heading="Automatic occasion promotions">
+        <AutoOccasions auto={data.auto} />
+      </s-section>
 
       <s-section heading="Upcoming occasions">
         <div className="sa-stack">

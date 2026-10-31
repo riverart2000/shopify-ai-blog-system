@@ -198,6 +198,20 @@ class ContentSettings(_Model):
     excluded_tags: list[str] = Field(default_factory=lambda: ["no-social"])
 
 
+# Awareness days: a 20%-off sale on these can read badly, so they're never automatic.
+AWARENESS_THEMES = ("blue_monday", "mental_health_week", "world_mental_health_day", "self_care_day")
+
+
+class AutoPromotionSettings(_Model):
+    """Promotions → Automatic occasion promotions: a real Shopify code + a promotion per occasion."""
+    enabled: bool = True
+    percent: int = Field(20, ge=5, le=90)
+    days_before: int = Field(1, ge=0, le=7)       # the code starts this many days before the occasion
+    days_after: int = Field(1, ge=0, le=7)        # and stays valid this many days after it ends
+    run_hour: int = Field(7, ge=0, le=23)         # store time; checked hourly from then on
+    skip_themes: list[str] = Field(default_factory=lambda: list(AWARENESS_THEMES))
+
+
 class EngineSettings(_Model):
     enabled: bool = False
     publisher: Literal["postiz", "dry_run"] = "postiz"
@@ -210,6 +224,7 @@ class EngineSettings(_Model):
     ai: AISettings = Field(default_factory=AISettings)
     guards: GuardSettings = Field(default_factory=GuardSettings)
     utm: UtmSettings = Field(default_factory=UtmSettings)
+    auto_promotions: AutoPromotionSettings = Field(default_factory=AutoPromotionSettings)
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:

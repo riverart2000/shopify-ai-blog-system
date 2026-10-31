@@ -33,6 +33,7 @@ PERIODIC_TASKS: list[PeriodicTask] = [
     PeriodicTask("sync_catalog_incremental", "catalog.sync", 900),
     PeriodicTask("sync_catalog_full", "catalog.sync_full", 86400),
     PeriodicTask("evaluate_campaigns", "campaigns.evaluate", 300, priority=5),
+    PeriodicTask("auto_occasion_promotions", "promotions.auto_occasions", 3600, priority=6),
     PeriodicTask("reconcile_posts", "posts.reconcile", 600, priority=3),
     PeriodicTask("collect_post_metrics", "analytics.collect", 3600),
     PeriodicTask("collect_channel_metrics", "analytics.channels", 86400),

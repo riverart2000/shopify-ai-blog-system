@@ -586,7 +586,34 @@ export type PromotionRow = {
 
 export type PostizBudget = { images_used?: number; images_budget?: number; videos_used?: number; videos_budget?: number; error?: string };
 
+export type AutoOccasion = {
+  theme_key: string;
+  label: string;
+  emoji: string;
+  occasion_date: string;
+  start: string;
+  end: string;
+  code: string;
+  status: "created" | "manual" | "planned";
+  campaign_id: string;
+};
+
+/** Promotions → Automatic occasion promotions (a real Shopify code + a running promotion). */
+export type AutoPromotions = {
+  enabled: boolean;
+  percent: number;
+  days_before: number;
+  days_after: number;
+  run_hour: number;
+  skip_themes: string[];
+  skipped_labels: string[];
+  upcoming: AutoOccasion[];
+  last_check_at: number | null;
+  error?: string;
+};
+
 export type PromotionsResponse = {
+  auto?: AutoPromotions;
   today: string;
   categories: Record<string, string>;
   themes: Record<string, PromotionTheme[]>;

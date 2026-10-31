@@ -82,7 +82,14 @@ async def promotions(store_id: str = "") -> dict[str, Any]:
         budget = {"error": str(exc)}
     defaults = model_defaults(PromotionConfig)
     defaults["start_date"] = (today + timedelta(days=1)).isoformat()
+    from services.social_engine.campaigns.auto_promotions import overview as auto_overview
+
+    try:
+        auto = await auto_overview(sid, await load_settings(sid), today)
+    except Exception as exc:  # informational; never break the page
+        auto = {"error": str(exc)}
     return {
+        "auto": auto,
         "today": today.isoformat(),
         "categories": CATEGORIES,
         "themes": themes,
@@ -132,6 +139,15 @@ async def save_promotion(payload: PromotionRequest) -> dict[str, Any]:
 
 class PromotionAction(BaseModel):
     store_id: str = ""
+
+
+@router.post("/promotions/auto/check")
+async def check_auto_promotions(payload: PromotionAction) -> dict[str, Any]:
+    """"Check now": create any occasion promotion that is due today (ignores the 07:00 start)."""
+    from services.social_engine.campaigns.auto_promotions import ensure_occasion_promotions
+
+    sid = await resolve_store_id(payload.store_id)
+    return await ensure_occasion_promotions(sid, force=True)
 
 
 @router.post("/promotions/{campaign_id}/stop")

@@ -102,6 +102,14 @@ async def campaigns_evaluate(ctx: JobContext) -> dict:
     return result
 
 
+@job("promotions.auto_occasions", lane="default", max_attempts=2, timeout_seconds=900, backoff_base=300)
+async def promotions_auto_occasions(ctx: JobContext) -> dict:
+    """Create the day's occasion promotions: a real Shopify code plus a running promotion."""
+    from ..campaigns.auto_promotions import ensure_occasion_promotions
+
+    return await ensure_occasion_promotions(ctx.store_id, force=bool(ctx.payload.get("force")))
+
+
 # ----------------------------------------------------------------------- posts
 
 @job("post.generate", lane="llm", max_attempts=3, timeout_seconds=1200, backoff_base=120)

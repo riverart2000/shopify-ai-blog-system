@@ -26,7 +26,10 @@ type Draft = {
   caption: Partial<CaptionSettings>;
 };
 
-function initialDraft(campaign: Campaign | null, ruleType: string, rule: RuleInfo | undefined, today: string): Draft {
+function initialDraft(
+  campaign: Campaign | null, ruleType: string, rule: RuleInfo | undefined, today: string,
+  defaultApproval: Draft["approval_mode"],
+): Draft {
   if (campaign) {
     const { schedule, ...config } = campaign.config || {};
     return {
@@ -37,7 +40,7 @@ function initialDraft(campaign: Campaign | null, ruleType: string, rule: RuleInf
     };
   }
   return {
-    id: "", name: rule?.label || "New campaign", rule_type: ruleType, status: "paused", approval_mode: "manual",
+    id: "", name: rule?.label || "New campaign", rule_type: ruleType, status: "paused", approval_mode: defaultApproval,
     channel_ids: [], product_filter: { in_stock_only: true },
     // The rule catalogue's `defaults` include list/dict defaults (default_factory) that the JSON schema leaves out.
     config: rule
@@ -67,8 +70,11 @@ export function CampaignEditor({ campaign, ruleType, rules, channels, templates,
   contentTypes: Record<string, string>;
 }) {
   const rule = rules[campaign?.rule_type || ruleType];
-  const { tz } = useSocial();
-  const [draft, setDraft] = useState<Draft>(() => initialDraft(campaign, ruleType, rule, todayKey(tz)));
+  const { tz, settings } = useSocial();
+  // New campaigns start from the store's default approval (Settings → Approval).
+  const [draft, setDraft] = useState<Draft>(
+    () => initialDraft(campaign, ruleType, rule, todayKey(tz), settings?.default_approval_mode || "ai_review"),
+  );
   const { busy, isSubmitting } = useBusy();
   const productNames = useMemo(() => ({ ...products }), [products]);
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((current) => ({ ...current, [key]: value }));
