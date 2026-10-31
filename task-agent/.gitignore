@@ -1,0 +1,6 @@
+# Runtime data — never commit (saved logins, job DB, audit logs, screenshots)
+.env
+data/
+logs/
+profiles/
+.venv/

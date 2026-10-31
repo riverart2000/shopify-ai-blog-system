@@ -64,6 +64,7 @@ EXCLUDE = [
     ".git/", ".runtime/", ".venv/", "__pycache__/", ".pytest_cache/", ".ruff_cache/", ".DS_Store",
     "*.pyc", "*.bak", "node_modules/", ".react-router/", "postiz-api-access.txt", "*-api-access.txt",
     ".claude/", ".cursor/", ".gemini/",
+    "/task-agent/",  # runs from the checkout as its own service (com.joebains.task-agent)
 ]
 
 

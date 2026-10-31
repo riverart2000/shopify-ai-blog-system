@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Runs the Task Agent worker 24/7 (one job at a time). Install: see ../README.md "Run as a service". -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.joebains.task-agent</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/joebains/shopify-ai-blog-system/task-agent/.venv/bin/task-agent</string>
+		<string>--json-logs</string>
+		<string>worker</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/joebains/shopify-ai-blog-system/task-agent</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>ExitTimeOut</key>
+	<integer>60</integer>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/joebains/shopify-ai-blog-system/task-agent/logs/worker.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/joebains/shopify-ai-blog-system/task-agent/logs/worker.log</string>
+</dict>
+</plist>

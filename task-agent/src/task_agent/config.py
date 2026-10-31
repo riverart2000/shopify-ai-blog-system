@@ -1,0 +1,56 @@
+"""Settings, read from task-agent/.env (see .env.example). Secrets live only there."""
+
+from __future__ import annotations
+
+import os
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Folder that holds pyproject.toml, .env, data/, logs/ and profiles/.
+ROOT = Path(__file__).resolve().parents[2]
+
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=ROOT / ".env", extra="ignore")
+
+    # Local model (oMLX, OpenAI-compatible). One model only, no cloud fallback.
+    llm_base_url: str = "http://127.0.0.1:8000/v1"
+    llm_model: str = "gemma-4-26b-a4b-it-8bit"
+    llm_api_key: SecretStr = SecretStr("")  # oMLX doesn't need one for /v1 on this machine
+    llm_temperature: float = Field(0.1, ge=0, le=0.2)  # low temperature for reliable tool use
+    llm_timeout_seconds: int = 600
+    llm_thinking: bool | None = True  # sent with every request; None = the model's own default
+
+    # Storage (relative paths are inside task-agent/)
+    db_path: Path = Path("data/task_agent.db")
+    log_dir: Path = Path("logs")
+    profiles_dir: Path = Path("profiles")
+
+    # Worker
+    poll_seconds: int = 10
+    max_steps: int = 60  # model requests per job
+    max_minutes: int = 20  # wall-clock budget per job
+    max_attempts: int = 3  # retries on network/model errors, with backoff
+    output_retries: int = 3  # re-asks when the model's result fails validation
+
+    # Tools
+    fetch_max_chars: int = 12_000  # page text handed to the model per fetch
+
+    # Private API for the Shopify admin app (this Mac only)
+    api_host: str = "127.0.0.1"
+    api_port: int = 4100
+    task_agent_api_key: SecretStr = SecretStr("")  # env TASK_AGENT_API_KEY; the app's .env has the same value
+    login_window_minutes: int = 30  # a login window closes itself after this long
+
+    def path(self, value: Path) -> Path:
+        return value if value.is_absolute() else ROOT / value
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
