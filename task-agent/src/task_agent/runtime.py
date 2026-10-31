@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from task_agent.config import Settings
 from task_agent.db import JobStore
 
-RECOMMENDED_MODEL = "gemma-4-26b-a4b-it-8bit"  # the Social Engine's model: sharing it avoids memory swaps
+RECOMMENDED_MODEL = "gemma-4-31b-it-8bit"  # the Social Engine's model too: sharing one avoids memory swaps
 
 LIMITS = {"max_steps": (5, 200), "max_minutes": (1, 120), "max_attempts": (1, 10)}
 

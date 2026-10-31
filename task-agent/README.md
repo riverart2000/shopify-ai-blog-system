@@ -1,7 +1,7 @@
 # Task Agent
 
 Background agents that do web, email and promotion work, **one job at a time**, on the local
-Gemma model served by oMLX (the same one the Social Engine uses,
+Gemma 4 31B model served by oMLX (the same one the Social Engine uses,
 with thinking turned on for agent work). Spec: `../TASK-AGENT.md`.
 
 ## Status
@@ -40,10 +40,12 @@ tail -f logs/worker.log
 A stop or restart mid-job is safe: the job goes back in the queue and resumes from its last step.
 
 ## Model
-One text model for everything: `gemma-4-26b-a4b-it-8bit`, shared with the Social Engine, so oMLX
-never has to swap models (a swap while one is busy is what made a campaign run fail on 30 Oct).
-The Task Agent turns Gemma's thinking on per request; the Social Engine keeps it off. Images stay on
-`Qwen3-VL-8B`, which fits in memory alongside Gemma. Switching model is `LLM_MODEL` in `.env`.
+One text model for everything: `gemma-4-31b-it-8bit` with its speed-up drafter
+(`~/.omlx/drafters/gemma-4-31B-it-assistant-bf16`, set in oMLX's model settings), shared with the Social
+Engine so oMLX never has to swap models (a swap while one was busy made a campaign run fail on 30 Oct).
+Chosen on 31 Oct after testing: the most careful on research (no invented details), about 3× slower than
+the 26B, which stays installed as a backup. The Task Agent turns thinking on per request; the Social
+Engine keeps it off. Images stay on `Qwen3-VL-8B`. Switching model is `LLM_MODEL` in `.env` (or the page).
 
 ## How a job runs
 1. A job is queued in `data/task_agent.db` (a repeated `--key` never creates a second job).

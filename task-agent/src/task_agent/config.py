@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Local model (oMLX, OpenAI-compatible). One model only, no cloud fallback.
     llm_base_url: str = "http://127.0.0.1:8000/v1"
-    llm_model: str = "gemma-4-26b-a4b-it-8bit"
+    llm_model: str = "gemma-4-31b-it-8bit"
     llm_api_key: SecretStr = SecretStr("")  # oMLX doesn't need one for /v1 on this machine
     llm_temperature: float = Field(0.1, ge=0, le=0.2)  # low temperature for reliable tool use
     llm_timeout_seconds: int = 600

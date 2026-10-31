@@ -1,4 +1,4 @@
-"""The one local text model every task uses (Gemma on oMLX, shared with the Social Engine)."""
+"""The one local text model every task uses (Gemma 4 31B on oMLX, shared with the Social Engine)."""
 
 from __future__ import annotations
 

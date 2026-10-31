@@ -99,7 +99,7 @@ async def test_own_templates(client):
 async def test_settings_and_pause(client):
     data = (await client.get("/api/settings")).json()
     assert data["settings"]["paused"] is False and data["limits"]["max_steps"] == [5, 200]
-    assert data["recommended_model"] == "gemma-4-26b-a4b-it-8bit"
+    assert data["recommended_model"] == "gemma-4-31b-it-8bit"
     saved = (await client.post("/api/settings", json={"paused": True})).json()
     assert saved["settings"]["paused"] is True and "paused" in saved["message"]
     assert (await client.post("/api/settings", json={"max_steps": 1000})).status_code == 400
