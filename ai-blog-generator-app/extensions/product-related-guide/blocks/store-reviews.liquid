@@ -1,12 +1,18 @@
-{% assign review_cache = app.metafields.reviews.store_cache.value %}
+{% liquid
+  assign review_cache = app.metafields.reviews.store_cache.value
+  assign has_reviews = false
+  if review_cache != blank and review_cache.summary != blank and review_cache.summary.count > 0
+    assign has_reviews = true
+  endif
+%}
 <section class="bl-reviews" data-bl-reviews data-review-type="store" data-endpoint="https://revenuemindproai.com:8443/reviews-public?shop={{ shop.permanent_domain | url_encode }}" style="--bl-review-accent:{{ block.settings.accent_colour }};--bl-review-surface:{{ block.settings.surface_colour }}" {{ block.shopify_attributes }}>
   <div class="bl-reviews__shell">
     <div class="bl-reviews__head"><div><p class="bl-reviews__eyebrow">BioLuxeLab customers</p><h2 class="bl-reviews__title">{{ block.settings.heading | escape }}</h2><p class="bl-reviews__intro">{{ block.settings.introduction | escape }}</p></div><button class="bl-reviews__button" type="button" data-review-open>Review our store</button></div>
     <div class="bl-reviews__message" data-review-message hidden aria-live="polite"></div>
     {% render 'customer-review-form' %}
     <div class="bl-reviews__summary" data-review-summary aria-live="polite">{% render 'customer-review-cache', review_cache: review_cache %}</div>
-    <div class="bl-reviews__tools"><span class="bl-reviews__filter">Site reviews and clearly labelled recommendations imported from Facebook</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
-    <div class="bl-reviews__list" data-review-list>{% render 'customer-review-cards', review_cache: review_cache %}</div>
+    <div class="bl-reviews__tools"{% unless has_reviews %} hidden{% endunless %}><span class="bl-reviews__filter">Site reviews and clearly labelled recommendations imported from Facebook</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
+    <div class="bl-reviews__list" data-review-list>{% render 'customer-review-cards', review_cache: review_cache %}{% unless has_reviews %}<p class="bl-reviews__empty">We're a new store and haven't collected site reviews yet. If you've shopped with us, we'd love to hear how it went.</p>{% endunless %}</div>
     <div class="bl-reviews__more"><button class="bl-reviews__button bl-reviews__button--secondary" type="button" data-review-more hidden>Load more reviews</button></div>
   </div>
 </section>

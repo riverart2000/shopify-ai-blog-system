@@ -2,6 +2,10 @@
   assign rating_value = product.metafields.custom.ai_reviews_rating.value | default: 0
   assign rating_count = product.metafields.custom.ai_reviews_count.value | default: 0
   assign review_cache = product.metafields.custom.ai_reviews_cache.value
+  assign has_reviews = false
+  if rating_count > 0
+    assign has_reviews = true
+  endif
 %}
 <section id="bioluxe-reviews" class="bl-reviews" data-bl-reviews data-review-type="product" data-product-id="{{ product.id }}" data-product-handle="{{ product.handle | escape }}" data-product-title="{{ product.title | escape }}" data-endpoint="https://revenuemindproai.com:8443/reviews-public?shop={{ shop.permanent_domain | url_encode }}" style="--bl-review-accent:{{ block.settings.accent_colour }};--bl-review-surface:{{ block.settings.surface_colour }}" {{ block.shopify_attributes }}>
   <div class="bl-reviews__shell">
@@ -9,8 +13,8 @@
     <div class="bl-reviews__message" data-review-message hidden aria-live="polite"></div>
     {% render 'customer-review-form' %}
     <div class="bl-reviews__summary" data-review-summary aria-live="polite">{% render 'customer-review-cache', review_cache: review_cache %}</div>
-    <div class="bl-reviews__tools"><span class="bl-reviews__filter">Select a rating bar to filter</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
-    <div class="bl-reviews__list" data-review-list>{% render 'customer-review-cards', review_cache: review_cache %}</div>
+    <div class="bl-reviews__tools"{% unless has_reviews %} hidden{% endunless %}><span class="bl-reviews__filter">Select a rating bar to filter</span><label>Sort <select data-review-sort><option value="newest">Newest</option><option value="highest">Highest rated</option><option value="lowest">Lowest rated</option><option value="oldest">Oldest</option></select></label></div>
+    <div class="bl-reviews__list" data-review-list>{% render 'customer-review-cards', review_cache: review_cache %}{% unless has_reviews %}<p class="bl-reviews__empty">No reviews for this product yet. Bought it? Tell other customers what you think.</p>{% endunless %}</div>
     <div class="bl-reviews__more"><button class="bl-reviews__button bl-reviews__button--secondary" type="button" data-review-more hidden>Load more reviews</button></div>
   </div>
 </section>

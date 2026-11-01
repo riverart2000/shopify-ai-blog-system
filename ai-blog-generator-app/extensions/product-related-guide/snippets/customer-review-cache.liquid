@@ -1,4 +1,4 @@
-{% if review_cache != blank and review_cache.summary != blank %}
+{% if review_cache != blank and review_cache.summary != blank and review_cache.summary.count > 0 %}
   {% assign cache_summary = review_cache.summary %}
   <div class="bl-reviews__score">
     <div class="bl-reviews__average">{% if cache_summary.count > 0 %}{{ cache_summary.average }}{% else %}—{% endif %}</div>
