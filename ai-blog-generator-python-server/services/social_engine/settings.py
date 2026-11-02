@@ -189,6 +189,10 @@ class GuardSettings(_Model):
     hold_health_claims: bool = True
     hold_low_review_score: int = Field(6, ge=0, le=10)
     max_caption_retries: int = Field(1, ge=0, le=3)
+    # When the reviewer rejects a draft, the engine rewrites the captions from
+    # its notes (and tries the next product photo when the image was the
+    # problem) this many times before a person is asked.
+    max_review_rewrites: int = Field(2, ge=0, le=4)
 
 
 class UtmSettings(_Model):

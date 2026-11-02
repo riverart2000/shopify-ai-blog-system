@@ -18,7 +18,7 @@ from . import prompts
 from .base import CaptionResult, LLMRequest, ReviewResult
 from .guard import check_captions
 from .llm import OpenAICompatibleProvider, get_router
-from .text import extract_json
+from .text import URL_RE, extract_json
 
 logger = logging.getLogger("ai_blog_server.social_engine.ai")
 
@@ -211,22 +211,26 @@ async def review_post(
 
     channel_texts = []
     for item in captions.channel_captions.values():
-        text = item.caption if len(item.caption) <= _CAPTION_CHARS else item.caption[:_CAPTION_CHARS] + " …"
+        # Links are the catalogue's product handles plus tracking, which the writer
+        # cannot change; a slug like "slim-thighs" must not fail the caption.
+        caption = _mask_links(item.caption)
+        text = caption if len(caption) <= _CAPTION_CHARS else caption[:_CAPTION_CHARS] + " …"
         extra = []
         if item.title:
-            extra.append(f"Title: {item.title}")
+            extra.append(f"Title: {_mask_links(item.title)}")
         if item.first_comment:
-            extra.append(f"First comment: {item.first_comment}")
+            extra.append(f"First comment: {_mask_links(item.first_comment)}")
         channel_texts.append(f"[{item.provider}]\n{text}" + ("\n" + "\n".join(extra) if extra else ""))
     prompt = prompts.review_prompt(
         brand=settings.brand,
         post=post,
-        products_text=prompts.products_block(products, settings.brand, include_price=True, description_chars=700),
+        products_text=prompts.products_block(products, settings.brand, include_price=True),
         on_image={"headline": captions.headline, "subheadline": captions.subheadline, "cta": captions.cta,
                   "hook": captions.hook, "alt text": captions.alt_text},
         channel_texts=channel_texts or [f"[base]\n{captions.base_caption}"],
         guard_notes=guard_notes,
         language=settings.captions.language,
+        store_facts=_store_facts(settings),
     )
     router = get_router(sctx)
     draft, meta = await router.structured(
@@ -238,10 +242,13 @@ async def review_post(
         decision_type="review",
         subject_id=subject_id,
     )
+    blocking = [f"Critical: {issue}" for issue in draft.critical_issues]
+    blocking.extend(f"Guard: {issue.message}" for issue in guard.issues if issue.severity == "block")
     issues = [f"Critical: {issue}" for issue in draft.critical_issues] + list(draft.issues)
     issues.extend(f"Guard: {issue.message}" for issue in guard.issues if issue.severity == "block")
     critical = bool(draft.critical_issues) or guard.hold
 
+    vision_critical = False
     image = _first_image(list(media_paths or []))
     if image:
         vision_issues, vision_critical = await _vision_check(
@@ -249,6 +256,8 @@ async def review_post(
             content_type=str(post.get("content_type") or ""), subject_id=subject_id,
         )
         issues.extend(vision_issues)
+        if vision_critical:
+            blocking.extend(issue for issue in vision_issues if issue.startswith("Vision:"))
         critical = critical or vision_critical
 
     approve = draft.score >= settings.guards.hold_low_review_score and not critical
@@ -257,5 +266,20 @@ async def review_post(
         suggestions.insert(0, draft.summary)
     return ReviewResult(
         score=draft.score, approve=approve, issues=list(dict.fromkeys(issues)), suggestions=suggestions,
-        model=meta.model,
+        model=meta.model, critical=list(dict.fromkeys(blocking)), vision_critical=vision_critical,
     )
+
+
+def _store_facts(settings) -> list[str]:
+    facts: list[str] = []
+    signature = " ".join(settings.captions.signature.split())
+    if signature:
+        facts.append(f'Standing offer line the store appends to every caption (a real, current offer): "{signature}"')
+    cta = " ".join(settings.brand.cta_text.split())
+    if cta:
+        facts.append(f'Call to action used on images and captions: "{cta}"')
+    return facts
+
+
+def _mask_links(text: str) -> str:
+    return URL_RE.sub("[link]", text or "")

@@ -63,6 +63,7 @@ class CaptionRequest:
     texts: dict[str, str] = field(default_factory=dict)   # promo_text, coupon_code, occasion, quote...
     caption_overrides: dict[str, Any] = field(default_factory=dict)  # campaign-level CaptionSettings fields
     correlation_id: str = ""
+    feedback: str = ""                         # reviewer notes from a rejected draft (self-correction)
 
 
 @dataclass
@@ -112,3 +113,5 @@ class ReviewResult:
     issues: list[str] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
     model: str = ""
+    critical: list[str] = field(default_factory=list)   # the issues that block on their own
+    vision_critical: bool = False                        # the image itself is the problem

@@ -606,7 +606,7 @@ async def generate_captions(request: CaptionRequest, sctx: StoreContext) -> Capt
     router = get_router(sctx)
     ctx = sctx.call_context(request.correlation_id)
     retries = settings.guards.max_caption_retries
-    feedback = ""
+    feedback = request.feedback.strip()
     rewrites = 0
     for attempt in range(retries + 1):
         llm_request = caption_llm_request(request, settings, captions, plans, feedback)
@@ -640,7 +640,8 @@ async def generate_captions(request: CaptionRequest, sctx: StoreContext) -> Capt
                    "correlation_id": request.correlation_id},
         )
         feedback = (
-            "The previous draft used wording that is not allowed for food supplements. Rewrite every caption "
+            (request.feedback.strip() + "\n\n" if request.feedback.strip() else "")
+            + "The previous draft used wording that is not allowed for food supplements. Rewrite every caption "
             "without these statements (describe ingredients, ritual and authorised-style wording from the "
             "product data instead):\n" + "\n".join(f"- {problem}" for problem in problems[:8])
         )

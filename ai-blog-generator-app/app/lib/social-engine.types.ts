@@ -233,10 +233,12 @@ export type Product = {
   description?: string;
   synced_at?: number;
   deleted_at?: number | null;
+  photos?: { audited: number; claims: number; blocked: boolean } | null;
 };
 
 export type ProductCounts = {
   total?: number; available?: number; on_sale?: number; never_posted?: number; last_synced_at?: number;
+  photos_blocked?: number;
 };
 
 export type Collection = { id: string; title: string; products_count: number };

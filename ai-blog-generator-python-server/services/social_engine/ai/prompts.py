@@ -249,7 +249,26 @@ def collection_names(product: dict) -> list[str]:
     return names
 
 
-def products_block(products: list[dict], brand: BrandKit, *, include_price: bool, description_chars: int = 900) -> str:
+def variants_line(product: dict) -> str:
+    """The real options a product comes in (colours, sizes, thicknesses), from its variants.
+
+    Without this the writer and the reviewer only know what the description
+    happens to say, so a true "six colours" can be flagged as invented.
+    """
+    variants = [v for v in (product.get("variants") or []) if isinstance(v, dict)]
+    titles = [str(v.get("title") or "").strip() for v in variants]
+    titles = [t for t in titles if t and t.lower() != "default title"]
+    if len(titles) < 2:
+        return ""
+    shown = ", ".join(titles[:24]) + (" …" if len(titles) > 24 else "")
+    line = f"- Variants ({len(titles)} options; only these exist): {shown}"
+    sold_out = [t for t, v in zip(titles, variants) if v.get("available") is False]
+    if sold_out:
+        line += f"\n- Out of stock: {', '.join(sold_out[:8])}"
+    return line
+
+
+def products_block(products: list[dict], brand: BrandKit, *, include_price: bool, description_chars: int = 1100) -> str:
     if not products:
         return "PRODUCTS\n(none — this post is not about a specific product)"
     per_product = description_chars if len(products) == 1 else max(220, description_chars // len(products))
@@ -274,6 +293,9 @@ def products_block(products: list[dict], brand: BrandKit, *, include_price: bool
             lines.append(f"- Tags: {', '.join(tags)}")
         if product.get("available") is False:
             lines.append("- Currently out of stock")
+        options = variants_line(product)
+        if options:
+            lines.append(options)
         description = strip_html(str(product.get("description") or ""))
         claims = authorised_claims(description)
         if claims:
@@ -425,6 +447,7 @@ def review_prompt(
     channel_texts: list[str],
     guard_notes: list[str],
     language: str,
+    store_facts: list[str] | None = None,
 ) -> str:
     content_type = str(post.get("content_type") or "")
     sections = [
@@ -432,6 +455,11 @@ def review_prompt(
         f"POST TYPE: {CONTENT_TYPE_LABELS.get(content_type, content_type or 'unknown')}",
         f"Expected language: {language_name(language)}",
     ]
+    if store_facts:
+        # Lines the engine adds itself (e.g. the standing welcome offer) are the
+        # store's own configuration, not something the writer invented.
+        sections.append("STORE FACTS — set by the store owner, always correct, never an issue:\n"
+                        + "\n".join(f"- {fact}" for fact in store_facts))
     # The planner's angle is an internal brief that is never published, so it is not
     # shown here: the review judges only what followers will see.
     sections.append(products_text)
@@ -442,8 +470,11 @@ def review_prompt(
     if guard_notes:
         sections.append("AUTOMATED CHECKS ALREADY FOUND\n" + "\n".join(f"- {note}" for note in guard_notes))
     sections.append(
-        "Judge only what will be published: the captions and the on-image text. The product's own name and web "
-        "address come from the store's catalogue — at most mention them as a minor issue, never as critical.\n"
+        "Judge only what will be published: the captions and the on-image text. Links are shown as [link]; the "
+        "product's own name and web address come from the store's catalogue and are never an issue.\n"
+        "A fact is supported when it appears anywhere in the product data or store facts above — description, "
+        "variants, type, tags, price or the owner's standing offer — even if worded differently (e.g. 'six colours' "
+        "when six colour variants are listed).\n"
         "Score the post 0–10: 9–10 publish as is; 7–8 good with minor polish; 5–6 needs edits; 0–4 do not publish.\n"
         "Authorised-style wording taken from the product data ('contributes to the normal …', or the paraphrase "
         "'supports normal …') is compliant — do not flag it. Using only some of the authorised claims, or one "
@@ -461,6 +492,19 @@ def review_prompt(
 VISION_SYSTEM = "You check social media images for a wellness brand. Reply with one JSON object only."
 
 
+def photo_audit_prompt() -> str:
+    return (
+        "Look at this product photo from a supplier.\n"
+        "Copy word for word any text printed on it that claims a health, weight-loss, fat-loss, slimming, "
+        'body-shaping, anti-ageing or medical result (e.g. "Slim Legs", "Burn Fat", "Reduce Cellulite", '
+        '"Pain Relief"). Product names, sizes, materials, colours and plain feature words are not claims.\n'
+        "Only words printed on the photo count. A fit, slim, athletic or healthy-looking person, a pose, or a "
+        "before/after look is NOT a claim and must not be reported.\n"
+        'Reply: {"has_text": true/false, "claims": ["exact text"], "issues": []} — "claims" is an empty list when '
+        "there is no such text."
+    )
+
+
 def vision_prompt(*, product_titles: list[str], headline: str, expects_product: bool) -> str:
     subject = ", ".join(product_titles[:4]) if product_titles else "the brand"
     product_line = (
@@ -473,7 +517,8 @@ def vision_prompt(*, product_titles: list[str], headline: str, expects_product: 
         f"1. {product_line}\n"
         "2. Is all text on the image legible (good contrast, not cut off, not overlapping)?\n"
         "3. Copy word for word any text in the image (including inside the product photo) that claims a health, "
-        'weight-loss, fat-loss, slimming or body-shaping result, e.g. "Reduce Leg Fat". Empty list if none.\n'
+        'weight-loss, fat-loss, slimming or body-shaping result, e.g. "Reduce Leg Fat". Empty list if none. '
+        "Only printed words count: a fit, slim or athletic person is never a claim.\n"
         "4. Any visual problems (cropping, distortion, blank areas)? At most 3, no repeats.\n"
         'Reply: {"product_visible": true/false, "text_legible": true/false, "has_text": true/false, '
         '"claims": ["exact text"], "issues": ["short descriptions"]}'

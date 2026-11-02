@@ -59,3 +59,17 @@ Joe's personal LinkedIn is deliberately left out of product campaigns; it only r
 - Record 2–3 long phone videos a month for the 120 clipping minutes (acupressure mat, massage gun after a run, why the wide-toe shoes).
 - Install the RSS launch agent (one command above) so the feed survives a reboot.
 - Watch the first AI image/video posts in the approval queue; `ai_review` holds anything the vision check scores low.
+
+## Self-correction after a rejected review (added 2 November, afternoon)
+
+Until now any draft the Gemma reviewer rejected went straight to the approval queue. Two of the five queued posts were false rejections (the reviewer saw a cut-down description that stopped before "six colour choices", and it judged the words in a product's web address), and the other three were fixable by a rewrite. The engine now does that itself:
+
+- **Grounding.** `prompts.products_block` adds a `Variants (N options; only these exist): …` line from the catalogue variants, and the reviewer gets the same product detail as the writer (1100 characters of description, previously 700). The review prompt says a fact anywhere in the product data counts as supported.
+- **Links.** The reviewer sees captions with every URL replaced by `[link]`; the content guard strips URLs before scanning for claims, so a handle like `…-stress-relief-…` no longer holds a post.
+- **Fix loop** (`pipeline/selfcorrect.py`, `guards.max_review_rewrites`, default 2). When the guard holds or the reviewer rejects: the captions are rewritten with the reviewer's issues and suggestions as feedback (`CaptionRequest.feedback`); when the vision check flagged the image, the next product photo is used (`image_offset + 1`). Each fix is a full generate → guard → review round, recorded in the post timeline as "Review found issues; … (fix n of 2)". The post only reaches the queue when the fixes are used up or nothing the engine can change would help (a claim printed on the product's only photo). `generation.review_fixes` and a warning on the post show how many fixes were made.
+- `post.generate` job timeout 1200 s → 2400 s to cover three rounds on the local model.
+
+### Blockers removed later the same day
+
+- **Signature treated as an invented discount.** The reviewer flagged "code WELCOME10" (the line the engine itself appends) as unsupported on every rewrite, so the fix loop could never succeed. The review prompt now carries a STORE FACTS section with the signature and the brand CTA (`review._store_facts`).
+- **Supplier photos with printed claims** ("Slim Legs", "Slender Leg Lines", "Arms-Slimming"). Trying the next photo did not help when every photo has such text. New photo audit (`ai/photos.py`, table `social_photo_audits`, migration 3): each product photo is shown once to the vision model and the verdict is kept by URL. Generation renders only clean photos (`clean_products`), the AI video reference images use the same list, a product with no clean photo fails generation with a clear message and is skipped by `eligible_products`, and the Products page shows "Photos blocked" / "n of m photos skipped" plus a "Photos need changing" count. A periodic job `catalog.photo_audit` (every 30 min, 5 products a run, llm lane) audits the catalogue ahead of planning. If the vision model is down nothing is stored and unaudited photos count as clean, so posting never stops because the checker is unavailable.

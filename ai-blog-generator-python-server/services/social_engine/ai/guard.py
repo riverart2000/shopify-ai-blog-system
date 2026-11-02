@@ -154,8 +154,10 @@ def check_captions(result: CaptionResult, *, settings: EngineSettings) -> GuardR
             issues.append(GuardIssue("empty_caption", f"{where.capitalize()} is empty", "block", channel_id))
             continue
         combined = "\n".join(part for part in (caption, item.title, item.first_comment) if part)
-        issues.extend(claim_issues(combined, channel_id, where))
-        for term in find_terms(combined, banned):
+        # A product handle such as ".../cards-stress-relief" is not a claim the caption makes.
+        wording = URL_RE.sub(" ", combined)
+        issues.extend(claim_issues(wording, channel_id, where))
+        for term in find_terms(wording, banned):
             issues.append(GuardIssue("banned_term", f"Banned term '{term}' in {where}", "block", channel_id))
         if _PLACEHOLDER.search(combined):
             issues.append(GuardIssue("placeholder_left", f"Unfilled placeholder in {where}", "block", channel_id))

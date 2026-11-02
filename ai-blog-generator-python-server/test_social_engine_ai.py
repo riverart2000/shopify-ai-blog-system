@@ -33,7 +33,7 @@ from services.social_engine.ai.text import (
 from services.social_engine.context import load_store_context
 from services.social_engine.errors import ExternalServiceError, ValidationError
 from services.social_engine.models import PROVIDER_PROFILES, profile_for
-from services.social_engine.settings import AISettings, UtmSettings
+from services.social_engine.settings import AISettings, UtmSettings, save_settings
 from services.social_engine.utm import slugify, tracked_url
 
 MAGNESIUM = {
@@ -558,6 +558,31 @@ async def test_guard_blocks_disease_claims_and_holds(sctx):
 
 
 @pytest.mark.asyncio
+async def test_guard_never_reads_claims_out_of_a_link(sctx):
+    # The catalogue handle carries "stress-relief"; the caption itself makes no claim.
+    link = "https://bioluxelab.com/products/meditation-cards-stress-relief-practice-tools?utm_source=facebook"
+    guard = check_captions(_result(f"Fifty affirmation cards for a slower morning. {link}"), settings=sctx.settings)
+    assert not guard.hold and not [i for i in guard.issues if i.code in ("health_claim", "health_claim_review")]
+    still = check_captions(_result(f"Stress relief in a box. {link}"), settings=sctx.settings)
+    assert any(i.code == "health_claim" for i in still.issues)
+
+
+def test_products_block_lists_the_real_variants():
+    from services.social_engine.ai.prompts import products_block
+    from services.social_engine.settings import BrandKit
+
+    mat = {**MAGNESIUM, "title": "Foldable Yoga Mat", "description": "A mat.", "variants": [
+        {"title": "0.6cm Black", "available": True}, {"title": "0.6cm Pink", "available": True},
+        {"title": "0.3cm Purple", "available": False},
+    ]}
+    block = products_block([mat], BrandKit(), include_price=False)
+    assert "Variants (3 options; only these exist): 0.6cm Black, 0.6cm Pink, 0.3cm Purple" in block
+    assert "Out of stock: 0.3cm Purple" in block
+    assert "Variants" not in products_block([MAGNESIUM], BrandKit(), include_price=False)
+    assert "Variants" not in products_block([{**MAGNESIUM, "variants": [{"title": "Default Title"}]}], BrandKit(), include_price=False)
+
+
+@pytest.mark.asyncio
 async def test_guard_structural_checks(sctx):
     sctx.settings.captions.banned_terms = ["cheap"]
     too_long = check_captions(_result("word " * 70, provider="x"), settings=sctx.settings)
@@ -628,9 +653,20 @@ async def test_review_rejects_low_score_critical_issues_and_failed_vision(sctx, 
     vision_fail = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM], media_paths=[str(image)])
     assert not vision_fail.approve and any("not clearly visible" in issue for issue in vision_fail.issues)
 
-    FakeLLM(_review_handler({"score": 9, "critical_issues": ["Invented 20% discount"]}, None)).install()
+    fake = FakeLLM(_review_handler({"score": 9, "critical_issues": ["Invented 20% discount"]}, None)).install()
     critical = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
     assert not critical.approve and critical.issues[0] == "Critical: Invented 20% discount"
+    assert critical.critical == ["Critical: Invented 20% discount"] and not critical.vision_critical
+    assert vision_fail.critical and vision_fail.vision_critical
+    # The reviewer judges the words, never the product's web address.
+    assert "[link]" in fake.prompt() and "https://" not in fake.prompt().split("CAPTIONS PER NETWORK")[1]
+
+    # The signature the engine appends is the store's own offer, not an invented discount.
+    await save_settings(sctx.store_id, {"captions": {"signature": "New here? 10% off with code WELCOME10"}})
+    sctx = await load_store_context(sctx.store_id, correlation_id="post_test")
+    fake = FakeLLM(_review_handler({"score": 9, "critical_issues": []}, None)).install()
+    await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
+    assert "STORE FACTS" in fake.prompt() and "WELCOME10" in fake.prompt().split("CAPTIONS PER NETWORK")[0]
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,7 @@ export default function ProductsPage() {
             <Kpi label="In stock" value={formatNumber(data.counts.available)} />
             <Kpi label="On sale" value={formatNumber(data.counts.on_sale)} />
             <Kpi label="Never posted" value={formatNumber(data.counts.never_posted)} />
+            <Kpi label="Photos need changing" value={formatNumber(data.counts.photos_blocked ?? 0)} />
           </div>
           <div className="sa-spread">
             <span className="sa-small sa-muted">
@@ -145,6 +146,11 @@ export default function ProductsPage() {
                       </td>
                       <td className="sa-nowrap">
                         {product.available ? <Badge tone="success">In stock</Badge> : <Badge tone="neutral">Unavailable</Badge>}
+                        {product.photos?.blocked ? (
+                          <div className="sa-small"><Badge tone="critical">Photos blocked</Badge> <span className="sa-muted">every photo has a claim printed on it</span></div>
+                        ) : product.photos?.claims ? (
+                          <div className="sa-small sa-muted">{product.photos.claims} of {product.photos.audited} photos skipped (printed claims)</div>
+                        ) : null}
                         {product.total_inventory !== null && product.total_inventory !== undefined ? <div className="sa-small sa-muted">{formatNumber(product.total_inventory)} units</div> : null}
                       </td>
                       <td className="sa-small">{product.collections.map((collection) => collection.title).join(", ") || "—"}</td>

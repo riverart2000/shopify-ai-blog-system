@@ -39,6 +39,7 @@ PERIODIC_TASKS: list[PeriodicTask] = [
     PeriodicTask("collect_channel_metrics", "analytics.channels", 86400),
     PeriodicTask("poll_notifications", "notifications.poll", 1800),
     PeriodicTask("founder_videos", "founder.scan", 300, priority=4),
+    PeriodicTask("photo_audit", "catalog.photo_audit", 1800, priority=1),
     PeriodicTask("maintenance", "maintenance.prune", 86400, per_store=False, requires_enabled=False),
 ]
 

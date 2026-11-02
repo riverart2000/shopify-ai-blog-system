@@ -223,8 +223,9 @@ async def test_concurrent_renders_in_worker_threads(cdn):
 def test_templates_cover_every_content_type():
     for content_type in ContentType:
         keys = templates_for(content_type)
-        if content_type in {ContentType.AI_IMAGE_AD, ContentType.AI_VIDEO}:
-            assert keys == []
+        if content_type in {ContentType.AI_IMAGE_AD, ContentType.AI_VIDEO, ContentType.FOUNDER_VIDEO,
+                            ContentType.FOUNDER_CLIP}:
+            assert keys == []      # Postiz-made or premade media: nothing is rendered from a template
         else:
             assert keys, f"no template for {content_type}"
     product_styles = {get_builtin(k).style for k in templates_for(ContentType.SINGLE_PRODUCT)}

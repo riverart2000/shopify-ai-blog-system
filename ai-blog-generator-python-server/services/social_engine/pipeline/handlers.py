@@ -28,6 +28,14 @@ async def catalog_sync(ctx: JobContext) -> dict:
     return summary
 
 
+@job("catalog.photo_audit", lane="llm", max_attempts=2, timeout_seconds=1500, backoff_base=300)
+async def catalog_photo_audit(ctx: JobContext) -> dict:
+    """Check a few never-audited products' photos for printed claims (vision model)."""
+    from ..ai.photos import audit_pending
+
+    return await audit_pending(ctx.store_id, max_products=int(ctx.payload.get("max_products") or 5))
+
+
 @job("catalog.sync_full", lane="shopify", max_attempts=3, timeout_seconds=1800, backoff_base=120)
 async def catalog_sync_full(ctx: JobContext) -> dict:
     """Full Shopify catalogue sync, including collections and deletions."""
@@ -122,7 +130,7 @@ async def founder_scan(ctx: JobContext) -> dict:
 
 # ----------------------------------------------------------------------- posts
 
-@job("post.generate", lane="llm", max_attempts=3, timeout_seconds=1200, backoff_base=120)
+@job("post.generate", lane="llm", max_attempts=3, timeout_seconds=2400, backoff_base=120)
 async def post_generate(ctx: JobContext) -> dict:
     """Write captions with Gemma, render creatives, build channel versions."""
     from .generate import generate_post

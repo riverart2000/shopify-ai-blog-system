@@ -34,14 +34,22 @@ async def products(
         sid, search=search, collection_id=collection_id, available_only=available_only,
         on_sale_only=on_sale_only, order=order, limit=page_size, offset=(max(page, 1) - 1) * page_size,
     )
+    from db.social_engine import photos as photo_store
+
     excluded = set((await load_settings(sid)).content.excluded_product_ids)
+    photos = await photo_store.product_summary(sid)
     for row in rows:
         row["excluded"] = str(row["product_id"]) in excluded
         row.pop("description", None)
         row["variants"] = len(row.get("variants") or [])
+        audit = photos.get(str(row["product_id"]))
+        row["photos"] = ({"audited": audit["audited"], "claims": audit["claims"],
+                          "blocked": audit["claims"] >= audit["audited"]} if audit else None)
+    counts = await product_store.count_products(sid)
+    counts["photos_blocked"] = sum(1 for a in photos.values() if a["audited"] and a["claims"] >= a["audited"])
     return {
         "products": rows, "page": page, "page_size": page_size,
-        "counts": await product_store.count_products(sid),
+        "counts": counts,
         "collections": [{"id": c["collection_id"], "title": c["title"], "products_count": c["products_count"]}
                         for c in await product_store.list_collections(sid)],
     }

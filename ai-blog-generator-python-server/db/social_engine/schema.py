@@ -430,9 +430,25 @@ CREATE INDEX IF NOT EXISTS idx_social_founder_videos_sha
     ON social_founder_videos(store_id, sha256);
 """
 
+_V3_PHOTO_AUDITS = """
+CREATE TABLE IF NOT EXISTS social_photo_audits (
+    store_id    TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    product_id  TEXT NOT NULL DEFAULT '',
+    verdict     TEXT NOT NULL DEFAULT 'clean',          -- clean | claim
+    claims_json TEXT NOT NULL DEFAULT '[]',
+    model       TEXT NOT NULL DEFAULT '',
+    audited_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (store_id, url)
+);
+CREATE INDEX IF NOT EXISTS idx_social_photo_audits_product
+    ON social_photo_audits(store_id, product_id, verdict);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "core tables", _V1_CORE),
     Migration(2, "founder videos", _V2_FOUNDER_VIDEOS),
+    Migration(3, "photo audits", _V3_PHOTO_AUDITS),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

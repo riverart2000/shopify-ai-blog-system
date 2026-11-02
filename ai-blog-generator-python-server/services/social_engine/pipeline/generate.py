@@ -176,6 +176,19 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
     if content_type in _NEEDS_PRODUCTS and not products:
         detail = f" ({', '.join(gone)})" if gone else ""
         raise ValidationError(f"The product(s) for this post are no longer available{detail}.")
+    if products:
+        # Supplier photos with "Slim Legs"-style text are never shown; a product
+        # with no clean photo cannot be posted until its photos change.
+        from ..ai.photos import clean_products
+
+        products = await clean_products(sctx, products)
+        blocked = [p["title"] for p in products if p.get("photo_block")]
+        if blocked and content_type in _NEEDS_PRODUCTS:
+            raise ValidationError(
+                "Every photo of " + ", ".join(f"'{t}'" for t in blocked) + " has a health or body-shaping claim "
+                "printed on it. Replace the product photos in Shopify (or exclude the product from social); "
+                "campaigns skip it until then."
+            )
     if content_type == ContentType.SALE_PROMO and products and not any(p.get("on_sale") for p in products) \
             and not (options.get("texts") or {}).get("promo_text"):
         raise ValidationError(f"'{products[0]['title']}' is no longer on sale.")
@@ -261,10 +274,14 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
         )
         for channel, _, _ in usable
     ]
+    from .selfcorrect import ATTEMPT_KEY, FEEDBACK_KEY, plan_fix
+
+    fix_attempt = int(options.get(ATTEMPT_KEY) or 0)
     caption_request = CaptionRequest(
         store_id=store_id, content_type=content_type, products=products, channels=caption_channels,
         angle=post.get("angle", ""), brief=post.get("brief", "") or texts.get("brand_caption", ""),
         texts=texts, caption_overrides=options.get("caption_overrides") or {}, correlation_id=post_id,
+        feedback=str(options.get(FEEDBACK_KEY) or "") if fix_attempt else "",
     )
     overrides = options.get("caption_overrides") or {}
     source = overrides.get("source") or settings.captions.source
@@ -483,6 +500,28 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
     else:
         status, reason = "pending_approval", "waiting for approval"
 
+    # Self-correction: fix what the guard/reviewer found and generate again
+    # instead of handing the draft to a person.
+    fix = plan_fix(guard=guard, review=review, options=options, settings=settings, products=products,
+                   captions_source=captions.source) if status == "pending_approval" else None
+    if fix is not None:
+        latest = await post_store.get_post(store_id, post_id)   # ai_video/ai_background may have saved options
+        merged = {**((latest or {}).get("options") or {}), ATTEMPT_KEY: fix.attempt, FEEDBACK_KEY: fix.feedback}
+        if fix.next_image:
+            merged["image_offset"] = int(merged.get("image_offset") or 0) + 1
+        await record(
+            store_id, "post", post_id, fix.describe(settings.guards.max_review_rewrites), stage="generate",
+            data={"problems": fix.problems[:10], "next_image": fix.next_image, "attempt": fix.attempt},
+        )
+        if not await post_store.transition_post(store_id, post_id, from_statuses=("generating",), to_status="planned",
+                                                options=merged, review=review_data):
+            return {"skipped": True, "reason": "post was changed while generating"}
+        return await generate_post(store_id, post_id, force=True)
+    if fix_attempt:
+        fixes = f"{fix_attempt} fix{'es' if fix_attempt != 1 else ''}"
+        reason += f" after {fixes}"
+        captions.warnings.append(f"The engine made {fixes} from reviewer notes before this version.")
+
     generation = {
         "caption_source": captions.source,
         "model": captions.model,
@@ -497,7 +536,14 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
         "duration_ms": int((time.monotonic() - started) * 1000),
         "generated_at": int(time.time()),
         "product_snapshot": product_snapshot(products),
+        "review_fixes": fix_attempt,
     }
+    final_fields: dict[str, Any] = {}
+    if fix_attempt:
+        # A later "Regenerate" starts fresh rather than replaying old notes.
+        latest = await post_store.get_post(store_id, post_id)
+        cleared = {k: v for k, v in ((latest or {}).get("options") or {}).items() if k not in (ATTEMPT_KEY, FEEDBACK_KEY)}
+        final_fields["options"] = cleared
     updated = await post_store.transition_post(
         store_id, post_id, from_statuses=("generating",), to_status=status,
         base_caption=captions.base_caption, hashtags=captions.hashtags, alt_text=captions.alt_text,
@@ -505,6 +551,7 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
         error_type="", error_message="",
         approved_at=int(time.time()) if status == "approved" else None,
         approved_by="auto" if status == "approved" else "",
+        **final_fields,
     )
     if not updated:
         return {"skipped": True, "reason": "post was changed while generating"}

@@ -41,7 +41,10 @@ async def eligible_products(
     rows = await product_store.list_publishable_products(
         store_id, in_stock_only=in_stock_only, on_sale_only=on_sale_only,
     )
+    from db.social_engine import photos as photo_store
+
     excluded_ids = _idset([*settings.content.excluded_product_ids, *(exclude_product_ids or [])])
+    excluded_ids |= await photo_store.blocked_product_ids(store_id)   # every photo carries a printed claim
     excluded_tags = _tagset([*settings.content.excluded_tags, *(exclude_tags or [])])
     wanted_tags = _tagset(include_tags)
     wanted_collections = _idset(collection_ids)
