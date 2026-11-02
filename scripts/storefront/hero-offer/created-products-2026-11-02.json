@@ -1,0 +1,196 @@
+{
+ "evening-wind-down-kit": {
+  "id": "gid://shopify/Product/16760345624921",
+  "handle": "the-evening-wind-down-kit",
+  "title": "The Evening Wind-Down Kit",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326289834329",
+     "title": "Matte Black Roll",
+     "price": "91.52",
+     "sku": null,
+     "selectedOptions": [
+      {
+       "name": "Mat colour",
+       "value": "Matte Black Roll"
+      }
+     ]
+    },
+    {
+     "id": "gid://shopify/ProductVariant/60326289867097",
+     "title": "Dusty Pink Yoga Mat",
+     "price": "93.79",
+     "sku": null,
+     "selectedOptions": [
+      {
+       "name": "Mat colour",
+       "value": "Dusty Pink Yoga Mat"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "pilates-at-home-starter-kit": {
+  "id": "gid://shopify/Product/16760345723225",
+  "handle": "the-pilates-at-home-starter-kit",
+  "title": "The Pilates-at-Home Starter Kit",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326289899865",
+     "title": "Default Title",
+     "price": "89.31",
+     "sku": null,
+     "selectedOptions": [
+      {
+       "name": "Title",
+       "value": "Default Title"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "post-run-recovery-kit": {
+  "id": "gid://shopify/Product/16760345755993",
+  "handle": "the-post-run-recovery-kit",
+  "title": "The Post-Run Recovery Kit",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326289932633",
+     "title": "Default Title",
+     "price": "75.93",
+     "sku": null,
+     "selectedOptions": [
+      {
+       "name": "Title",
+       "value": "Default Title"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "routine-reset-session": {
+  "id": "gid://shopify/Product/16760288739673",
+  "handle": "routine-reset-session",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326041715033",
+     "title": "60 minutes, online (Zoom or Google Meet)",
+     "sku": "BLL-SVC-SESSION-60",
+     "price": "65.00",
+     "inventoryQuantity": 0
+    }
+   ]
+  },
+  "media": {
+   "nodes": [
+    {
+     "id": "gid://shopify/MediaImage/77059898966361"
+    }
+   ]
+  }
+ },
+ "evening-reset-workshop": {
+  "id": "gid://shopify/Product/16760288837977",
+  "handle": "evening-reset-workshop",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326041846105",
+     "title": "Tue 17 Nov 2026, 19:30 UK (placeholder date) / Seat only",
+     "sku": "BLL-SVC-WS-1117-SEAT",
+     "price": "35.00",
+     "inventoryQuantity": 5
+    },
+    {
+     "id": "gid://shopify/ProductVariant/60326041878873",
+     "title": "Tue 17 Nov 2026, 19:30 UK (placeholder date) / Seat + Evening Wind-Down Kit",
+     "sku": "BLL-SVC-WS-1117-KIT",
+     "price": "99.00",
+     "inventoryQuantity": 3
+    },
+    {
+     "id": "gid://shopify/ProductVariant/60326041911641",
+     "title": "Tue 1 Dec 2026, 19:30 UK (placeholder date) / Seat only",
+     "sku": "BLL-SVC-WS-1201-SEAT",
+     "price": "35.00",
+     "inventoryQuantity": 5
+    },
+    {
+     "id": "gid://shopify/ProductVariant/60326041944409",
+     "title": "Tue 1 Dec 2026, 19:30 UK (placeholder date) / Seat + Evening Wind-Down Kit",
+     "sku": "BLL-SVC-WS-1201-KIT",
+     "price": "99.00",
+     "inventoryQuantity": 3
+    }
+   ]
+  },
+  "media": {
+   "nodes": [
+    {
+     "id": "gid://shopify/MediaImage/77059898999129"
+    }
+   ]
+  }
+ },
+ "28-day-routine-reset": {
+  "id": "gid://shopify/Product/16760288936281",
+  "handle": "28-day-routine-reset",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326042042713",
+     "title": "Cohort 1, starts Mon 23 Nov 2026 (placeholder date)",
+     "sku": "BLL-SVC-PROG-C1",
+     "price": "149.00",
+     "inventoryQuantity": 10
+    },
+    {
+     "id": "gid://shopify/ProductVariant/60326042075481",
+     "title": "Cohort 2, starts Mon 11 Jan 2027 (placeholder date)",
+     "sku": "BLL-SVC-PROG-C2",
+     "price": "149.00",
+     "inventoryQuantity": 10
+    }
+   ]
+  },
+  "media": {
+   "nodes": [
+    {
+     "id": "gid://shopify/MediaImage/77060494426457"
+    }
+   ]
+  }
+ },
+ "learn-to-juggle-online-workshop": {
+  "id": "gid://shopify/Product/16760289034585",
+  "handle": "learn-to-juggle-online-workshop",
+  "status": "DRAFT",
+  "variants": {
+   "nodes": [
+    {
+     "id": "gid://shopify/ProductVariant/60326042173785",
+     "title": "Thu 26 Nov 2026, 19:00 UK (placeholder date)",
+     "sku": "BLL-SVC-JUGGLE-1126",
+     "price": "25.00",
+     "inventoryQuantity": 8
+    }
+   ]
+  },
+  "media": {
+   "nodes": []
+  }
+ }
+}
