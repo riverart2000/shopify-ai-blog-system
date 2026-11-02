@@ -248,6 +248,53 @@ class FounderVideoSettings(_Model):
     max_source_minutes: int = Field(40, ge=1, le=120)     # refuse recordings that would burn the month's minutes
 
 
+class ListingProfile(_Model):
+    """One business profile every directory copies.
+
+    Name, phone and address must be identical everywhere: local search engines
+    cross-check listings, and a client who finds three spellings trusts none.
+    """
+    business_name: str = ""
+    tagline: str = Field("", max_length=120)
+    short_description: str = Field("", max_length=300)
+    description: str = Field("", max_length=1200)
+    long_description: str = Field("", max_length=4000)
+    categories: list[str] = Field(default_factory=lambda: [
+        "Health and wellness shop", "Wellness coaching", "Online retailer",
+    ])
+    founded_year: int | None = Field(None, ge=1900, le=2100)
+    founder_name: str = ""
+    founder_bio: str = Field("", max_length=1500)
+    email: str = ""
+    phone: str = ""
+    website: str = ""
+    address_line1: str = ""
+    address_line2: str = ""
+    city: str = "London"
+    postcode: str = ""
+    country: str = "United Kingdom"
+    service_area: str = "London and online, UK-wide delivery"
+    hours: str = "Online store open 24/7; coaching and workshops by appointment"
+    logo_url: str = ""
+    cover_image_url: str = ""
+    social_links: dict[str, str] = Field(default_factory=dict)   # instagram, facebook, tiktok, youtube, linkedin, x, pinterest
+    keywords: list[str] = Field(default_factory=list)
+    services: list[str] = Field(default_factory=list)
+    price_range: str = "££"
+    payment_methods: list[str] = Field(default_factory=lambda: ["Card", "Apple Pay", "Google Pay", "PayPal", "Klarna"])
+
+
+class ListingsSettings(_Model):
+    """Directory and listing submissions driven through the owner's own Chrome."""
+    enabled: bool = True
+    profile: ListingProfile = Field(default_factory=ListingProfile)
+    relay_dir: str = "~/openclaw"                 # OpenClaw checkout whose browser relay drives Chrome
+    relay_profile: str = "chrome"
+    relay_timeout_seconds: int = Field(90, ge=10, le=600)
+    check_interval_days: int = Field(7, ge=1, le=90)
+    presence_interval_days: int = Field(7, ge=1, le=90)
+
+
 class EngineSettings(_Model):
     enabled: bool = False
     publisher: Literal["postiz", "dry_run"] = "postiz"
@@ -262,12 +309,13 @@ class EngineSettings(_Model):
     utm: UtmSettings = Field(default_factory=UtmSettings)
     auto_promotions: AutoPromotionSettings = Field(default_factory=AutoPromotionSettings)
     founder_videos: FounderVideoSettings = Field(default_factory=FounderVideoSettings)
+    listings: ListingsSettings = Field(default_factory=ListingsSettings)
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:
     merged = dict(base)
     for key, value in (patch or {}).items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict) and key not in {"daily_caps", "templates", "source_overrides"}:
+        if isinstance(value, dict) and isinstance(merged.get(key), dict) and key not in {"daily_caps", "templates", "source_overrides", "social_links"}:
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value

@@ -445,10 +445,30 @@ CREATE INDEX IF NOT EXISTS idx_social_photo_audits_product
     ON social_photo_audits(store_id, product_id, verdict);
 """
 
+_V4_LISTINGS = """
+CREATE TABLE IF NOT EXISTS social_listings (
+    store_id      TEXT NOT NULL,
+    directory_id  TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'todo',   -- todo | filled | submitted | verifying | live | broken | skipped
+    listing_url   TEXT NOT NULL DEFAULT '',
+    notes         TEXT NOT NULL DEFAULT '',
+    fill_json     TEXT NOT NULL DEFAULT '{}',     -- last relay fill: state, filled, left_for_you, error
+    check_json    TEXT NOT NULL DEFAULT '{}',     -- last live check
+    filled_at     INTEGER,
+    submitted_at  INTEGER,
+    live_at       INTEGER,
+    checked_at    INTEGER,
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (store_id, directory_id)
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "core tables", _V1_CORE),
     Migration(2, "founder videos", _V2_FOUNDER_VIDEOS),
     Migration(3, "photo audits", _V3_PHOTO_AUDITS),
+    Migration(4, "directory listings", _V4_LISTINGS),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

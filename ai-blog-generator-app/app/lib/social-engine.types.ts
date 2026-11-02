@@ -79,6 +79,19 @@ export type ContentSettings = {
   excluded_product_ids: string[]; excluded_tags: string[];
 };
 
+export type ListingProfile = {
+  business_name: string; tagline: string; short_description: string; description: string; long_description: string;
+  categories: string[]; founded_year: number | null; founder_name: string; founder_bio: string; email: string; phone: string;
+  website: string; address_line1: string; address_line2: string; city: string; postcode: string; country: string;
+  service_area: string; hours: string; logo_url: string; cover_image_url: string; social_links: Record<string, string>;
+  keywords: string[]; services: string[]; price_range: string; payment_methods: string[];
+};
+
+export type ListingsSettings = {
+  enabled: boolean; profile: ListingProfile; relay_dir: string; relay_profile: string; relay_timeout_seconds: number;
+  check_interval_days: number; presence_interval_days: number;
+};
+
 export type EngineSettings = {
   enabled: boolean;
   publisher: "postiz" | "dry_run";
@@ -91,6 +104,7 @@ export type EngineSettings = {
   ai: AISettings;
   guards: GuardSettings;
   utm: UtmSettings;
+  listings?: ListingsSettings;
 };
 
 /** A pydantic `model_json_schema()` (subset we render). */

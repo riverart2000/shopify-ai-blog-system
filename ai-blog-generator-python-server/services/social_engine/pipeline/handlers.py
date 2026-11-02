@@ -130,6 +130,35 @@ async def founder_scan(ctx: JobContext) -> dict:
 
 # ----------------------------------------------------------------------- posts
 
+@job("listings.fill", lane="relay", max_attempts=1, timeout_seconds=600)
+async def listings_fill(ctx: JobContext) -> dict:
+    """Prefill one directory form in the owner's Chrome (never submits)."""
+    from ..context import load_store_context
+    from ..listings.fill import fill_directory
+
+    sctx = await load_store_context(ctx.store_id, correlation_id=ctx.correlation_id)
+    return await fill_directory(sctx, str(ctx.payload.get("directory_id") or ""), tab=str(ctx.payload.get("tab") or ""))
+
+
+@job("listings.presence", lane="relay", max_attempts=1, timeout_seconds=600)
+async def listings_presence(ctx: JobContext) -> dict:
+    """Search the brand in the owner's Chrome and record what a client would find."""
+    from ..context import load_store_context
+    from ..listings.checks import search_presence
+
+    sctx = await load_store_context(ctx.store_id, correlation_id=ctx.correlation_id)
+    report = await search_presence(sctx)
+    return report.get("summary") or report
+
+
+@job("listings.check", lane="default", max_attempts=2, timeout_seconds=900, backoff_base=300)
+async def listings_check(ctx: JobContext) -> dict:
+    """Periodic: confirm live listings still exist and still show the right name and phone."""
+    from ..listings.checks import check_due
+
+    return await check_due(ctx.store_id)
+
+
 @job("post.generate", lane="llm", max_attempts=3, timeout_seconds=2400, backoff_base=120)
 async def post_generate(ctx: JobContext) -> dict:
     """Write captions with Gemma, render creatives, build channel versions."""

@@ -39,6 +39,7 @@ const SECTIONS: Array<{ to: string; label: string; end?: boolean }> = [
   { to: "/app/social/founder-videos", label: "Founder videos" },
   { to: "/app/social/campaigns", label: "Campaigns" },
   { to: "/app/social/products", label: "Products" },
+  { to: "/app/social/listings", label: "Listings" },
   { to: "/app/social/channels", label: "Channels" },
   { to: "/app/social/templates", label: "Templates & brand" },
   { to: "/app/social/analytics", label: "Analytics" },

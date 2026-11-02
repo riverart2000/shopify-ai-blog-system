@@ -23,6 +23,7 @@ LANE_LIMITS: dict[str, int] = {
     "render": 2,
     "postiz": 1,
     "shopify": 1,
+    "relay": 1,      # the owner's Chrome: one form at a time
 }
 
 
