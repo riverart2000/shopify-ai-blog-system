@@ -194,6 +194,19 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
             premade.append(video)
         else:
             render_content_type = ContentType.PRODUCT_VIDEO
+    for item in options.get("premade_media") or []:
+        # Founder videos / Postiz clips: the file already exists (locally, and
+        # maybe in the Postiz library), so nothing is rendered for video channels.
+        if not item.get("path"):
+            continue
+        premade.append({
+            "kind": "video", "format": str(item.get("format") or MediaFormat.STORY), "path": str(item["path"]),
+            "mime": str(item.get("mime") or "video/mp4"), "bytes": int(item.get("bytes") or 0),
+            "sha256": str(item.get("sha256") or ""), "width": int(item.get("width") or 0),
+            "height": int(item.get("height") or 0), "duration_ms": int(item.get("duration_ms") or 0),
+            "external_id": str(item.get("external_id") or ""), "external_path": str(item.get("external_path") or ""),
+            "source": str(item.get("source") or "premade"), "thumbnail": item.get("thumbnail") or None,
+        })
     design = None
     if options.get("postiz_media_search") and content_type not in VIDEO_CONTENT_TYPES:
         design = await postiz_design(sctx, post=post, search=str(options["postiz_media_search"]), notes=notes)
@@ -326,8 +339,9 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
     )
     renderer = TemplateRenderer()
     rendered = await renderer.render(render_request) if formats else []
-    if still_formats and not design:
-        # Image-only channels on a video post get the matching branded still.
+    if still_formats and not design and (products or not premade):
+        # Image-only channels on a video post get the matching branded still
+        # (a founder video without a product has nothing to render for them).
         from dataclasses import replace
 
         rendered += await renderer.render(replace(
@@ -364,6 +378,22 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
             await post_store.set_asset_uploaded(asset_id, external_id=item["external_id"],
                                                 external_path=item["external_path"])
         assets.setdefault((item["format"], "video"), []).append({"id": asset_id, "position": 0})
+        thumb = item.get("thumbnail")
+        if isinstance(thumb, dict) and thumb.get("path"):
+            thumb_id = await post_store.add_asset(store_id, {
+                "post_id": post_id, "kind": "image", "format": item["format"], "role": "thumbnail", "position": 0,
+                "path": thumb["path"], "mime": thumb.get("mime") or "image/jpeg", "bytes": int(thumb.get("bytes") or 0),
+                "sha256": thumb.get("sha256") or "", "source": item["source"],
+            })
+            thumbnails.setdefault(item["format"], thumb_id)
+    if premade:
+        # One premade video serves every video format a channel asks for.
+        first_fmt = premade[0]["format"]
+        for _, fmt, kind in usable:
+            if kind == "video" and (fmt, "video") not in assets and (first_fmt, "video") in assets:
+                assets[(fmt, "video")] = assets[(first_fmt, "video")]
+                if first_fmt in thumbnails:
+                    thumbnails.setdefault(fmt, thumbnails[first_fmt])
     design_asset_id = ""
     if design:
         design_asset_id = await post_store.add_asset(store_id, {

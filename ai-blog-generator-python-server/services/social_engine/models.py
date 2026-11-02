@@ -26,6 +26,8 @@ class ContentType(StrEnum):
     AI_IMAGE_AD = "ai_image_ad"
     AI_VIDEO = "ai_video"
     BLOG_ARTICLE = "blog_article"
+    FOUNDER_VIDEO = "founder_video"   # a long recording by the owner, posted in full (YouTube)
+    FOUNDER_CLIP = "founder_clip"     # a short cut from it by Postiz clipping
 
 
 CONTENT_TYPE_LABELS: dict[str, str] = {
@@ -44,9 +46,12 @@ CONTENT_TYPE_LABELS: dict[str, str] = {
     ContentType.AI_IMAGE_AD: "AI image ad",
     ContentType.AI_VIDEO: "AI video (Postiz credits)",
     ContentType.BLOG_ARTICLE: "Blog article share",
+    ContentType.FOUNDER_VIDEO: "Founder video",
+    ContentType.FOUNDER_CLIP: "Founder clip",
 }
 
-VIDEO_CONTENT_TYPES = frozenset({ContentType.PRODUCT_VIDEO, ContentType.AI_VIDEO})
+VIDEO_CONTENT_TYPES = frozenset({ContentType.PRODUCT_VIDEO, ContentType.AI_VIDEO,
+                                 ContentType.FOUNDER_VIDEO, ContentType.FOUNDER_CLIP})
 MULTI_PRODUCT_CONTENT_TYPES = frozenset({
     ContentType.COLLAGE, ContentType.COLLECTION_ROUNDUP, ContentType.CAROUSEL,
 })

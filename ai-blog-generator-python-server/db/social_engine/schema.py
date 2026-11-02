@@ -398,8 +398,41 @@ CREATE TABLE IF NOT EXISTS social_engine_state (
 );
 """
 
+_V2_FOUNDER_VIDEOS = """
+CREATE TABLE IF NOT EXISTS social_founder_videos (
+    id              TEXT PRIMARY KEY,
+    store_id        TEXT NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'folder',      -- folder | upload | url
+    title           TEXT NOT NULL DEFAULT '',
+    note            TEXT NOT NULL DEFAULT '',
+    original_name   TEXT NOT NULL DEFAULT '',
+    original_path   TEXT NOT NULL DEFAULT '',
+    sha256          TEXT NOT NULL DEFAULT '',
+    bytes           INTEGER NOT NULL DEFAULT 0,
+    duration_ms     INTEGER NOT NULL DEFAULT 0,
+    width           INTEGER NOT NULL DEFAULT 0,
+    height          INTEGER NOT NULL DEFAULT 0,
+    product_ids_json TEXT NOT NULL DEFAULT '[]',
+    youtube_url     TEXT NOT NULL DEFAULT '',
+    full_post_id    TEXT NOT NULL DEFAULT '',
+    clipping_id     TEXT NOT NULL DEFAULT '',
+    clips_json      TEXT NOT NULL DEFAULT '[]',
+    clip_post_ids_json TEXT NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'new',         -- new | awaiting_youtube | clipping | done | failed
+    error           TEXT NOT NULL DEFAULT '',
+    next_check_at   INTEGER,
+    created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_social_founder_videos_store
+    ON social_founder_videos(store_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_social_founder_videos_sha
+    ON social_founder_videos(store_id, sha256);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "core tables", _V1_CORE),
+    Migration(2, "founder videos", _V2_FOUNDER_VIDEOS),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

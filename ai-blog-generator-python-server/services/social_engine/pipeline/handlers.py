@@ -110,6 +110,16 @@ async def promotions_auto_occasions(ctx: JobContext) -> dict:
     return await ensure_occasion_promotions(ctx.store_id, force=bool(ctx.payload.get("force")))
 
 
+# -------------------------------------------------------------- founder videos
+
+@job("founder.scan", lane="postiz", max_attempts=2, timeout_seconds=1800, backoff_base=120)
+async def founder_scan(ctx: JobContext) -> dict:
+    """Pick up dropped founder videos and move clippings on (YouTube → Postiz clips → posts)."""
+    from ..founder.ingest import run_cycle
+
+    return await run_cycle(ctx.store_id, force=bool(ctx.payload.get("force")))
+
+
 # ----------------------------------------------------------------------- posts
 
 @job("post.generate", lane="llm", max_attempts=3, timeout_seconds=1200, backoff_base=120)

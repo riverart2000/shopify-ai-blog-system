@@ -220,6 +220,24 @@ class AutoPromotionSettings(_Model):
     skip_themes: list[str] = Field(default_factory=lambda: list(AWARENESS_THEMES))
 
 
+class FounderVideoSettings(_Model):
+    """Owner recordings → full video on YouTube → Postiz clipping → short clips everywhere.
+
+    Postiz can only clip YouTube URLs, so a dropped file is first published to
+    YouTube by the engine; a pasted YouTube URL skips straight to clipping."""
+    enabled: bool = True
+    drop_folder: str = "~/Bio Luxe Lab Videos"           # watched on the Mac that runs the engine
+    full_video_providers: list[str] = Field(default_factory=lambda: ["youtube"])
+    clip_providers: list[str] = Field(default_factory=lambda: [
+        "tiktok-business", "instagram-standalone", "youtube", "facebook", "pinterest"])
+    clips_per_video: int = Field(5, ge=1, le=20)
+    fit: Literal["crop", "blur"] = "crop"
+    approval_mode: Literal["manual", "ai_review", "auto"] = "manual"
+    youtube_visibility: Literal["public", "unlisted"] = "public"
+    clip_days_apart: int = Field(1, ge=0, le=7)           # clip N goes out N*days_apart days after the first
+    max_source_minutes: int = Field(40, ge=1, le=120)     # refuse recordings that would burn the month's minutes
+
+
 class EngineSettings(_Model):
     enabled: bool = False
     publisher: Literal["postiz", "dry_run"] = "postiz"
@@ -233,6 +251,7 @@ class EngineSettings(_Model):
     guards: GuardSettings = Field(default_factory=GuardSettings)
     utm: UtmSettings = Field(default_factory=UtmSettings)
     auto_promotions: AutoPromotionSettings = Field(default_factory=AutoPromotionSettings)
+    founder_videos: FounderVideoSettings = Field(default_factory=FounderVideoSettings)
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:
