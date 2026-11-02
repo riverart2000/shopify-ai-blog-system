@@ -51,3 +51,6 @@ ai-blog-generator-python-server/1
 # Local secret files (never commit)
 postiz-api-access.txt
 *-api-access.txt
+
+# mailbox logins Joe keeps locally; never commit
+docs/emails.md

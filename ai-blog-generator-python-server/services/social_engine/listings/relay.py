@@ -1,8 +1,8 @@
 """Drive the owner's signed-in Chrome through the OpenClaw browser relay.
 
 Each call is one `openclaw browser … --json` subprocess (the relay keeps the
-session). Nothing here ever presses a submit button, accepts terms or creates
-an account: the relay fills fields and reads pages; the owner clicks.
+session). The worker (worker.py) decides what to click and type; this module
+only executes and never decides. Payment details are refused in the worker.
 """
 from __future__ import annotations
 
@@ -139,7 +139,78 @@ class Relay:
             refs = parse_refs(text)
         return Snapshot(url=str(data.get("url") or ""), text=text, refs=refs, links=parse_links(text) if urls else [])
 
-    # ------------------------------------------------------------------ writing (never submits)
+    # ------------------------------------------------------------------ acting
+
+    async def click(self, tab: str, ref: str) -> Any:
+        return await self.run("click", ref, "--target-id", tab)
+
+    async def type(self, tab: str, ref: str, text: str, *, submit: bool = False) -> Any:
+        args = ["type", ref, text, "--target-id", tab]
+        if submit:
+            args.append("--submit")
+        return await self.run(*args)
+
+    async def scroll_into_view(self, tab: str, ref: str) -> Any:
+        return await self.run("scrollintoview", ref, "--target-id", tab)
+
+    async def evaluate(self, tab: str, fn: str, *, ref: str = "") -> Any:
+        args = ["evaluate", "--fn", fn, "--target-id", tab]
+        if ref:
+            args += ["--ref", ref]
+        return await self.run(*args)
+
+    async def js_click(self, tab: str, ref: str) -> Any:
+        """Click through the DOM when an overlay intercepts the pointer."""
+        return await self.evaluate(tab, "el.scrollIntoView({block:'center'}); el.click(); return true;", ref=ref)
+
+    async def js_set_value(self, tab: str, ref: str, value: str) -> Any:
+        """Set an input's value through the DOM (for fields the relay reports as not editable) and fire the events frameworks listen to."""
+        fn = ("const v = " + json.dumps(value) + "; const t = (el.matches('input,textarea,select') ? el : el.querySelector('input,textarea,select')) || el; "
+              "t.focus(); const proto = Object.getPrototypeOf(t); const d = Object.getOwnPropertyDescriptor(proto, 'value'); "
+              "if (d && d.set) d.set.call(t, v); else t.value = v; "
+              "t.dispatchEvent(new Event('input', {bubbles: true})); t.dispatchEvent(new Event('change', {bubbles: true})); return t.value === v;")
+        return await self.evaluate(tab, fn, ref=ref)
+
+    async def select(self, tab: str, ref: str, values: list[str]) -> Any:
+        return await self.run("select", ref, *[str(v) for v in values], "--target-id", tab)
+
+    async def press(self, tab: str, key: str) -> Any:
+        return await self.run("press", key, "--target-id", tab)
+
+    async def navigate(self, tab: str, url: str) -> Any:
+        return await self.run("navigate", url, "--target-id", tab)
+
+    async def wait(self, tab: str, *, ms: int = 0, text: str = "", load: str = "") -> Any:
+        args = ["wait", "--target-id", tab]
+        if ms:
+            args += ["--time", str(int(ms))]
+        if text:
+            args += ["--text", text]
+        if load:
+            args += ["--load", load]
+        try:
+            return await self.run(*args, timeout=max(15.0, ms / 1000 + 15))
+        except ExternalServiceError:
+            return {}   # a wait that times out is not an error for the worker; the next snapshot tells
+
+    async def screenshot(self, tab: str, *, out_dir: Path) -> str:
+        """Capture the tab; returns the saved path ('' when the relay could not)."""
+        try:
+            data = await self.run("screenshot", tab, timeout=45)
+        except ExternalServiceError:
+            return ""
+        path = str(data.get("path") or data.get("file") or "")
+        if path and out_dir:
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                target = out_dir / Path(path).name
+                shutil.move(path, target)
+                return str(target)
+            except OSError:
+                return path
+        return path
+
+    # ------------------------------------------------------------------ writing
 
     async def fill(self, tab: str, fields: list[dict], *, scratch_dir: Path) -> Any:
         """Fill text fields by ref. `fields`: [{ref, value}]; passed through a file (descriptions are long)."""

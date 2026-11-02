@@ -151,6 +151,32 @@ async def listings_presence(ctx: JobContext) -> dict:
     return report.get("summary") or report
 
 
+@job("listings.work", lane="relay", max_attempts=1, timeout_seconds=1800)
+async def listings_work(ctx: JobContext) -> dict:
+    """The directory employee: sign up, fill, submit, verify one directory in the owner's Chrome, logging every step."""
+    from ..context import load_store_context
+    from ..listings.worker import work_directory
+
+    sctx = await load_store_context(ctx.store_id, correlation_id=ctx.correlation_id)
+    return await work_directory(sctx, str(ctx.payload.get("directory_id") or ""), tab=str(ctx.payload.get("tab") or ""))
+
+
+@job("listings.work_next", lane="relay", max_attempts=1, timeout_seconds=1800)
+async def listings_work_next(ctx: JobContext) -> dict:
+    """Periodic autopilot: take the next unworked directory, if the owner has autopilot on and the profile is ready."""
+    from ..context import load_store_context
+    from ..listings.worker import next_directory, recover_interrupted, work_directory
+
+    sctx = await load_store_context(ctx.store_id, correlation_id=ctx.correlation_id)
+    await recover_interrupted(ctx.store_id)
+    if not sctx.settings.listings.autopilot:
+        return {"skipped": "autopilot off"}
+    directory = await next_directory(sctx)
+    if not directory:
+        return {"skipped": "nothing left to work"}
+    return {"directory_id": directory.id, **await work_directory(sctx, directory.id)}
+
+
 @job("listings.check", lane="default", max_attempts=2, timeout_seconds=900, backoff_base=300)
 async def listings_check(ctx: JobContext) -> dict:
     """Periodic: confirm live listings still exist and still show the right name and phone."""

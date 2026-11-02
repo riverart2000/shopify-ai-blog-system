@@ -13,8 +13,10 @@ from services.social_engine.errors import ValidationError
 from services.social_engine.jobs.queue import enqueue
 from services.social_engine.listings.catalogue import KINDS, NEEDS_LABELS, get_directory, ranked
 from services.social_engine.listings.checks import check_listing, last_presence
+from services.social_engine.listings import vault
 from services.social_engine.listings.fill import directory_row, relay_for
 from services.social_engine.listings.profile import COPY_FIELDS, missing_fields, seeded_profile, suggest_copy
+from services.social_engine.listings.worker import eligible, recover_interrupted
 from services.social_engine.settings import ListingProfile, save_settings
 
 from .common import require_api_key, resolve_store_id
@@ -22,23 +24,40 @@ from .common import require_api_key, resolve_store_id
 router = APIRouter(prefix="/api/social-engine", dependencies=[Depends(require_api_key)])
 
 STATUS_LABELS = {
-    "todo": "To do", "filled": "Filled in Chrome, submit it", "submitted": "Submitted, waiting for the site",
-    "verifying": "Verification pending", "live": "Live", "broken": "Needs attention", "skipped": "Skipped",
+    "todo": "To do", "working": "Working in Chrome", "filled": "Filled in Chrome, submit it",
+    "submitted": "Submitted, waiting for the site", "verifying": "Verification pending", "needs_owner": "Needs you",
+    "live": "Live", "broken": "Needs attention", "skipped": "Skipped",
 }
 
 
+def _account_view(row: dict | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {"login_email": row.get("login_email") or "", "username": row.get("username") or "",
+            "has_password": bool(row.get("password_enc")), "login_url": row.get("login_url") or "",
+            "note": row.get("note") or "", "updated_at": row.get("updated_at")}
+
+
 async def _page(sid: str) -> dict[str, Any]:
+    await recover_interrupted(sid)
     sctx = await load_store_context(sid)
     profile = seeded_profile(sctx)
     gaps = missing_fields(profile)
     rows = await store.list_listings(sid)
+    accounts = await store.list_accounts(sid)
     ready = not gaps["required"]
     has_address = bool(profile.address_line1 and profile.postcode)
-    directories = [directory_row(d, rows.get(d.id), ready, has_address) for d in ranked()]
+    directories = [directory_row(d, rows.get(d.id), ready, has_address, profile.business_type) for d in ranked()]
     for row in directories:
         row["status_label"] = STATUS_LABELS.get(row["status"], row["status"])
         row["kind_label"] = KINDS.get(row["kind"], row["kind"])
         row["needs_labels"] = [NEEDS_LABELS.get(n, n) for n in row["needs"]]
+        row["account"] = _account_view(accounts.get(row["id"]))
+        directory = get_directory(row["id"])
+        row["workable"] = directory is not None and not eligible(directory, rows.get(row["id"]), profile_ready=ready,
+                                                                   has_address=has_address, business_type=profile.business_type)
+        row["steps"] = await store.list_steps(sid, row["id"], limit=80) if rows.get(row["id"]) else []
+        row["runs"] = await store.list_runs(sid, row["id"], limit=5) if row["steps"] else []
     counts: dict[str, int] = {}
     for row in directories:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
@@ -46,6 +65,7 @@ async def _page(sid: str) -> dict[str, Any]:
         "store_id": sid, "profile": profile.model_dump(), "missing": gaps, "profile_ready": ready,
         "directories": directories, "counts": counts, "kinds": KINDS, "status_labels": STATUS_LABELS,
         "presence": await last_presence(sid), "settings": sctx.settings.listings.model_dump(exclude={"profile"}),
+        "working": [r["id"] for r in directories if r["status"] == "working"],
     }
 
 
@@ -142,6 +162,9 @@ async def set_listing_status(directory_id: str, payload: StatusRequest) -> dict[
     fields: dict[str, Any] = {"status": payload.status, "notes": payload.notes.strip()}
     if url:
         fields["listing_url"] = url
+    # a status the owner sets by hand supersedes whatever the worker last reported (and stops a run in progress)
+    fields["fill"] = {"state": "done" if payload.status == "live" else payload.status if payload.status == "needs_owner" else "",
+                      "message": (payload.notes.strip() or f"Marked {payload.status} by you.")[:300]}
     row = await store.save_listing(sid, directory_id, **fields)
     return {"ok": True, "listing": row}
 
@@ -183,3 +206,103 @@ async def relay_status(store_id: str = "") -> dict[str, Any]:
         return {"ok": False, "error": str(getattr(exc, "message", exc)), "relay_dir": str(relay.relay_dir)}
     return {"ok": True, "tabs": len(tabs), "relay_dir": str(relay.relay_dir),
             "open": [{"tab": t.get("tabId"), "title": str(t.get("title", ""))[:80], "url": str(t.get("url", ""))[:120]} for t in tabs[:12]]}
+
+
+# ---------------------------------------------------------------------- the worker
+
+class WorkRequest(BaseModel):
+    store_id: str = ""
+    tab: str = ""
+
+
+async def _enqueue_work(sid: str, directory_id: str, tab: str = "", priority: int = 8) -> tuple[str, bool]:
+    await store.save_listing(sid, directory_id, fill={"state": "queued", "message": "Waiting for Chrome…"})
+    return await enqueue("listings.work", {"directory_id": directory_id, "tab": tab}, store_id=sid,
+                         dedupe_key=f"listings:work:{sid}:{directory_id}", correlation_id=f"listing:{directory_id}",
+                         priority=priority)
+
+
+@router.post("/listings/{directory_id}/work")
+async def work_listing(directory_id: str, payload: WorkRequest) -> dict[str, Any]:
+    """Let the worker take this directory end to end (sign up, fill, submit, verify), logging each step."""
+    sid = await resolve_store_id(payload.store_id)
+    directory = get_directory(directory_id)
+    if not directory:
+        raise ValidationError("Unknown directory.")
+    sctx = await load_store_context(sid)
+    profile = seeded_profile(sctx)
+    gaps = missing_fields(profile)
+    why_not = eligible(directory, await store.get_listing(sid, directory.id), profile_ready=not gaps["required"],
+                       has_address=bool(profile.address_line1 and profile.postcode), business_type=profile.business_type)
+    if why_not:
+        raise ValidationError(why_not)
+    job_id, created = await _enqueue_work(sid, directory.id, payload.tab)
+    return {"ok": True, "job_id": job_id, "already_queued": not created}
+
+
+class WorkAllRequest(BaseModel):
+    store_id: str = ""
+
+
+@router.post("/listings/work_all")
+async def work_all(payload: WorkAllRequest) -> dict[str, Any]:
+    """Queue every directory the worker can take, highest trust first; Chrome does them one at a time."""
+    sid = await resolve_store_id(payload.store_id)
+    sctx = await load_store_context(sid)
+    profile = seeded_profile(sctx)
+    gaps = missing_fields(profile)
+    if gaps["required"]:
+        raise ValidationError("Fill in the profile first: " + ", ".join(gaps["required"]) + ".")
+    rows = await store.list_listings(sid)
+    queued: list[str] = []
+    for index, directory in enumerate(ranked()):
+        listing = rows.get(directory.id)
+        if ((listing or {}).get("status") or "todo") not in ("todo", "filled"):
+            continue
+        if eligible(directory, listing, profile_ready=True, has_address=bool(profile.address_line1 and profile.postcode),
+                    business_type=profile.business_type):
+            continue
+        await _enqueue_work(sid, directory.id, priority=max(1, 9 - index // 3))
+        queued.append(directory.id)
+    return {"ok": True, "queued": queued}
+
+
+@router.get("/listings/{directory_id}/steps")
+async def listing_steps(directory_id: str, store_id: str = "", run_id: str = "") -> dict[str, Any]:
+    sid = await resolve_store_id(store_id)
+    if not get_directory(directory_id):
+        raise ValidationError("Unknown directory.")
+    return {"ok": True, "runs": await store.list_runs(sid, directory_id), "steps": await store.list_steps(sid, directory_id, run_id=run_id)}
+
+
+class AccountRequest(BaseModel):
+    store_id: str = ""
+    login_email: str = Field("", max_length=200)
+    username: str = Field("", max_length=100)
+    password: str = Field("", max_length=200)      # empty keeps the stored one
+    login_url: str = Field("", max_length=500)
+    note: str = Field("", max_length=500)
+
+
+@router.get("/listings/{directory_id}/account")
+async def listing_account(directory_id: str, store_id: str = "", reveal: bool = False) -> dict[str, Any]:
+    """The account the worker made (or you entered). `reveal` returns the password once, for you to copy."""
+    sid = await resolve_store_id(store_id)
+    row = await store.get_account(sid, directory_id)
+    view = _account_view(row)
+    if view and reveal:
+        view["password"] = vault.decrypt(row.get("password_enc") or "") if row else ""
+    return {"ok": True, "account": view}
+
+
+@router.post("/listings/{directory_id}/account")
+async def save_listing_account(directory_id: str, payload: AccountRequest) -> dict[str, Any]:
+    sid = await resolve_store_id(payload.store_id)
+    if not get_directory(directory_id):
+        raise ValidationError("Unknown directory.")
+    fields: dict[str, Any] = {"login_email": payload.login_email.strip(), "username": payload.username.strip(),
+                              "login_url": payload.login_url.strip(), "note": payload.note.strip()}
+    if payload.password:
+        fields["password_enc"] = vault.encrypt(payload.password)
+    row = await store.save_account(sid, directory_id, **fields)
+    return {"ok": True, "account": _account_view(row)}

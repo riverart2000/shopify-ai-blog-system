@@ -80,7 +80,7 @@ export type ContentSettings = {
 };
 
 export type ListingProfile = {
-  business_name: string; tagline: string; short_description: string; description: string; long_description: string;
+  business_name: string; business_type: "sole_trader" | "limited_company" | "partnership"; tagline: string; short_description: string; description: string; long_description: string;
   categories: string[]; founded_year: number | null; founder_name: string; founder_bio: string; email: string; phone: string;
   website: string; address_line1: string; address_line2: string; city: string; postcode: string; country: string;
   service_area: string; hours: string; logo_url: string; cover_image_url: string; social_links: Record<string, string>;
@@ -90,6 +90,7 @@ export type ListingProfile = {
 export type ListingsSettings = {
   enabled: boolean; profile: ListingProfile; relay_dir: string; relay_profile: string; relay_timeout_seconds: number;
   check_interval_days: number; presence_interval_days: number;
+  autopilot: boolean; work_interval_hours: number; account_email: string; max_steps_per_run: number;
 };
 
 export type EngineSettings = {

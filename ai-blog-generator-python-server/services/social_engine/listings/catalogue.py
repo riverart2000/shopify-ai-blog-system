@@ -46,6 +46,7 @@ class Directory:
     limits: dict[str, int] = field(default_factory=dict)   # profile field -> max chars on this site
     domains: tuple[str, ...] = ()  # hostnames that count as "found" in a search
     requires_address: bool = False
+    requires_company: bool = False   # only a limited company has this record; sole traders skip it
 
     @property
     def hosts(self) -> tuple[str, ...]:
@@ -198,9 +199,9 @@ DIRECTORIES: tuple[Directory, ...] = (
         "companies_house", "Companies House", "reviews",
         "https://find-and-update.company-information.service.gov.uk/",
         "https://find-and-update.company-information.service.gov.uk/",
-        "If the business is a limited company, this is the record a careful client checks first.",
-        trust=7, reach=1, fill="manual",
-        notes="Nothing to submit. If trading as a sole trader, say so plainly on the Meet Joe page instead.",
+        "Only a limited company has this record; a careful client checks it when one exists.",
+        trust=7, reach=1, fill="manual", requires_company=True,
+        notes="Nothing to submit. A sole trader has no record here; say who runs the business on the Meet Joe page instead.",
         domains=("company-information.service.gov.uk", "companieshouse.gov.uk"),
     ),
 )

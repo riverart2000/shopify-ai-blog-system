@@ -11,16 +11,21 @@ import { authenticate } from "../shopify.server";
 export const handle = { title: "Listings" };
 
 type FillSummary = {
-  state?: "queued" | "running" | "filled" | "no_form" | "error"; message?: string; page?: string; tab?: string;
+  state?: "queued" | "running" | "filled" | "no_form" | "error" | "done" | "submitted" | "needs_owner"; message?: string; page?: string; tab?: string;
+  run_id?: string; steps?: number; screenshot?: string;
   filled?: Array<{ label: string; field: string; chars: number; source: string }>;
   left_for_you?: Array<{ label: string; reason: string }>; unmatched?: string[];
 };
 type CheckSummary = { ok?: boolean; status_code?: number | null; message?: string; checked_at?: number };
+type Account = { login_email: string; username: string; has_password: boolean; login_url: string; note: string; updated_at: number | null };
+type Step = { id: number; run_id: string; step: number; at: number; url: string; action: string; ref: string; label: string; value: string; note: string; result: string; screenshot: string };
+type Run = { run_id: string; started_at: number; ended_at: number; steps: number; outcome: string };
 type DirectoryRow = {
   id: string; name: string; kind: string; kind_label: string; url: string; submit_url: string; why: string; notes: string;
   cost: string; trust: number; reach: number; needs: string[]; needs_labels: string[]; fill: "relay" | "manual" | "feed" | "done";
   status: string; status_label: string; listing_url: string; notes_owner: string; last_fill: FillSummary; last_check: CheckSummary;
   filled_at: number | null; submitted_at: number | null; live_at: number | null; checked_at: number | null; blocked: string;
+  account: Account | null; workable: boolean; steps: Step[]; runs: Run[];
 };
 type Established = { score: number; checks: Array<{ label: string; points: number; ok: boolean }>; next: string[] };
 type PresenceQuery = {
@@ -31,13 +36,13 @@ type Presence = { checked_at: number; queries: PresenceQuery[]; summary?: { esta
 type ListingsResponse = {
   profile: ListingProfile; missing: { required: string[]; recommended: string[] }; profile_ready: boolean;
   directories: DirectoryRow[]; counts: Record<string, number>; kinds: Record<string, string>;
-  status_labels: Record<string, string>; presence: Presence;
-  settings: { relay_dir: string; check_interval_days: number };
+  status_labels: Record<string, string>; presence: Presence; working: string[];
+  settings: { relay_dir: string; check_interval_days: number; autopilot: boolean; work_interval_hours: number; account_email: string; max_steps_per_run: number };
 };
 
 const EMPTY: ListingsResponse = {
   profile: {} as ListingProfile, missing: { required: [], recommended: [] }, profile_ready: false, directories: [], counts: {},
-  kinds: {}, status_labels: {}, presence: null, settings: { relay_dir: "", check_interval_days: 7 },
+  kinds: {}, status_labels: {}, presence: null, working: [], settings: { relay_dir: "", check_interval_days: 7, autopilot: true, work_interval_hours: 12, account_email: "", max_steps_per_run: 45 },
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -74,6 +79,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         for (const key of LIST_FIELDS) profile[key] = splitList(formString(form, key));
         const year = formString(form, "founded_year");
         profile.founded_year = year ? Number(year) : null;
+        profile.business_type = formString(form, "business_type") || "sole_trader";
         const social: Record<string, string> = {};
         for (const key of SOCIAL_KEYS) {
           const link = formString(form, `social_${key}`);
@@ -94,6 +100,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       case "fill": {
         const result = await seFetch<{ already_queued: boolean }>(`/listings/${seg(safeId(directoryId))}/fill`, { body: { tab: formString(form, "tab") } });
         return { message: result.already_queued ? "Already filling; watch Chrome." : "Filling the form in Chrome now. Check the fields there, then press the site's own submit button." };
+      }
+      case "work": {
+        const result = await seFetch<{ already_queued: boolean }>(`/listings/${seg(safeId(directoryId))}/work`, { body: { tab: formString(form, "tab") } });
+        return { message: result.already_queued ? "Already on it; watch Chrome." : "The worker has it. Watch Chrome if you like; every step is logged here." };
+      }
+      case "work_all": {
+        const result = await seFetch<{ queued: string[] }>("/listings/work_all", { method: "POST" });
+        return { message: result.queued.length ? `Queued ${result.queued.length} directories; Chrome works them one at a time, highest trust first.` : "Nothing left for the worker: everything is live, waiting on a site, or waiting on you." };
+      }
+      case "reveal": {
+        const result = await seFetch<{ account: (Account & { password?: string }) | null }>(`/listings/${seg(safeId(directoryId))}/account`, { query: { reveal: "1" } });
+        if (!result.account) return { message: "No account stored for this directory yet." };
+        return { message: `${result.account.login_email}${result.account.username ? ` · username ${result.account.username}` : ""} · password: ${result.account.password || "(none stored)"}` };
+      }
+      case "save_account": {
+        await seFetch(`/listings/${seg(safeId(directoryId))}/account`, {
+          body: { login_email: formString(form, "login_email"), username: formString(form, "username"), password: formString(form, "password"),
+                  login_url: formString(form, "login_url"), note: formString(form, "account_note") },
+        });
+        return { message: "Account details saved; the worker signs in with them next time." };
       }
       case "set_status": {
         await seFetch(`/listings/${seg(safeId(directoryId))}/status`, {
@@ -121,7 +147,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 const STATUS_TONE: Record<string, "neutral" | "info" | "success" | "warning" | "critical"> = {
-  todo: "neutral", filled: "info", submitted: "info", verifying: "warning", live: "success", broken: "critical", skipped: "neutral",
+  todo: "neutral", working: "info", filled: "info", submitted: "info", verifying: "warning", needs_owner: "warning", live: "success",
+  broken: "critical", skipped: "neutral",
+};
+const ACTION_LABEL: Record<string, string> = {
+  click: "Clicked", type: "Typed", fill: "Filled", select: "Chose", press: "Pressed", navigate: "Went to", wait: "Waited",
+  check_email: "Checked Gmail", done: "Done", submitted: "Submitted", need_owner: "Needs you", note: "Note",
 };
 const COST_LABEL: Record<string, string> = { free: "Free", freemium: "Free plan", paid: "Paid", pay_per_lead: "Pay per lead" };
 
@@ -130,7 +161,7 @@ export default function Listings() {
   const result = useActionData<typeof action>();
   const { tz } = useSocial();
   const { busy, isSubmitting } = useBusy();
-  const working = data.directories.some((d) => d.last_fill?.state === "queued" || d.last_fill?.state === "running");
+  const working = data.working.length > 0 || data.directories.some((d) => d.last_fill?.state === "queued" || d.last_fill?.state === "running");
   usePolling(working || isSubmitting("presence"), 5_000);
 
   if (data.error) return <LoadError error={data.error} />;
@@ -149,14 +180,17 @@ export default function Listings() {
           description={
             <>
               One profile, copied word for word to every directory a careful client might look at: Google, a review site, the UK
-              directories, the places the workshops are sold. The engine prefills each form in your Chrome and stops before the
-              submit button; accounts, submits and verifications are yours. {live} of {total} live.
+              directories, the places the workshops are sold. The worker does each one in your Chrome like an employee: creates
+              the account, fills the form, submits, reads the verification mail, and logs every step here for you to check. It
+              hands back to you for CAPTCHAs, phone or postcard checks and anything that wants a card. {live} of {total} live.
+              {working ? " Working now." : ""}
             </>
           }
           actions={
             <div className="sa-row">
               <Form method="post"><Hidden values={{ intent: "relay" }} /><button type="submit" className="sa-btn" disabled={busy}>{isSubmitting("relay") ? "Checking…" : "Test Chrome link"}</button></Form>
-              <Form method="post"><Hidden values={{ intent: "presence" }} /><button type="submit" className="sa-btn sa-btn-primary" disabled={busy}>{isSubmitting("presence") ? "Searching…" : "What does a client find?"}</button></Form>
+              <Form method="post"><Hidden values={{ intent: "presence" }} /><button type="submit" className="sa-btn" disabled={busy}>{isSubmitting("presence") ? "Searching…" : "What does a client find?"}</button></Form>
+              <Form method="post"><Hidden values={{ intent: "work_all" }} /><button type="submit" className="sa-btn sa-btn-primary" disabled={busy || !data.profile_ready}>{isSubmitting("work_all") ? "Queueing…" : "Work through all"}</button></Form>
             </div>
           }
         />
@@ -202,14 +236,14 @@ export default function Listings() {
       <ProfileCard data={data} busy={busy} suggesting={isSubmitting("suggest")} />
 
       <Card>
-        <SectionHeader title="Directories" description="Highest trust first. Fill in Chrome prefills the open form (sign in and get to the form first if the site needs it); then press the site's submit, come back and mark it submitted, and paste the live link once it is up." />
+        <SectionHeader title="Directories" description={`Highest trust first. “Let the worker do it” runs the whole thing in Chrome and logs each step; “Needs you” means it stopped for something only you can do (the step log says what), after which “Continue” picks it up again. Autopilot ${data.settings.autopilot ? "is on: every " + data.settings.work_interval_hours + " hours it takes the next directory by itself." : "is off."}`} />
         {Object.entries(data.kinds).map(([kind, label]) => {
           const rows = data.directories.filter((d) => d.kind === kind);
           if (!rows.length) return null;
           return (
             <div key={kind} className="sa-stack" style={{ marginBottom: 14 }}>
               <h3 style={{ margin: "6px 0 0" }}>{label}</h3>
-              {rows.map((row) => <DirectoryCard key={row.id} row={row} busy={busy} filling={isSubmitting("fill", ["directory_id", row.id])} tz={tz} />)}
+              {rows.map((row) => <DirectoryCard key={row.id} row={row} busy={busy} filling={isSubmitting("fill", ["directory_id", row.id])} workingNow={isSubmitting("work", ["directory_id", row.id])} tz={tz} />)}
             </div>
           );
         })}
@@ -244,6 +278,13 @@ function ProfileCard({ data, busy, suggesting }: { data: ListingsResponse; busy:
             <Hidden values={{ intent: "save_profile" }} />
             <div className="sa-grid sa-grid-2">
               <Field label="Business name" help="Exactly as on Google."><input name="business_name" type="text" defaultValue={p.business_name} required className="sa-input" /></Field>
+              <Field label="Legal form" help="A sole trader (self-employed, freelancer) has no Companies House record; those directories are skipped.">
+                <select name="business_type" defaultValue={p.business_type || "sole_trader"} className="sa-input">
+                  <option value="sole_trader">Sole trader (self-employed / freelancer)</option>
+                  <option value="limited_company">Limited company</option>
+                  <option value="partnership">Partnership</option>
+                </select>
+              </Field>
               <Field label="Tagline" help="Under 100 characters."><input name="tagline" type="text" maxLength={120} defaultValue={p.tagline} className="sa-input" /></Field>
               <Field label="Email"><input name="email" type="email" defaultValue={p.email} className="sa-input" /></Field>
               <Field label="Phone" help="Same digits everywhere; it is how directories are matched."><input name="phone" type="text" defaultValue={p.phone} className="sa-input" /></Field>
@@ -299,13 +340,15 @@ function ProfileCard({ data, busy, suggesting }: { data: ListingsResponse; busy:
   );
 }
 
-function DirectoryCard({ row, busy, filling, tz }: { row: DirectoryRow; busy: boolean; filling: boolean; tz: string }) {
+function DirectoryCard({ row, busy, filling, workingNow, tz }: { row: DirectoryRow; busy: boolean; filling: boolean; workingNow: boolean; tz: string }) {
   const [editing, setEditing] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const fill = row.last_fill || {};
-  const inProgress = fill.state === "queued" || fill.state === "running";
-  const canFill = row.fill === "relay" && !row.blocked && row.status !== "live" && row.status !== "skipped";
+  const inProgress = row.status === "working" || fill.state === "queued" || fill.state === "running";
+  const canFill = row.fill === "relay" && !row.blocked && row.status !== "live" && row.status !== "skipped" && !inProgress;
+  const lastStep = row.steps.length ? row.steps[row.steps.length - 1] : null;
   return (
-    <Card muted accent={row.status === "broken" ? "critical" : undefined}>
+    <Card muted accent={row.status === "broken" ? "critical" : row.status === "needs_owner" ? "warning" : undefined}>
       <div className="sa-row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <div style={{ minWidth: 0 }}>
           <strong><a href={row.listing_url || row.url} target="_blank" rel="noreferrer">{row.name}</a></strong>
@@ -317,6 +360,15 @@ function DirectoryCard({ row, busy, filling, tz }: { row: DirectoryRow; busy: bo
       </div>
 
       {row.blocked ? <p className="sa-muted sa-small">Not now: {row.blocked}.</p> : null}
+      {inProgress ? <Banner tone="info" title="Working in Chrome…">{lastStep ? `${lastStep.step}. ${ACTION_LABEL[lastStep.action] || lastStep.action} ${lastStep.label ? `“${lastStep.label}”` : ""} ${lastStep.note ? `· ${lastStep.note}` : ""}` : fill.message || "Starting…"}</Banner> : null}
+      {row.status === "needs_owner" ? (
+        <Banner tone="warning" title="Needs you">
+          {fill.message}
+          {fill.page ? <div className="sa-small sa-break">Page: <a href={fill.page} target="_blank" rel="noreferrer">{fill.page}</a>{fill.tab ? ` (Chrome tab ${fill.tab})` : ""}</div> : null}
+          <div className="sa-small">Do that part in Chrome, then press Continue: the worker carries on from the page that is open.</div>
+        </Banner>
+      ) : null}
+      {fill.state === "done" || fill.state === "submitted" ? <Banner tone={fill.state === "done" ? "success" : "info"}>{fill.message}{fill.steps ? ` (${fill.steps} steps)` : ""}</Banner> : null}
       {fill.state === "filled" ? (
         <Banner tone="info" title={`Filled in Chrome · ${fill.filled?.length || 0} fields`}>
           {fill.message}
@@ -325,7 +377,6 @@ function DirectoryCard({ row, busy, filling, tz }: { row: DirectoryRow; busy: bo
         </Banner>
       ) : null}
       {fill.state === "no_form" || fill.state === "error" ? <Banner tone="warning">{fill.message}</Banner> : null}
-      {inProgress ? <Banner tone="info">Filling in Chrome…</Banner> : null}
       {row.last_check?.message ? (
         <p className="sa-small">
           <Badge tone={row.last_check.ok ? "success" : "warning"}>{row.last_check.ok ? "checked" : "check"}</Badge> {row.last_check.message}
@@ -333,24 +384,69 @@ function DirectoryCard({ row, busy, filling, tz }: { row: DirectoryRow; busy: bo
         </p>
       ) : null}
       {row.notes_owner ? <p className="sa-small sa-muted">Your note: {row.notes_owner}</p> : null}
+      {row.account ? (
+        <p className="sa-small">
+          <Badge tone="neutral">account</Badge> {row.account.login_email}{row.account.username ? ` · ${row.account.username}` : ""}{row.account.has_password ? " · password stored" : " · no password stored"}
+          {row.account.login_url ? <> · <a href={row.account.login_url} target="_blank" rel="noreferrer">sign-in page</a></> : null}
+          {row.account.note ? ` · ${row.account.note}` : ""}
+        </p>
+      ) : null}
 
       <div className="sa-row">
-        {canFill ? (
-          <Form method="post"><Hidden values={{ intent: "fill", directory_id: row.id }} /><button type="submit" className="sa-btn sa-btn-primary" disabled={busy || inProgress}>{filling || inProgress ? "Filling…" : row.status === "filled" ? "Fill again" : "Fill in Chrome"}</button></Form>
+        {row.workable && !inProgress ? (
+          <Form method="post"><Hidden values={{ intent: "work", directory_id: row.id }} /><button type="submit" className="sa-btn sa-btn-primary" disabled={busy}>{workingNow ? "Starting…" : row.status === "needs_owner" ? "Continue" : row.steps.length ? "Work on it again" : "Let the worker do it"}</button></Form>
         ) : null}
-        {row.fill !== "done" && row.status !== "live" ? (
+        {canFill ? (
+          <Form method="post"><Hidden values={{ intent: "fill", directory_id: row.id }} /><button type="submit" className="sa-btn" disabled={busy}>{filling ? "Filling…" : "Just prefill the open form"}</button></Form>
+        ) : null}
+        {row.fill !== "done" && row.status !== "live" && !inProgress ? (
           <>
             {row.status !== "submitted" && row.status !== "verifying" ? <StatusButton row={row} status="submitted" label="Mark submitted" busy={busy} /> : null}
             {row.status === "submitted" ? <StatusButton row={row} status="verifying" label="Waiting for verification" busy={busy} /> : null}
           </>
         ) : null}
         <button type="button" className="sa-btn" onClick={() => setEditing((v) => !v)}>{row.status === "live" ? "Edit link or note" : "Mark live / add note"}</button>
+        {row.fill === "relay" ? <button type="button" className="sa-btn" onClick={() => setAccountOpen((v) => !v)}>{row.account ? "Account" : "Add account details"}</button> : null}
+        {row.account?.has_password ? (
+          <Form method="post"><Hidden values={{ intent: "reveal", directory_id: row.id }} /><button type="submit" className="sa-btn sa-btn-plain" disabled={busy}>Show password</button></Form>
+        ) : null}
         {row.listing_url && row.fill !== "done" ? (
           <Form method="post"><Hidden values={{ intent: "check", directory_id: row.id }} /><button type="submit" className="sa-btn" disabled={busy}>Check it is still up</button></Form>
         ) : null}
-        {row.status !== "skipped" && row.status !== "live" ? <StatusButton row={row} status="skipped" label="Skip" plain busy={busy} /> : null}
+        {row.status !== "skipped" && row.status !== "live" && !inProgress ? <StatusButton row={row} status="skipped" label="Skip" plain busy={busy} /> : null}
         {row.status === "skipped" ? <StatusButton row={row} status="todo" label="Un-skip" plain busy={busy} /> : null}
       </div>
+
+      {row.steps.length ? (
+        <details style={{ marginTop: 8 }} open={row.status === "needs_owner"}>
+          <summary className="sa-small">What the worker did ({row.steps.length} steps{row.runs.length > 1 ? `, ${row.runs.length} runs` : ""}) · last <TimeText epoch={lastStep?.at} tz={tz} relative /></summary>
+          <ol className="sa-small" style={{ paddingLeft: 18, margin: "6px 0 0" }}>
+            {row.steps.map((step) => (
+              <li key={step.id} className="sa-break">
+                <strong>{ACTION_LABEL[step.action] || step.action}</strong>
+                {step.label ? ` “${step.label}”` : ""}
+                {step.value ? ` → ${step.value}` : ""}
+                {step.note ? <span className="sa-muted"> · {step.note}</span> : null}
+                {step.result && step.result !== "ok" ? <span className={step.result.startsWith("refused") || step.result.startsWith("error") ? "sa-error-text" : "sa-muted"}> · {step.result}</span> : null}
+              </li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+
+      {accountOpen ? (
+        <Form method="post" className="sa-stack" style={{ marginTop: 8 }}>
+          <Hidden values={{ intent: "save_account", directory_id: row.id }} />
+          <div className="sa-grid sa-grid-2">
+            <Field label="Login email"><input name="login_email" type="email" defaultValue={row.account?.login_email || ""} className="sa-input" /></Field>
+            <Field label="Username (if the site has one)"><input name="username" type="text" defaultValue={row.account?.username || ""} className="sa-input" /></Field>
+            <Field label="Password" help="Leave empty to keep the stored one. Stored encrypted; never shown in the log."><input name="password" type="password" autoComplete="new-password" className="sa-input" /></Field>
+            <Field label="Sign-in page"><input name="login_url" type="url" defaultValue={row.account?.login_url || ""} className="sa-input" /></Field>
+          </div>
+          <Field label="Note"><input name="account_note" type="text" maxLength={300} defaultValue={row.account?.note || ""} className="sa-input" /></Field>
+          <div><button type="submit" className="sa-btn sa-btn-primary" disabled={busy}>Save account</button></div>
+        </Form>
+      ) : null}
 
       {editing ? (
         <Form method="post" className="sa-stack" style={{ marginTop: 8 }}>
@@ -358,12 +454,12 @@ function DirectoryCard({ row, busy, filling, tz }: { row: DirectoryRow; busy: bo
           <div className="sa-grid sa-grid-2">
             <Field label="Status">
               <select name="status" defaultValue="live" className="sa-input">
-                {["live", "submitted", "verifying", "todo", "broken", "skipped"].map((s) => <option key={s} value={s}>{s}</option>)}
+                {["live", "submitted", "verifying", "todo", "needs_owner", "broken", "skipped"].map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
               </select>
             </Field>
             <Field label="Link to the live listing" help="Needed for the weekly check."><input name="listing_url" type="url" defaultValue={row.listing_url} className="sa-input" placeholder="https://…" /></Field>
           </div>
-          <Field label="Note (optional)"><input name="notes" type="text" maxLength={300} defaultValue={row.notes_owner} className="sa-input" placeholder="login email used, what is pending…" /></Field>
+          <Field label="Note (optional)"><input name="notes" type="text" maxLength={300} defaultValue={row.notes_owner} className="sa-input" placeholder="what is pending, what you changed…" /></Field>
           <div><button type="submit" className="sa-btn sa-btn-primary" disabled={busy}>Save</button></div>
         </Form>
       ) : null}

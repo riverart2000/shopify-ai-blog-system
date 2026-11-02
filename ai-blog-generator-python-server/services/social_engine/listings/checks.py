@@ -141,15 +141,19 @@ def classify_links(links: list[dict], sctx: StoreContext, *, live: Iterable[str]
     missing = [d.name for d in ranked() if d.trust >= 6 and d.name not in found and d.fill != "manual" or
                (d.id == "google_business" and d.name not in found)]
     return {"results": results[:40], "store_found": store_found, "directories_found": sorted(found),
-            "missing": missing[:8], "social": social, "established": established_score(store_found, found, social)}
+            "missing": missing[:8], "social": social,
+            "established": established_score(store_found, found, social,
+                                             business_type=sctx.settings.listings.profile.business_type)}
 
 
-def established_score(store_found: bool, directories_found: set[str], social: list[str]) -> dict[str, Any]:
+def established_score(store_found: bool, directories_found: set[str], social: list[str], *,
+                      business_type: str = "limited_company") -> dict[str, Any]:
     """How established the brand looks to a buyer who searches it, 0-100, with the next things to add.
 
     Weighted by what a careful buyer checks: the store itself, Google's own
     panel, an independent review site, a professional page, and a few social
-    profiles that agree with each other.
+    profiles that agree with each other. A sole trader has no Companies House
+    record, so that check is dropped and the rest is scaled to 100.
     """
     checks = [
         ("Your store ranks for its own name", 25, store_found, "Keep the home page title as the business name."),
@@ -165,7 +169,10 @@ def established_score(store_found: bool, directories_found: set[str], social: li
         ("Company record (Companies House)", 5, "Companies House" in directories_found,
          "If it is a limited company, add the number to the footer; if not, say who runs it on the Meet Joe page."),
     ]
-    score = sum(points for _, points, ok, _ in checks if ok)
+    if business_type != "limited_company":
+        checks = [c for c in checks if "Companies House" not in c[0]]
+    possible = sum(points for _, points, _, _ in checks) or 1
+    score = round(sum(points for _, points, ok, _ in checks if ok) * 100 / possible)
     return {
         "score": score,
         "checks": [{"label": label, "points": points, "ok": bool(ok)} for label, points, ok, _ in checks],

@@ -464,11 +464,45 @@ CREATE TABLE IF NOT EXISTS social_listings (
 );
 """
 
+_V5_LISTING_WORKER = """
+CREATE TABLE IF NOT EXISTS social_listing_steps (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id      TEXT NOT NULL,
+    directory_id  TEXT NOT NULL,
+    run_id        TEXT NOT NULL,
+    step          INTEGER NOT NULL,
+    at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    url           TEXT NOT NULL DEFAULT '',
+    action        TEXT NOT NULL,                  -- click | type | fill | select | press | navigate | wait | check_email | done | submitted | need_owner | note
+    ref           TEXT NOT NULL DEFAULT '',
+    label         TEXT NOT NULL DEFAULT '',       -- the element's accessible name
+    value         TEXT NOT NULL DEFAULT '',       -- what was typed/chosen (passwords masked)
+    note          TEXT NOT NULL DEFAULT '',       -- the worker's one-line reason
+    result        TEXT NOT NULL DEFAULT 'ok',     -- ok | error: … | refused: …
+    screenshot    TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_social_listing_steps_listing ON social_listing_steps(store_id, directory_id, id);
+
+CREATE TABLE IF NOT EXISTS social_listing_accounts (
+    store_id      TEXT NOT NULL,
+    directory_id  TEXT NOT NULL,
+    login_email   TEXT NOT NULL DEFAULT '',
+    username      TEXT NOT NULL DEFAULT '',
+    password_enc  TEXT NOT NULL DEFAULT '',       -- Fernet token (listings/vault.py)
+    login_url     TEXT NOT NULL DEFAULT '',
+    note          TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (store_id, directory_id)
+);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, "core tables", _V1_CORE),
     Migration(2, "founder videos", _V2_FOUNDER_VIDEOS),
     Migration(3, "photo audits", _V3_PHOTO_AUDITS),
     Migration(4, "directory listings", _V4_LISTINGS),
+    Migration(5, "listing worker steps and accounts", _V5_LISTING_WORKER),
 )
 
 LATEST_VERSION = MIGRATIONS[-1].version

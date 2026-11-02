@@ -1,4 +1,4 @@
-"""Prefill a directory's form in the owner's Chrome, then stop before the submit button."""
+"""Prefill a directory's form in the owner's Chrome (the manual route); the worker in worker.py goes further."""
 from __future__ import annotations
 
 import logging
@@ -97,13 +97,18 @@ async def fill_directory(sctx: StoreContext, directory_id: str, *, tab: str = ""
             await relay.close(tab)
 
 
-def directory_row(directory: Directory, listing: dict | None, profile_ready: bool, has_address: bool) -> dict:
+def directory_row(directory: Directory, listing: dict | None, profile_ready: bool, has_address: bool,
+                  business_type: str = "sole_trader") -> dict:
     """What the Listings page shows for one directory."""
     listing = listing or {}
     fill = listing.get("fill") or {}
     status = listing.get("status") or ("live" if directory.fill == "done" else "todo")
     blocked = ""
-    if directory.requires_address and not has_address:
+    if directory.requires_company and business_type != "limited_company":
+        blocked = "limited companies only; a sole trader has no record here"
+        if not listing.get("status"):
+            status = "skipped"
+    elif directory.requires_address and not has_address:
         blocked = "needs a public address"
     elif directory.fill == "relay" and not profile_ready:
         blocked = "finish the profile first"

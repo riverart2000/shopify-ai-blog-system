@@ -255,6 +255,7 @@ class ListingProfile(_Model):
     cross-check listings, and a client who finds three spellings trusts none.
     """
     business_name: str = ""
+    business_type: Literal["sole_trader", "limited_company", "partnership"] = "sole_trader"
     tagline: str = Field("", max_length=120)
     short_description: str = Field("", max_length=300)
     description: str = Field("", max_length=1200)
@@ -293,6 +294,11 @@ class ListingsSettings(_Model):
     relay_timeout_seconds: int = Field(90, ge=10, le=600)
     check_interval_days: int = Field(7, ge=1, le=90)
     presence_interval_days: int = Field(7, ge=1, le=90)
+    # The worker: signs up, fills, submits and verifies on its own, one directory at a time.
+    autopilot: bool = True                        # periodic: pick the next unworked directory every work_interval_hours
+    work_interval_hours: int = Field(12, ge=1, le=168)
+    account_email: str = ""                       # login email for new accounts (default: the profile email)
+    max_steps_per_run: int = Field(45, ge=5, le=150)
 
 
 class EngineSettings(_Model):

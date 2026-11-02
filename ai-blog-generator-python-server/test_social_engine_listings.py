@@ -264,7 +264,8 @@ async def test_presence_classifies_results_and_scores_how_established_the_brand_
     assert classified["social"] == ["bioluxelab.substack.com", "instagram.com"]
     assert "Google Business Profile" in classified["missing"] and all("google" not in r["host"] for r in classified["results"])
     score = classified["established"]
-    assert score["score"] == 25 + 20 + 10 + 10 and score["next"][0].startswith("Keep the Google Business Profile")
+    # sole trader (the default): 65 of a possible 95 points, scaled to 100
+    assert score["score"] == round((25 + 20 + 10 + 10) * 100 / 95) == 68 and score["next"][0].startswith("Keep the Google Business Profile")
 
     relay = FakeRelay(Snapshot(text=SEARCH_TEXT, links=parse_links(SEARCH_TEXT)))
     monkeypatch.setattr(fill, "relay_for", lambda sctx: relay)
@@ -272,7 +273,7 @@ async def test_presence_classifies_results_and_scores_how_established_the_brand_
     report = await checks.search_presence(sctx)
     assert len(report["queries"]) == 2 and report["queries"][1]["query"] == '"Joe Bains" coach'
     # Google's own panel is a card, not a link: the listing marked live counts (+20), as does the Apprentus profile.
-    assert relay.closed == ["t1", "t1"] and report["summary"]["established"]["score"] == 85
+    assert relay.closed == ["t1", "t1"] and report["summary"]["established"]["score"] == round(85 * 100 / 95) == 89
     assert "Google Business Profile" in report["summary"]["directories_found"] and "Apprentus" in report["summary"]["directories_found"]
     assert (await checks.last_presence(se_db))["summary"]["store_found"] is True
 
