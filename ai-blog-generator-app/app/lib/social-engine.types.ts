@@ -62,16 +62,17 @@ export type PostizSettings = {
   base_url: string; api_key_env: string; create_post_hourly_budget: number; short_links: boolean;
   tag_posts: boolean; upload_adjust_video: boolean; customer_id: string; ai_video_monthly_budget: number;
   ai_image_monthly_budget: number; mcp_url: string; video_voice_id: string; ai_backgrounds_for_promotions: boolean;
+  image_fallback_model_id?: string;
   trending_tiktok_music: boolean; webhook_token_set: boolean; api_key_configured: boolean;
 };
 
 export type AISettings = {
   base_url: string; model: string; api_key_env: string; timeout_seconds: number; temperature: number;
-  decision_temperature: number; max_tokens: number; fallback_model_id: string; ai_decisions: boolean;
+  decision_temperature: number; max_tokens: number; fallback_model_id: string; verify_model_id: string; ai_decisions: boolean;
   ai_review: boolean; vision_model: string; api_key_configured: boolean;
 };
 
-export type GuardSettings = { hold_health_claims: boolean; hold_low_review_score: number; max_caption_retries: number };
+export type GuardSettings = { hold_health_claims: boolean; hold_low_review_score: number; max_caption_retries: number; max_review_rewrites?: number };
 export type UtmSettings = { enabled: boolean; medium: string; source_overrides: Record<string, string> };
 export type ContentSettings = {
   multi_image: boolean; rotate_images: boolean; allow_reposting: boolean; repost_after_days: number;
@@ -134,7 +135,7 @@ export type RuleInfo = {
   priority: number;
 };
 
-export type FallbackModel = { id: string; name: string; provider: string; model_name: string };
+export type FallbackModel = { id: string; name: string; provider: string; model_name: string; model_type?: string };
 
 export type SettingsResponse = {
   store_id: string;
@@ -297,6 +298,7 @@ export type PostReview = {
   guard?: { hold: boolean; issues: GuardIssue[] };
   ai_review?: {
     score?: number; approve?: boolean; issues?: string[]; suggestions?: string[]; model?: string; error?: string;
+    verifier?: { model: string; score: number; approve: boolean } | null;
   };
 };
 

@@ -219,3 +219,66 @@ async def test_generation_fails_clearly_for_a_product_with_no_clean_photo(se_db,
     await Worker(run_periodic=False).run_once()
     post = await post_store.get_post(se_db, created["post_id"])
     assert post["status"] == "failed" and "Replace the product photos" in post["error_message"], post
+
+
+# ---------------------------------------------------------------------------
+# Backup image model + previews from the real catalogue
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_backup_image_model_takes_over_when_postiz_credits_are_gone(se_db, cdn, monkeypatch):
+    import db as app_db
+    import providers
+    from services.social_engine.context import load_store_context
+    from services.social_engine.errors import ConfigurationError, ExternalServiceError, RateLimited
+    from services.social_engine.pipeline.media_sources import fallback_applies, fallback_image
+
+    await _setup(se_db)
+    await app_db.upsert_model({
+        "id": "m-grok-img", "store_id": "store_1", "name": "Grok Image", "provider": "xai", "model_type": "image",
+        "model_name": "grok-imagine-image-quality", "api_key": "k", "endpoint": "https://api.x.ai/v1/images/generations",
+        "extra_json": "{}", "priority": 0, "is_active": 1,
+    })
+    await save_settings(se_db, {"postiz": {"image_fallback_model_id": "m-grok-img"}})
+    sctx = await load_store_context(se_db, correlation_id="t")
+    prompts: list[str] = []
+
+    class _FakeImageProvider:
+        def __init__(self, model):
+            self.model = model
+
+        async def generate_images(self, prompt, count=2, reference_image=None):
+            prompts.append(prompt)
+            return ["https://cdn.test/grok.jpg"]
+    monkeypatch.setattr(providers, "get_image_provider", lambda record: _FakeImageProvider(record))
+
+    # Credits gone or Postiz broken → fall back; switched off or not live → do not spend elsewhere.
+    assert fallback_applies(RateLimited("Postiz AI image budget used (60 this month).", retry_at=0))
+    assert fallback_applies(ExternalServiceError("postiz", "generateImageTool failed: no credits", retryable=False))
+    assert not fallback_applies(ConfigurationError("Postiz AI images are disabled (monthly budget is 0)."))
+
+    path, used = await fallback_image(sctx, prompt="Soft studio scene, no text", post_id="post_bg")
+    assert path.endswith((".jpg", ".jpeg")) and used == "image_model:Grok Image" and prompts == ["Soft studio scene, no text"]
+    ledger = await observability.list_api_calls(correlation_id="post_bg")
+    assert ledger and ledger[0]["service"] == "image_model" and ledger[0]["ok"]
+
+    await save_settings(se_db, {"postiz": {"image_fallback_model_id": "nope"}})
+    sctx = await load_store_context(se_db, correlation_id="t")
+    with pytest.raises(ConfigurationError):
+        await fallback_image(sctx, prompt="Soft studio scene, no text", post_id="post_bg")
+
+
+@pytest.mark.asyncio
+async def test_template_previews_use_the_stores_own_products_without_claim_photos(se_db, cdn):
+    from db.social_engine import photos as photo_store
+    from services.social_engine.creatives.render import render_preview, store_preview_products
+
+    assert await store_preview_products(se_db, 2) == []        # nothing synced yet → drawn samples
+    await _setup(se_db)
+    await photo_store.save_audit(se_db, url="https://cdn.test/3.jpg", product_id="3", verdict="claim",
+                                 claims=["Burn Fat"], model="m")
+    products = await store_preview_products(se_db, 2)
+    assert [p.product_id for p in products] == ["3", "2"]       # newest first (ids inserted 1, 2, 3)
+    assert products[0].image_urls == ["https://cdn.test/3b.jpg"] and products[0].price == "£21.50"
+    media = await render_preview(se_db, "product_editorial", "square")
+    assert media.path and media.width > 0

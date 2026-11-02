@@ -82,8 +82,9 @@ async def get_settings(store_id: str = "") -> dict[str, Any]:
     sid = await resolve_store_id(store_id)
     settings = await load_settings(sid)
     text_models = [
-        {"id": m["id"], "name": m["name"], "provider": m["provider"], "model_name": m.get("model_name", "")}
-        for m in await db.get_models(sid) if m.get("model_type") == "text"
+        {"id": m["id"], "name": m["name"], "provider": m["provider"], "model_name": m.get("model_name", ""),
+         "model_type": m.get("model_type", "text")}
+        for m in await db.get_models(sid) if m.get("model_type") in ("text", "image")
     ]
     return {
         "store_id": sid,

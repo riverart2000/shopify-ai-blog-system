@@ -206,7 +206,8 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
         initial={{
           base_url: settings.ai.base_url, model: settings.ai.model, timeout_seconds: settings.ai.timeout_seconds,
           temperature: settings.ai.temperature, decision_temperature: settings.ai.decision_temperature, max_tokens: settings.ai.max_tokens,
-          fallback_model_id: settings.ai.fallback_model_id, ai_decisions: settings.ai.ai_decisions, ai_review: settings.ai.ai_review,
+          fallback_model_id: settings.ai.fallback_model_id, verify_model_id: settings.ai.verify_model_id || "",
+          ai_decisions: settings.ai.ai_decisions, ai_review: settings.ai.ai_review,
           vision_model: settings.ai.vision_model,
         }}
         description="Gemma runs locally (oMLX) and writes captions, plans campaigns and reviews posts."
@@ -224,7 +225,13 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
               <Field label="Fallback model" help="Used only if Gemma fails. Comes from the app's Models page.">
                 <select value={draft.fallback_model_id} onChange={(event) => update({ fallback_model_id: event.target.value })}>
                   <option value="">No fallback</option>
-                  {fallbackModels.map((model) => <option key={model.id} value={model.id}>{model.name} ({model.provider}{model.model_name ? ` · ${model.model_name}` : ""})</option>)}
+                  {fallbackModels.filter((model) => (model.model_type ?? "text") === "text").map((model) => <option key={model.id} value={model.id}>{model.name} ({model.provider}{model.model_name ? ` · ${model.model_name}` : ""})</option>)}
+                </select>
+              </Field>
+              <Field label="Second-opinion reviewer" help="Asked only when Gemma rejects a post on its wording. If it finds nothing blocking, the post goes out.">
+                <select value={draft.verify_model_id} onChange={(event) => update({ verify_model_id: event.target.value })}>
+                  <option value="">None (Gemma's verdict stands)</option>
+                  {fallbackModels.filter((model) => (model.model_type ?? "text") === "text").map((model) => <option key={model.id} value={model.id}>{model.name} ({model.provider}{model.model_name ? ` · ${model.model_name}` : ""})</option>)}
                 </select>
               </Field>
               <NumberField label="Caption creativity (temperature)" value={draft.temperature} min={0} max={2} step={0.05} onChange={(value) => update({ temperature: value })} />
@@ -249,6 +256,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
             <Toggle checked={draft.hold_health_claims} onChange={(value) => update({ hold_health_claims: value })} label="Hold posts with health claims" help="Recommended for supplements and wellness products." />
             <NumberField label="Hold posts Gemma scores below" help="0 = never hold on score." value={draft.hold_low_review_score} min={0} max={10} onChange={(value) => update({ hold_low_review_score: value })} />
             <NumberField label="Rewrite attempts for a bad caption" value={draft.max_caption_retries} min={0} max={3} onChange={(value) => update({ max_caption_retries: value })} />
+            <NumberField label="Fixes before a person is asked" help="Rejected drafts are rewritten from the reviewer's notes this many times first." value={draft.max_review_rewrites ?? 2} min={0} max={4} onChange={(value) => update({ max_review_rewrites: value })} />
           </div>
         )}
       />
@@ -281,6 +289,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
           customer_id: settings.postiz.customer_id, ai_video_monthly_budget: settings.postiz.ai_video_monthly_budget,
           ai_image_monthly_budget: settings.postiz.ai_image_monthly_budget, mcp_url: settings.postiz.mcp_url,
           video_voice_id: settings.postiz.video_voice_id, ai_backgrounds_for_promotions: settings.postiz.ai_backgrounds_for_promotions,
+          image_fallback_model_id: settings.postiz.image_fallback_model_id || "",
           trending_tiktok_music: settings.postiz.trending_tiktok_music,
         }}
         render={(draft, update) => (
@@ -299,6 +308,12 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
               <NumberField label="AI videos per month" help="Postiz AI videos (credits). 0 turns them off." value={draft.ai_video_monthly_budget} min={0} max={100} onChange={(value) => update({ ai_video_monthly_budget: value })} />
               <Field label="Postiz customer ID (optional)" help="Only if you use Postiz customers to separate brands."><input type="text" value={draft.customer_id} onChange={(event) => update({ customer_id: event.target.value })} /></Field>
               <Field label="Postiz MCP address" help="Used for Postiz AI images, videos, voices and the media library."><input type="url" value={draft.mcp_url} onChange={(event) => update({ mcp_url: event.target.value })} /></Field>
+              <Field label="Backup image model" help="Used when the Postiz image credits are gone or Postiz fails, so posts keep going. Comes from the app's Models page.">
+                <select value={draft.image_fallback_model_id} onChange={(event) => update({ image_fallback_model_id: event.target.value })}>
+                  <option value="">None (skip the AI background)</option>
+                  {fallbackModels.filter((model) => model.model_type === "image").map((model) => <option key={model.id} value={model.id}>{model.name} ({model.provider}{model.model_name ? ` · ${model.model_name}` : ""})</option>)}
+                </select>
+              </Field>
             </div>
             <VoicePicker value={draft.video_voice_id} onChange={(value) => update({ video_voice_id: value })} />
             <div className="sa-row">

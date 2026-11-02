@@ -115,3 +115,4 @@ class ReviewResult:
     model: str = ""
     critical: list[str] = field(default_factory=list)   # the issues that block on their own
     vision_critical: bool = False                        # the image itself is the problem
+    verifier: dict[str, Any] | None = None               # second-opinion model's verdict, when asked

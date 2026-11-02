@@ -77,19 +77,83 @@ async def ai_background(sctx: StoreContext, *, post: dict, products: list[dict],
     cached = options.get("ai_background_path")
     if cached:
         return str(cached)
+    prompt = background_prompt(options.get("theme_key", ""), products, post.get("angle", ""))
     tools = get_creative_tools(sctx, correlation_id=post["id"])
+    used = "postiz_ai_image"
     try:
-        generated = await tools.generate_image(background_prompt(options.get("theme_key", ""), products, post.get("angle", "")))
+        generated = await tools.generate_image(prompt)
         path, _, _, _ = await _download(sctx, generated.url, post_id=post["id"], fmt="background", position=0,
                                         default_ext=".jpg")
     except SocialEngineError as exc:
-        notes.warnings.append(f"Postiz AI background skipped: {exc.message}")
-        return None
+        if not fallback_applies(exc) or not sctx.settings.postiz.image_fallback_model_id.strip():
+            notes.warnings.append(f"Postiz AI background skipped: {exc.message}")
+            return None
+        try:
+            path, used = await fallback_image(sctx, prompt=prompt, post_id=post["id"])
+        except SocialEngineError as fallback_exc:
+            notes.warnings.append(f"Postiz AI background skipped: {exc.message}; backup image model failed: "
+                                  f"{fallback_exc.message}")
+            return None
+        notes.warnings.append(f"Postiz AI image unavailable ({exc.message}); used the backup image model instead.")
     finally:
         await tools.aclose()
     await post_store.update_post(sctx.store_id, post["id"], options={**options, "ai_background_path": path})
-    notes.used.append("postiz_ai_image")
+    notes.used.append(used)
     return path
+
+
+def fallback_applies(exc: SocialEngineError) -> bool:
+    """Postiz could not deliver the image: credits used up, or Postiz itself failed.
+
+    A deliberate "budget is 0"/not-live configuration is not a reason to spend
+    money elsewhere.
+    """
+    from ..errors import ConfigurationError, ValidationError
+
+    return not isinstance(exc, (ConfigurationError, ValidationError))
+
+
+async def fallback_image(sctx: StoreContext, *, prompt: str, post_id: str) -> tuple[str, str]:
+    """Generate the image with the Models-page image model (e.g. Grok). Returns (path, source tag)."""
+    import db
+    from providers import ModelRecord, ProviderError, get_image_provider
+
+    from ..errors import ConfigurationError, ExternalServiceError
+
+    model_id = sctx.settings.postiz.image_fallback_model_id.strip()
+    row = await db.get_model(model_id)
+    if not row or str(row.get("store_id") or "") != sctx.store_id:
+        raise ConfigurationError(f"Backup image model '{model_id}' does not exist for this store.")
+    if row.get("model_type") != "image":
+        raise ConfigurationError(f"Backup model '{row.get('name')}' is not an image model.")
+    model_record = ModelRecord.from_dict(row)
+    started = time.monotonic()
+    try:
+        urls = await get_image_provider(model_record).generate_images(prompt[:1500], count=1)
+    except ProviderError as exc:
+        raise ExternalServiceError("image_model", f"{model_record.name}: {exc}", retryable=exc.retryable) from exc
+    except ValueError as exc:
+        raise ConfigurationError(f"Backup image model '{model_record.name}': {exc}") from exc
+    except Exception as exc:
+        raise ExternalServiceError("image_model", f"{model_record.name}: {type(exc).__name__}: {exc}") from exc
+    if not urls:
+        raise ExternalServiceError("image_model", f"{model_record.name} returned no image", retryable=False)
+    path, _, _, _ = await _download(sctx, urls[0], post_id=post_id, fmt="background", position=0, default_ext=".jpg")
+    await record_api(sctx, model_record.name, started, post_id)
+    await record(sctx.store_id, "post", post_id, f"AI background made with the backup image model ({model_record.name})",
+                 stage="generate")
+    return path, f"image_model:{model_record.name}"
+
+
+async def record_api(sctx: StoreContext, name: str, started: float, post_id: str) -> None:
+    try:
+        await observability.record_api_call(
+            service="image_model", operation="images.generate", method="POST", url_path=f"registry/{name}",
+            status_code=200, ok=True, duration_ms=int((time.monotonic() - started) * 1000),
+            store_id=sctx.store_id, correlation_id=post_id,
+        )
+    except Exception:
+        logger.debug("Could not ledger the backup image call", exc_info=True)
 
 
 async def postiz_design(sctx: StoreContext, *, post: dict, search: str, notes: SourceNotes) -> dict | None:

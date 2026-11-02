@@ -669,6 +669,69 @@ async def test_review_rejects_low_score_critical_issues_and_failed_vision(sctx, 
     assert "STORE FACTS" in fake.prompt() and "WELCOME10" in fake.prompt().split("CAPTIONS PER NETWORK")[0]
 
 
+async def _register_verifier(sctx, monkeypatch, reply):
+    import providers
+
+    await db.upsert_model({
+        "id": "m-grok", "store_id": "store_1", "name": "grok-latest", "provider": "openai",
+        "model_type": "text", "model_name": "grok-latest", "api_key": "k", "endpoint": "https://api.x.ai",
+        "extra_json": "{}", "priority": 0, "is_active": 1,
+    })
+    sctx.settings.ai.verify_model_id = "m-grok"
+    calls: list[str] = []
+
+    class _FakeTextProvider:
+        def __init__(self, model):
+            self.model = model
+
+        async def generate_raw(self, prompt: str, system_prompt: str = "") -> str:
+            calls.append(prompt)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+    monkeypatch.setattr(providers, "get_text_provider", lambda record: _FakeTextProvider(record))
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_second_opinion_overrules_a_wording_rejection_but_not_the_guard_or_vision(sctx, monkeypatch, tmp_path):
+    from PIL import Image
+
+    captions = _result("Magnesium contributes to a reduction of tiredness and fatigue. Six colours.")
+    post = {"id": "post_v", "content_type": "single_product"}
+    gemma_no = _review_handler({"score": 6, "critical_issues": ["'Six colours' is not in the data"], "issues": []}, None)
+
+    # Grok finds nothing blocking → approved, and the post says who overruled whom.
+    FakeLLM(gemma_no).install()
+    calls = await _register_verifier(sctx, monkeypatch, json.dumps({"score": 9, "critical_issues": [], "issues": ["Minor"], "suggestions": []}))
+    review = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
+    assert review.approve and review.score == 9 and review.verifier["model"] == "grok-latest" and review.critical == []
+    assert "grok-latest checked it" in review.suggestions[0] and review.issues == ["Minor"]
+    assert len(calls) == 1 and "CAPTIONS PER NETWORK" in calls[0]
+
+    # Grok agrees with Gemma → still rejected, with both sets of blocking issues for the rewrite.
+    await _register_verifier(sctx, monkeypatch, json.dumps({"score": 5, "critical_issues": ["Invented colours"], "issues": []}))
+    review = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
+    assert not review.approve and review.verifier["approve"] is False
+    assert any("grok-latest: Critical: Invented colours" in i for i in review.issues)
+
+    # Grok unreachable → Gemma's verdict stands, nothing crashes.
+    await _register_verifier(sctx, monkeypatch, RuntimeError("boom"))
+    review = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM])
+    assert not review.approve and review.verifier is None
+
+    # A guard hold or an image problem is never sent for a second opinion.
+    calls = await _register_verifier(sctx, monkeypatch, json.dumps({"score": 10, "critical_issues": []}))
+    held = await review_post(sctx, post=post, captions=_result("This cures insomnia."), products=[MAGNESIUM])
+    assert not held.approve and held.verifier is None and calls == []
+    image = tmp_path / "post.png"
+    Image.new("RGB", (64, 64), (200, 200, 200)).save(image)
+    FakeLLM(_review_handler({"score": 9, "critical_issues": []},
+                            {"product_visible": True, "text_legible": True, "has_text": True, "claims": ["Reduce Leg Fat"]})).install()
+    held = await review_post(sctx, post=post, captions=captions, products=[MAGNESIUM], media_paths=[str(image)])
+    assert not held.approve and held.vision_critical and held.verifier is None and calls == []
+
+
 @pytest.mark.asyncio
 async def test_vision_check_salvages_cut_off_reply_and_flags_image_claims(sctx, tmp_path):
     from PIL import Image

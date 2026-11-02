@@ -260,14 +260,57 @@ async def review_post(
             blocking.extend(issue for issue in vision_issues if issue.startswith("Vision:"))
         critical = critical or vision_critical
 
-    approve = draft.score >= settings.guards.hold_low_review_score and not critical
+    threshold = settings.guards.hold_low_review_score
+    approve = draft.score >= threshold and not critical
     suggestions = list(draft.suggestions[:5])
     if draft.summary and not approve:
         suggestions.insert(0, draft.summary)
+    score, model_name = draft.score, meta.model
+    verifier: dict[str, Any] | None = None
+    # Second opinion: Gemma rejected the wording (not the image, not the guard).
+    if not approve and not guard.hold and not vision_critical and settings.ai.verify_model_id.strip():
+        verifier = await _second_opinion(sctx, prompt=prompt, subject_id=subject_id, threshold=threshold)
+        if verifier and verifier.get("approve"):
+            gemma_said = "; ".join(draft.critical_issues[:3]) or f"score {draft.score}/10"
+            suggestions = [f"Gemma rejected this ({gemma_said}); {verifier['model']} checked it and found nothing "
+                           f"blocking, so it was approved."] + list(verifier.get("suggestions") or [])[:3]
+            issues = [i for i in issues if i.startswith("Vision")] + list(verifier.get("issues") or [])
+            blocking = []
+            approve, score, model_name = True, int(verifier["score"]), f"{meta.model} → {verifier['model']}"
+        elif verifier:
+            extra = [f"Critical: {i}" for i in verifier.get("critical") or []]
+            issues = list(issues) + [f"{verifier['model']}: {i}" for i in extra[:3]]
+            blocking = list(blocking) + extra
     return ReviewResult(
-        score=draft.score, approve=approve, issues=list(dict.fromkeys(issues)), suggestions=suggestions,
-        model=meta.model, critical=list(dict.fromkeys(blocking)), vision_critical=vision_critical,
+        score=score, approve=approve, issues=list(dict.fromkeys(issues)), suggestions=suggestions,
+        model=model_name, critical=list(dict.fromkeys(blocking)), vision_critical=vision_critical, verifier=verifier,
     )
+
+
+async def _second_opinion(sctx: StoreContext, *, prompt: str, subject_id: str, threshold: int) -> dict[str, Any] | None:
+    """Ask the configured Models-page model the same review question. None when it could not answer."""
+    from .llm import LLMRouter, RegistryModelProvider
+
+    ai = sctx.settings.ai
+    provider = RegistryModelProvider(sctx.store_id, ai.verify_model_id.strip())
+    router = LLMRouter(provider, None, store_id=sctx.store_id, settings=ai)
+    try:
+        draft, meta = await router.structured(
+            "review.verify",
+            LLMRequest(system=prompts.REVIEW_SYSTEM, prompt=prompt, json_mode=True,
+                       temperature=ai.decision_temperature, max_tokens=900),
+            ReviewDraft, ctx=sctx.call_context(subject_id), decision_type="review.verify", subject_id=subject_id,
+        )
+    except Exception as exc:
+        logger.warning("Second-opinion review unavailable: %s", describe(exc)[1],
+                       extra={"store_id": sctx.store_id, "correlation_id": subject_id})
+        return None
+    return {
+        "model": getattr(provider, "label", "") or meta.model, "score": draft.score,
+        "approve": draft.score >= threshold and not draft.critical_issues,
+        "critical": list(draft.critical_issues), "issues": list(draft.issues),
+        "suggestions": list(draft.suggestions), "summary": draft.summary,
+    }
 
 
 def _store_facts(settings) -> list[str]:

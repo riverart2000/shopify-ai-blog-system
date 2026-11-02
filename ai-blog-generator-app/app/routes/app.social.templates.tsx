@@ -178,7 +178,7 @@ export default function TemplatesPage() {
 
       <s-section heading="Templates">
         <div className="sa-spread" style={{ marginBottom: 10 }}>
-          <p className="sa-muted">Previews use sample products in your brand colours. Switched-off templates are never chosen automatically.</p>
+          <p className="sa-muted">Previews use your own products in your brand colours (drawn sample jars only until the catalogue has synced). Switched-off templates are never chosen automatically.</p>
           <Form method="post"><Hidden values={{ intent: "seed" }} /><button type="submit" className="sa-btn sa-btn-sm" disabled={busy}>{isSubmitting("seed") ? "Refreshing…" : "Restore built-in templates"}</button></Form>
         </div>
         {groups.length ? (

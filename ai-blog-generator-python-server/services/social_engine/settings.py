@@ -160,6 +160,9 @@ class PostizSettings(_Model):
     ai_image_monthly_budget: int = Field(60, ge=0, le=500)
     mcp_url: str = "https://mcp.postiz.com/mcp"
     video_voice_id: str = ""                    # ElevenLabs voice for image-text-slides (empty = first offered)
+    # Models-page image model (e.g. Grok) used when Postiz image credits are
+    # used up or Postiz fails, so running out of credits never stops a post.
+    image_fallback_model_id: str = ""
     ai_backgrounds_for_promotions: bool = True  # Postiz AI scene behind the real product on promo posts
     trending_tiktok_music: bool = True          # pick music via Postiz's TikTok musicSearch tool for videos
     webhook_token: str = ""
@@ -180,6 +183,9 @@ class AISettings(_Model):
     ai_decisions: bool = True
     ai_review: bool = True
     vision_model: str = "mlx-community--Qwen3-VL-8B-Instruct-8bit"
+    # A Models-page model asked for a second opinion only when Gemma rejects a
+    # post on its wording; if it finds nothing blocking, the post is approved.
+    verify_model_id: str = ""
 
     def api_key(self) -> str:
         return os.environ.get(self.api_key_env or "", "").strip()

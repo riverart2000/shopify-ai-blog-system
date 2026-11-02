@@ -282,6 +282,12 @@ export function PostReviewPanel({ review, warnings, channels }: { review?: PostR
             {ai.model ? <span className="sa-small sa-muted">{ai.model}</span> : null}
           </div>
           {ai.error ? <div className="sa-error-text">{ai.error}</div> : null}
+          {ai.verifier ? (
+            <div className="sa-small">
+              <Badge tone={ai.verifier.approve ? "success" : "warning"}>Second opinion: {ai.verifier.model} {ai.verifier.score}/10</Badge>{" "}
+              <span className="sa-muted">{ai.verifier.approve ? "found nothing blocking" : "agreed with Gemma"}</span>
+            </div>
+          ) : null}
           {ai.issues?.length ? (
             <div><span className="sa-muted">Issues:</span>
               <ul style={{ margin: "2px 0 0", paddingLeft: 18 }}>{ai.issues.map((item, index) => <li key={index}>{item}</li>)}</ul>

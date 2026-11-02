@@ -169,23 +169,65 @@ async def load_store_logo(store_id: str) -> bytes | None:
     return data
 
 
+def preview_product_count(template: TemplateDef) -> int:
+    count = template.max_products if template.max_products > 1 else max(1, template.min_products)
+    count = min(4, max(count, template.min_products, 1))
+    return 4 if template.carousel else count
+
+
+async def store_preview_products(store_id: str, count: int, *, brand: BrandKit | None = None) -> list[RenderProduct]:
+    """The store's own products for template previews (newest in-stock ones with a usable photo).
+
+    Photos the audit marked as carrying a printed claim are left out, exactly
+    as they are for real posts. Empty when the catalogue has not synced yet.
+    """
+    from db.social_engine import photos as photo_store
+    from db.social_engine import products as product_store
+
+    from ..catalog.normalize import format_price
+    from ..settings import load_settings
+
+    brand = brand or (await load_settings(store_id)).brand
+    rows = await product_store.list_publishable_products(store_id, in_stock_only=True, on_sale_only=False)
+    out: list[RenderProduct] = []
+    for row in rows:
+        urls = [str(i.get("url") or "") for i in (row.get("images") or []) if isinstance(i, dict) and i.get("url")]
+        if not urls and row.get("featured_image_url"):
+            urls = [str(row["featured_image_url"])]
+        audits = await photo_store.get_audits(store_id, urls)
+        urls = [u for u in urls if (audits.get(u) or {}).get("verdict") != "claim"]
+        if not urls:
+            continue
+        price = format_price(row.get("price_min") or 0, brand.currency_symbol, brand.include_taxes_pct)
+        compare = ""
+        if row.get("on_sale") and row.get("compare_at_max"):
+            compare = format_price(row["compare_at_max"], brand.currency_symbol, brand.include_taxes_pct)
+        out.append(RenderProduct(
+            product_id=str(row["product_id"]), title=str(row.get("title") or ""), handle=str(row.get("handle") or ""),
+            url=str(row.get("url") or ""), price=price, price_value=float(row.get("price_min") or 0),
+            compare_at=compare, discount_pct=float(row.get("discount_pct") or 0), image_urls=urls[:6],
+            description=str(row.get("description") or "")[:600], tags=list(row.get("tags") or []),
+            collections=[c.get("title", "") for c in row.get("collections") or [] if isinstance(c, dict)],
+        ))
+        if len(out) >= count:
+            break
+    return out
+
+
 def sample_request(
     store_id: str, template: TemplateDef, fmt: str, *, brand: BrandKit | None = None, logo: bytes | None = None,
     sample: dict[str, Any] | None = None, post_id: str = "_preview",
 ) -> RenderRequest:
-    """A RenderRequest filled with the built-in sample products and copy."""
+    """A RenderRequest filled with the given products (or the built-in samples) and sample copy."""
     sample = sample or {}
-    count = template.max_products if template.max_products > 1 else max(1, template.min_products)
-    count = min(4, max(count, template.min_products, 1))
-    if template.carousel:
-        count = 4
+    count = preview_product_count(template)
     products: list[RenderProduct] = sample.get("products") or sample_products(count)
     texts = dict(SAMPLE_TEXTS)
     texts.update(template.sample_texts)
     if template.key.startswith("blog_article"):
         texts.setdefault("headline", "")
-        texts["headline"] = "How magnesium supports deeper, more restful sleep"
-        texts["subheadline"] = "What the research says — and how to choose the right form for you."
+        texts["headline"] = "Five small evening habits that make tomorrow easier"
+        texts["subheadline"] = "Simple routines you can start tonight — no equipment, no pressure."
     if template.key.startswith("holiday"):
         texts["headline"] = "Season's greetings"
         texts["subheadline"] = "Thank you for being part of our community this year."
@@ -217,6 +259,13 @@ async def render_preview(
     settings = await load_settings(store_id)
     brand = settings.brand
     logo = await load_store_logo(store_id) if brand.use_store_logo else None
+    sample = dict(sample or {})
+    if not sample.get("products"):
+        # The merchant's own products, so previews show what posts will look like;
+        # the drawn sample jars only until the catalogue has synced.
+        own = await store_preview_products(store_id, preview_product_count(template), brand=brand)
+        if own:
+            sample["products"] = own
     request = sample_request(store_id, template, fmt, brand=brand, logo=logo, sample=sample)
     await ensure_sample_images(request.products)
     if template.kind == "video" and not video:
