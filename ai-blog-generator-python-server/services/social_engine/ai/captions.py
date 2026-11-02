@@ -341,22 +341,39 @@ def link_lines(plan: ChannelPlan, captions: CaptionSettings, cta: str) -> tuple[
     return "", ""  # settings_link (publisher puts it in provider settings) or none
 
 
-def assemble(plan: ChannelPlan, body: str, link_line: str, tags: list[str], warnings: list[str]) -> tuple[str, list[str], str]:
-    """Fit body + link + hashtags in the channel limit. Returns (caption, tags, link_line)."""
+def signature_for(plan: ChannelPlan, captions: CaptionSettings) -> str:
+    """The standing signature line for this channel ("" when none or not for this provider)."""
+    text = " ".join(captions.signature.split())
+    if not text:
+        return ""
+    wanted = {network_key(p) for p in captions.signature_providers}
+    if wanted and plan.key not in wanted and plan.channel.provider not in wanted:
+        return ""
+    return text
+
+
+def assemble(plan: ChannelPlan, body: str, link_line: str, tags: list[str], warnings: list[str],
+             signature: str = "") -> tuple[str, list[str], str]:
+    """Fit body + link + signature + hashtags in the channel limit. Returns (caption, tags, link_line).
+
+    When space is short the hashtags go first, then the signature, then the CTA
+    words on an inline link, and only then the link itself."""
     measure = plan.measure
     limit = plan.max_length
     tags = list(tags)
 
     def _suffix() -> str:
-        return "".join(f"\n\n{part}" for part in (link_line, " ".join(tags)) if part)
+        return "".join(f"\n\n{part}" for part in (link_line, signature, " ".join(tags)) if part)
 
     min_body = min(measure(body), max(40, limit // 3))
     while True:
         room = limit - measure(_suffix())
-        if room >= min_body or (not tags and not link_line):
+        if room >= min_body or (not tags and not link_line and not signature):
             break
         if tags:
             tags.pop()
+        elif signature:
+            signature = ""
         elif plan.link_mode == "inline" and link_line != plan.link_url:
             link_line = plan.link_url          # drop the CTA words, keep the bare link
         else:
@@ -475,7 +492,8 @@ def build_result(
             sources.insert(0, ["Shorts"])
         tags = merge_hashtags(sources, plan.hashtag_cap)
         link_line, first_comment = link_lines(plan, captions, cta)
-        caption, tags, link_line = assemble(plan, body, link_line, tags, warnings)
+        caption, tags, link_line = assemble(plan, body, link_line, tags, warnings,
+                                             signature=signature_for(plan, captions))
         channel_title = make_title(plan, [item.title if item else "", headline, title], captions)
         if captions.include_price and allowed_prices:
             for match in PRICE_RE.finditer(caption):

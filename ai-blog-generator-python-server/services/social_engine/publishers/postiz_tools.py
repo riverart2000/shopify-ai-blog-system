@@ -76,9 +76,12 @@ def _tool_payload(result: dict) -> Any:
 
 
 class PostizMCP:
-    """Minimal stateless MCP client (JSON-RPC 2.0 over streamable HTTP)."""
+    """Minimal stateless MCP client (JSON-RPC 2.0 over streamable HTTP).
 
-    def __init__(self, api_key: str, *, url: str, ctx: CallContext | None = None, timeout: float = 120.0) -> None:
+    Image generation takes 2–4 minutes on Postiz Cloud, so the HTTP timeout is
+    generous; every call is still ledgered whether or not it returns in time."""
+
+    def __init__(self, api_key: str, *, url: str, ctx: CallContext | None = None, timeout: float = 300.0) -> None:
         if not api_key:
             raise ConfigurationError("Postiz API key missing (POSTIZ_API_KEY) — Postiz AI tools are unavailable.")
         self.ctx = ctx or CallContext()

@@ -81,6 +81,12 @@ class CaptionSettings(_Model):
     custom_url: str = ""
     link_in_first_comment: bool = True
     custom_instructions: str = Field("", max_length=1000)
+    # Appended to every caption (after the link, before hashtags): a standing offer
+    # such as "New here? 10% off your first order with code WELCOME10". Postiz's
+    # own signatures only apply in its composer, not to API posts, so the engine
+    # adds it. Empty providers = every channel; otherwise e.g. ["instagram", "facebook"].
+    signature: str = Field("", max_length=200)
+    signature_providers: list[str] = Field(default_factory=list)
     product_category_hint: str = ""
     banned_terms: list[str] = Field(default_factory=list)
     hashtag_clouds: list[HashtagCloud] = Field(default_factory=list)
@@ -147,9 +153,11 @@ class PostizSettings(_Model):
     tag_posts: bool = True
     upload_adjust_video: bool = True
     customer_id: str = ""
-    ai_video_monthly_budget: int = Field(8, ge=0, le=100)
-    # Postiz Team plan: 100 AI images + 10 AI videos per month. Leave headroom for manual use in Postiz.
-    ai_image_monthly_budget: int = Field(80, ge=0, le=500)
+    # Postiz Team plan: 100 AI images + 10 AI videos per month. Postiz's own RSS
+    # auto-posting ("generate picture") draws on the same image allowance, so the
+    # engine's share is set per store (see docs/social-engine/postiz-maximise.md).
+    ai_video_monthly_budget: int = Field(10, ge=0, le=100)
+    ai_image_monthly_budget: int = Field(60, ge=0, le=500)
     mcp_url: str = "https://mcp.postiz.com/mcp"
     video_voice_id: str = ""                    # ElevenLabs voice for image-text-slides (empty = first offered)
     ai_backgrounds_for_promotions: bool = True  # Postiz AI scene behind the real product on promo posts

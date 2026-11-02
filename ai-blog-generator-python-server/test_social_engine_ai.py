@@ -856,3 +856,31 @@ def test_review_prompt_judges_only_published_text():
         channel_texts=["[facebook] A bronze bowl."], guard_notes=[], language="en",
     )
     assert "inner calm" not in text and "Judge only what will be published" in text
+
+
+@pytest.mark.asyncio
+async def test_signature_is_appended_per_provider_and_dropped_when_it_does_not_fit(sctx):
+    providers = ["facebook", "instagram", "x"]
+    offer = "New here? 10% off your first order with code WELCOME10"
+    result = template_captions(caption_request(providers, caption_overrides={"signature": offer}), sctx)
+    caps = result.channel_captions
+    assert caps["ch_facebook"].caption.count(offer) == 1
+    assert caps["ch_instagram"].caption.count(offer) == 1
+    # the signature sits after the link line and before the hashtags
+    fb = caps["ch_facebook"].caption
+    assert fb.index(PRODUCT_URL) < fb.index(offer) and (not caps["ch_facebook"].hashtags or fb.index(offer) < fb.index("#"))
+
+    only_ig = template_captions(caption_request(providers, caption_overrides={
+        "signature": offer, "signature_providers": ["instagram-standalone"]}), sctx)
+    assert offer in only_ig.channel_captions["ch_instagram"].caption
+    assert offer not in only_ig.channel_captions["ch_facebook"].caption
+
+    # A signature that would leave X less than a third of its limit for the body is
+    # dropped (after the hashtags, before the link).
+    long_offer = "Use code WELCOME10 at checkout today for ten percent off your very first order with Bio Luxe Lab, " * 2
+    long_body = "A calmer evening routine starts with the right tools and a little consistency. " * 3
+    squeezed = template_captions(caption_request(["x", "facebook"], caption_overrides={
+        "signature": long_offer.strip(), "source": "template", "templates": {"default": long_body}}), sctx)
+    x_caption = squeezed.channel_captions["ch_x"].caption
+    assert "WELCOME10" not in x_caption and PRODUCT_URL in x_caption and x_caption.strip()
+    assert "WELCOME10" in squeezed.channel_captions["ch_facebook"].caption

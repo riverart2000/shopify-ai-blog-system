@@ -20,7 +20,7 @@ import logging
 from collections import Counter
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from db.social_engine import posts as post_store
 
@@ -34,6 +34,8 @@ logger = logging.getLogger("ai_blog_server.social_engine.campaigns")
 _SMARTQ_TYPES = {
     ContentType.SINGLE_PRODUCT, ContentType.COLLAGE, ContentType.PRODUCT_VIDEO, ContentType.CAROUSEL,
     ContentType.SALE_PROMO, ContentType.PRODUCT_OF_THE_DAY, ContentType.NEW_ARRIVAL,
+    # Postiz Team-plan creatives (monthly credits, budgeted in settings.postiz):
+    ContentType.AI_IMAGE_AD, ContentType.AI_VIDEO,
 }
 # Posts in these states occupy their slot; failed/rejected/cancelled ones free it.
 _SLOT_HOLDING = {
@@ -46,6 +48,9 @@ class SmartQConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
     order: Literal["latest", "latest_then_random", "random", "least_posted", "on_sale_first", "ai"] = "ai"
     posts_per_day: dict[str, int] = Field(default_factory=lambda: {"single_product": 1, "product_video": 1})
+    # Content that should not run every day — e.g. {"ai_video": 2} uses two Postiz
+    # video credits a week (Mon + Thu), well inside the plan's 10 a month.
+    posts_per_week: dict[str, int] = Field(default_factory=dict)
     template_keys: dict[str, list[str]] = Field(default_factory=dict)
     max_products_per_post: int = Field(4, ge=2, le=4)
     allow_reposting: bool | None = None
@@ -63,13 +68,43 @@ class SmartQConfig(BaseModel):
                     f"{content_type}: posts per day must be 0–3 per campaign; create another campaign to post more"
                 )
             cleaned[content_type] = int(count)
-        if not any(cleaned.values()):
-            raise ValueError("Set at least one post per day")
         return cleaned
+
+    @field_validator("posts_per_week")
+    @classmethod
+    def _weekly(cls, value: dict[str, int]) -> dict[str, int]:
+        cleaned: dict[str, int] = {}
+        for content_type, count in (value or {}).items():
+            if content_type not in _SMARTQ_TYPES:
+                raise ValueError(f"SmartQ does not support content type {content_type!r}")
+            if not 0 <= int(count) <= 7:
+                raise ValueError(f"{content_type}: posts per week must be 0–7 (use posts per day for more)")
+            cleaned[content_type] = int(count)
+        return cleaned
+
+    @model_validator(mode="after")
+    def _something_to_post(self) -> "SmartQConfig":
+        if not any(self.posts_per_day.values()) and not any(self.posts_per_week.values()):
+            raise ValueError("Set at least one post per day or per week")
+        return self
 
     @property
     def total_per_day(self) -> int:
         return sum(self.posts_per_day.values())
+
+    def counts_for(self, day) -> dict[str, int]:
+        """Posts wanted on `day`: the daily counts plus any weekly content whose turn it is."""
+        wanted = {ct: n for ct, n in self.posts_per_day.items() if n > 0}
+        for content_type, per_week in self.posts_per_week.items():
+            if per_week > 0 and day.weekday() in weekly_days(per_week):
+                wanted[content_type] = wanted.get(content_type, 0) + 1
+        return wanted
+
+
+def weekly_days(per_week: int) -> set[int]:
+    """Weekdays (Mon=0) that spread `per_week` posts evenly: 1 → Mon, 2 → Mon+Thu, 3 → Mon+Wed+Fri."""
+    per_week = max(0, min(7, int(per_week)))
+    return {round(i * 7 / per_week) % 7 for i in range(per_week)}
 
 
 def _slot_key(campaign_id: str, day: str, content_type: str, index: int) -> str:
@@ -87,7 +122,7 @@ async def open_slots(rctx: RuleContext, config: SmartQConfig, day) -> list[dict]
             parts = row["dedupe_key"].split(":")
             holding[parts[3] if len(parts) > 4 else row["content_type"]] += 1
     slots: list[dict] = []
-    for content_type, count in config.posts_per_day.items():
+    for content_type, count in config.counts_for(day).items():
         missing = count - holding.get(content_type, 0)
         index = 0
         for _ in range(max(0, missing)):
@@ -187,7 +222,7 @@ def _first(values: list[str] | None) -> str:
 async def _templates_by_type(config: SmartQConfig) -> dict[str, list[str]]:
     from ...creatives import templates_for
 
-    types = set(config.posts_per_day) | {ContentType.SINGLE_PRODUCT}
+    types = set(config.posts_per_day) | set(config.posts_per_week) | {ContentType.SINGLE_PRODUCT}
     return {ct: config.template_keys.get(ct) or list(templates_for(ct)) for ct in types}
 
 

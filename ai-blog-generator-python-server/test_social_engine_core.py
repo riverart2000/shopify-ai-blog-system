@@ -204,3 +204,21 @@ async def test_settings_defaults_merge_and_validation(se_db):
     assert (await load_settings(se_db)).brand.colors.primary == "#112233"
     public = public_settings(updated)
     assert "webhook_token" not in public["postiz"]
+
+
+def test_smartq_weekly_slots_spread_across_the_week():
+    from datetime import date
+
+    from services.social_engine.campaigns.rules.smartq import SmartQConfig, weekly_days
+
+    assert weekly_days(1) == {0} and weekly_days(2) == {0, 4} and weekly_days(7) == set(range(7))
+    config = SmartQConfig(posts_per_day={"single_product": 1}, posts_per_week={"ai_video": 2, "ai_image_ad": 7})
+    monday, tuesday = date(2026, 11, 2), date(2026, 11, 3)
+    assert config.counts_for(monday) == {"single_product": 1, "ai_video": 1, "ai_image_ad": 1}
+    assert config.counts_for(tuesday) == {"single_product": 1, "ai_image_ad": 1}
+    weekly_only = SmartQConfig(posts_per_day={}, posts_per_week={"ai_video": 1})
+    assert weekly_only.counts_for(tuesday) == {}
+    with pytest.raises(ValueError):
+        SmartQConfig(posts_per_day={}, posts_per_week={})
+    with pytest.raises(ValueError):
+        SmartQConfig(posts_per_week={"ai_video": 9})
