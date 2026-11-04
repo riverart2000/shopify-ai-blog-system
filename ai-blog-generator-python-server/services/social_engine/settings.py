@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import db
+from services.local_model import local_model
 
 SETTINGS_KEY = "social_engine.settings"
 
@@ -172,8 +173,10 @@ class PostizSettings(_Model):
 
 
 class AISettings(_Model):
-    base_url: str = "http://127.0.0.1:8000/v1"
-    model: str = "gemma-4-26b-a4b-it-8bit"
+    # The server, text model and vision model come from the shared file ~/.config/local-ai/model.json (also read by
+    # OpenClaw and the Task Agent), whatever is saved here: two different models can't fit in memory together.
+    base_url: str = Field(default_factory=lambda: local_model().server_url)
+    model: str = Field(default_factory=lambda: local_model().text_model)
     api_key_env: str = "OMLX_API_KEY"
     timeout_seconds: int = Field(240, ge=10, le=1800)
     temperature: float = Field(0.7, ge=0, le=2)
@@ -182,10 +185,24 @@ class AISettings(_Model):
     fallback_model_id: str = ""
     ai_decisions: bool = True
     ai_review: bool = True
-    vision_model: str = "mlx-community--Qwen3-VL-8B-Instruct-8bit"
+    # Force JSON with the server's grammar. Off: the prompt asks for JSON and replies are checked and repaired here,
+    # which lets oMLX's speed-up drafter run (it can't with a grammar). Turn on only if replies keep failing to parse.
+    strict_json: bool = False
+    vision_model: str = Field(default_factory=lambda: local_model().vision_model)
     # A Models-page model asked for a second opinion only when Gemma rejects a
     # post on its wording; if it finds nothing blocking, the post is approved.
     verify_model_id: str = ""
+
+    @model_validator(mode="after")
+    def _shared_model(self) -> "AISettings":
+        shared = local_model()
+        wanted = [("base_url", shared.server_url), ("model", shared.text_model)]
+        if self.vision_model:  # empty = image review is off; otherwise it's the shared vision model
+            wanted.append(("vision_model", shared.vision_model))
+        for name, value in wanted:
+            if getattr(self, name) != value:
+                object.__setattr__(self, name, value)  # not setattr: validate_assignment would run this again
+        return self
 
     def api_key(self) -> str:
         return os.environ.get(self.api_key_env or "", "").strip()

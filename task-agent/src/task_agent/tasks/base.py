@@ -34,6 +34,7 @@ class JobDeps:
     accounts: AccountStore | None = None  # saved site logins (passwords stay in the Keychain)
     seen_domains: set[str] = field(default_factory=set)  # sites that showed up in searches and pages this job
     payload: Any = None  # the job's validated payload, for tools that need it (e.g. the event image)
+    failed_actions: list[str] = field(default_factory=list)  # page actions failing in a row (to catch a stuck job)
 
     @property
     def owner(self) -> str:

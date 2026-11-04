@@ -65,6 +65,7 @@ EXCLUDE = [
     "*.pyc", "*.bak", "node_modules/", ".react-router/", "postiz-api-access.txt", "*-api-access.txt",
     ".claude/", ".cursor/", ".gemini/",
     "/task-agent/",  # runs from the checkout as its own service (com.joebains.task-agent)
+    "/docs/emails.md",  # Joe's private mailbox notes (gitignored, has passwords): never copied anywhere
 ]
 
 

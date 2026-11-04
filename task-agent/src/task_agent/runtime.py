@@ -1,4 +1,7 @@
-"""Settings changed from the admin page. They're saved in the DB and override `.env` for new jobs."""
+"""Settings changed from the admin page. They're saved in the DB and override `.env` for new jobs.
+
+The model isn't one of them: it comes from the shared file ~/.config/local-ai/model.json (task_agent.local_model),
+the one model setting for OpenClaw, the Task Agent and Social Autopilot. The page only shows it."""
 
 from __future__ import annotations
 
@@ -6,14 +9,13 @@ from pydantic import BaseModel, Field
 
 from task_agent.config import Settings
 from task_agent.db import JobStore
-
-RECOMMENDED_MODEL = "gemma-4-31b-it-8bit"  # the Social Engine's model too: sharing one avoids memory swaps
+from task_agent.local_model import model_file
 
 LIMITS = {"max_steps": (5, 200), "max_minutes": (1, 120), "max_attempts": (1, 10)}
 
 
 class RuntimeSettings(BaseModel):
-    llm_model: str = Field(min_length=1, max_length=200)
+    llm_model: str = Field(min_length=1, max_length=200)  # shown only: set in the shared model file
     llm_thinking: bool
     max_steps: int = Field(ge=LIMITS["max_steps"][0], le=LIMITS["max_steps"][1])
     max_minutes: int = Field(ge=LIMITS["max_minutes"][0], le=LIMITS["max_minutes"][1])
@@ -30,7 +32,9 @@ def current(base: Settings, store: JobStore) -> RuntimeSettings:
         "max_attempts": base.max_attempts,
         "paused": False,
     }
-    saved = {k: v for k, v in store.setting_overrides().items() if k in RuntimeSettings.model_fields}
+    saved = {
+        k: v for k, v in store.setting_overrides().items() if k in RuntimeSettings.model_fields and k != "llm_model"
+    }
     try:
         return RuntimeSettings.model_validate({**values, **saved})
     except ValueError:
@@ -42,6 +46,13 @@ def save(base: Settings, store: JobStore, changes: dict) -> RuntimeSettings:
     unknown = set(changes) - set(RuntimeSettings.model_fields)
     if unknown:
         raise ValueError(f"Unknown setting(s): {', '.join(sorted(unknown))}")
+    changes = dict(changes)
+    model = changes.pop("llm_model", None)
+    if model is not None and model != base.llm_model:
+        raise ValueError(
+            f"The model is set in {model_file()} (shared by OpenClaw, the Task Agent and Social Autopilot), "
+            "not on this page."
+        )
     merged = RuntimeSettings.model_validate({**current(base, store).model_dump(), **changes})
     store.save_setting_overrides({k: getattr(merged, k) for k in changes})
     return merged
@@ -52,7 +63,6 @@ def effective(base: Settings, store: JobStore) -> tuple[Settings, bool]:
     rt = current(base, store)
     settings = base.model_copy(
         update={
-            "llm_model": rt.llm_model,
             "llm_thinking": rt.llm_thinking,
             "max_steps": rt.max_steps,
             "max_minutes": rt.max_minutes,

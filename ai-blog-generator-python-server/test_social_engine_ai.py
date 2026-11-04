@@ -53,7 +53,7 @@ PRODUCT_URL = "https://bioluxelab.com/products/magnesium-glycinate?utm_source=so
 # Fake model server
 # ---------------------------------------------------------------------------
 
-def chat_response(content: str, *, model: str = "gemma-4-26b-a4b-it-8bit", finish: str = "stop") -> httpx.Response:
+def chat_response(content: str, *, model: str = "gemma-4-31b-it-8bit", finish: str = "stop") -> httpx.Response:
     return httpx.Response(200, json={
         "model": model,
         "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish}],
@@ -148,6 +148,21 @@ async def test_provider_request_shape_json_mode_and_auth_only_with_key(se_db):
 
 
 @pytest.mark.asyncio
+async def test_local_gemma_asks_for_json_in_words_so_the_drafter_can_run(se_db):
+    """oMLX's JSON grammar switches off Gemma's speed-up drafter, so by default the prompt asks for JSON instead."""
+    from services.social_engine.ai.llm import _JSON_ONLY_SUFFIX, primary_provider
+
+    fake = FakeLLM('{"ok": true}').install()
+    await primary_provider(AISettings()).complete(LLMRequest(system="sys", prompt="hello"), se_http.CallContext())
+    body = fake.bodies[0]
+    assert "response_format" not in body and body["messages"][-1]["content"] == "hello" + _JSON_ONLY_SUFFIX
+
+    await primary_provider(AISettings(strict_json=True)).complete(LLMRequest(prompt="hello"), se_http.CallContext())
+    assert fake.bodies[1]["response_format"] == {"type": "json_object"}
+    assert fake.bodies[1]["messages"][-1]["content"] == "hello"
+
+
+@pytest.mark.asyncio
 async def test_provider_sends_vision_images_as_data_uri_parts(se_db, tmp_path):
     from PIL import Image
 
@@ -229,7 +244,7 @@ async def test_router_error_names_both_failures(sctx, monkeypatch):
     with pytest.raises(ExternalServiceError) as info:
         await get_router(sctx).complete("captions", LLMRequest(prompt="hi"), ctx=sctx.call_context())
     message = info.value.message
-    assert "gemma (gemma-4-26b-a4b-it-8bit)" in message and "ConnectError" in message
+    assert "gemma (gemma-4-31b-it-8bit)" in message and "ConnectError" in message
     assert "registry (anthropic/claude-opus)" in message and "token is not configured" in message
     assert info.value.retryable is True   # Gemma being down is transient
 
@@ -290,17 +305,19 @@ async def test_structured_uses_fallback_after_invalid_primary(sctx, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_check_llm_reports_status(se_db):
+async def test_check_llm_reports_status(se_db, shared_model_file):
     def models(request, body):
         if request.method == "GET":
-            return httpx.Response(200, json={"data": [{"id": "gemma-4-26b-a4b-it-8bit"}]})
+            return httpx.Response(200, json={"data": [{"id": "gemma-4-31b-it-8bit"}]})
         return chat_response('{"status": "ok"}')
 
     FakeLLM(models).install()
     report = await check_llm(AISettings())
     assert report["ok"] and report["status"] == "ok" and report["model_listed"] and not report["vision_model_listed"]
     assert report["latency_ms"] is not None
-    missing = await check_llm(AISettings(model="not-served"))
+    shared_model_file.write_text('{"text_model": "not-served"}')  # the model comes from the shared file
+    missing = await check_llm(AISettings())
+    shared_model_file.write_text('{"text_model": "gemma-4-31b-it-8bit"}')
     assert missing["status"] == "model_missing" and "not-served" in missing["error"]
     FakeLLM(httpx.ConnectError("refused")).install()
     down = await check_llm(AISettings())
@@ -314,7 +331,7 @@ async def test_doctor_gemma_check_live(sctx):
 
     def models(request, body):
         if request.method == "GET":
-            return httpx.Response(200, json={"data": [{"id": "gemma-4-26b-a4b-it-8bit"}]})
+            return httpx.Response(200, json={"data": [{"id": "gemma-4-31b-it-8bit"}]})
         return chat_response('{"status": "ok"}')
 
     FakeLLM(models).install()
@@ -634,7 +651,7 @@ async def test_review_approves_and_skips_unavailable_vision_gracefully(sctx, tmp
     captions = _result(f"Magnesium contributes to a reduction of tiredness and fatigue. {PRODUCT_URL}")
     review = await review_post(sctx, post={"id": "post_1", "content_type": "single_product"}, captions=captions,
                                products=[MAGNESIUM], media_paths=[str(image)])
-    assert review.score == 8 and review.approve and review.model == "gemma-4-26b-a4b-it-8bit"
+    assert review.score == 8 and review.approve and review.model == "gemma-4-31b-it-8bit"
     assert any(issue.startswith("Vision check skipped") for issue in review.issues)
     assert (await observability.list_decisions(subject_id="post_1"))[0]["decision_type"] == "review"
 
@@ -983,3 +1000,19 @@ async def test_signature_is_appended_per_provider_and_dropped_when_it_does_not_f
     x_caption = squeezed.channel_captions["ch_x"].caption
     assert "WELCOME10" not in x_caption and PRODUCT_URL in x_caption and x_caption.strip()
     assert "WELCOME10" in squeezed.channel_captions["ch_facebook"].caption
+
+
+@pytest.mark.asyncio
+async def test_the_shared_model_file_decides_the_model(se_db, shared_model_file):
+    """~/.config/local-ai/model.json sets the server, text and vision model, whatever is saved in the settings."""
+    import json
+
+    from services.social_engine.settings import load_settings, save_settings
+
+    await save_settings("store_1", {"ai": {"model": "gemma-4-26b-a4b-it-8bit", "vision_model": "old-vision"}})
+    settings = await load_settings("store_1")
+    assert settings.ai.model == "gemma-4-31b-it-8bit"
+    assert settings.ai.vision_model == "mlx-community--Qwen3-VL-8B-Instruct-8bit"
+    shared_model_file.write_text(json.dumps({"text_model": "gemma-5-40b", "server_url": "http://127.0.0.1:9000/v1"}))
+    settings = await load_settings("store_1")
+    assert settings.ai.model == "gemma-5-40b" and settings.ai.base_url == "http://127.0.0.1:9000/v1"

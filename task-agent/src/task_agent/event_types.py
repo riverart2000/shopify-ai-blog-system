@@ -3,7 +3,8 @@ own email (read over IMAP for sign-up codes), its own Eventbrite and Meetup logi
 type), and its own Facebook Page and LinkedIn Page. A promotion task picks one type; the agent then uses only that
 type's email, logins and Pages. Facebook and LinkedIn themselves are one shared personal login (logins with no type).
 
-The inbox password lives in the Keychain (`event-type:<key>:imap`), never in the DB, prompts or logs.
+The inbox password lives in the Keychain (`event-type:<key>:imap`), never in the DB, prompts or logs. When a type's
+inbox is the same mailbox as Settings → Email account, it uses that account's saved password (stored once).
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup
 
 from task_agent.db import JobStore, iso, now
+from task_agent.email_account import SECRET as EMAIL_ACCOUNT_SECRET
 from task_agent.keychain import delete_secret, get_secret, has_secret, set_secret
+from task_agent.tls import describe_tls_error, tls_context
 
 FIELDS = (
     "name", "email", "imap_host", "imap_port", "imap_username", "facebook_page", "linkedin_page", "tag_handles",
@@ -133,7 +136,34 @@ class EventTypeStore:
         delete_secret(secret_name(key))
 
     def imap_password(self, key: str) -> str:
-        return get_secret(secret_name(key)) or ""
+        secret = self._password_secret(self.store_row(key))
+        return (get_secret(secret) if secret else "") or ""
+
+    def store_row(self, key: str) -> dict[str, Any]:
+        with self.store._connect() as db:
+            row = db.execute("SELECT * FROM event_types WHERE key = ?", (key,)).fetchone()
+        return dict(row) if row else {"key": key}
+
+    def _password_secret(self, row: dict[str, Any]) -> str | None:
+        """The Keychain entry holding this type's inbox password: its own, else the Email account's when it's the
+        same mailbox, else None."""
+        own = secret_name(row["key"])
+        if has_secret(own):
+            return own
+        if self._is_email_account(row) and has_secret(EMAIL_ACCOUNT_SECRET):
+            return EMAIL_ACCOUNT_SECRET
+        return None
+
+    def _is_email_account(self, row: dict[str, Any]) -> bool:
+        with self.store._connect() as db:
+            account = db.execute("SELECT username, imap_host FROM email_account WHERE id = 1").fetchone()
+        user = (row.get("imap_username") or row.get("email") or "").strip().lower()
+        return bool(
+            account
+            and user
+            and user == (account["username"] or "").strip().lower()
+            and (row.get("imap_host") or "").strip().lower() == (account["imap_host"] or "").strip().lower()
+        )
 
     def inbox_ready(self, kind: dict[str, Any]) -> bool:
         return bool(kind["imap_host"] and (kind["imap_username"] or kind["email"]) and kind["has_imap_password"])
@@ -147,6 +177,8 @@ class EventTypeStore:
             try:
                 await asyncio.to_thread(_login_only, kind, self.imap_password(key))
                 ok, message = True, f"Logged in to {kind['imap_host']} as {_imap_user(kind)}."
+                if kind["imap_password_from"] == "email_account":
+                    message += " (Using the password saved under Email account.)"
             except Exception as exc:
                 ok, message = False, _describe(exc)
         with self.store._connect() as db:
@@ -163,9 +195,9 @@ class EventTypeStore:
             raise EventTypeError(f"The inbox for {kind['name']} isn't set up (Task Agent Settings → Event types).")
         return await asyncio.to_thread(_fetch_recent, kind, self.imap_password(key), minutes, limit)
 
-    @staticmethod
-    def _view(row: dict[str, Any]) -> dict[str, Any]:
+    def _view(self, row: dict[str, Any]) -> dict[str, Any]:
         key = row["key"]
+        secret = self._password_secret(row)
         return {
             "key": key,
             "name": row.get("name") or key,
@@ -173,7 +205,8 @@ class EventTypeStore:
             "imap_host": row.get("imap_host") or "",
             "imap_port": int(row.get("imap_port") or 993),
             "imap_username": row.get("imap_username") or "",
-            "has_imap_password": has_secret(secret_name(key)),
+            "has_imap_password": secret is not None,
+            "imap_password_from": "" if secret is None else "own" if secret == secret_name(key) else "email_account",
             "facebook_page": row.get("facebook_page") or "",
             "linkedin_page": row.get("linkedin_page") or "",
             "tag_handles": row.get("tag_handles") or "",
@@ -231,14 +264,14 @@ def _imap_user(kind: dict[str, Any]) -> str:
 
 
 def _login_only(kind: dict[str, Any], password: str) -> None:
-    with imaplib.IMAP4_SSL(kind["imap_host"], kind["imap_port"], timeout=20) as imap:
+    with imaplib.IMAP4_SSL(kind["imap_host"], kind["imap_port"], timeout=20, ssl_context=tls_context()) as imap:
         imap.login(_imap_user(kind), password)
 
 
 def _fetch_recent(kind: dict[str, Any], password: str, minutes: int, limit: int) -> list[dict[str, Any]]:
     since = now() - timedelta(minutes=minutes)
     found: list[dict[str, Any]] = []
-    with imaplib.IMAP4_SSL(kind["imap_host"], kind["imap_port"], timeout=20) as imap:
+    with imaplib.IMAP4_SSL(kind["imap_host"], kind["imap_port"], timeout=20, ssl_context=tls_context()) as imap:
         imap.login(_imap_user(kind), password)
         imap.select("INBOX", readonly=True)  # read-only: nothing is marked as read
         day = (since - timedelta(days=1)).strftime("%d-%b-%Y")
@@ -323,6 +356,8 @@ def matches_site(message: dict[str, Any], words: set[str]) -> bool:
 
 
 def _describe(exc: Exception) -> str:
+    if tls := describe_tls_error(exc):
+        return tls
     if isinstance(exc, imaplib.IMAP4.error):
         return "The email server refused the username or password. For Gmail, use an app password."
     if isinstance(exc, TimeoutError | OSError):

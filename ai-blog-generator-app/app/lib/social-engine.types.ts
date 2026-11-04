@@ -69,7 +69,7 @@ export type PostizSettings = {
 export type AISettings = {
   base_url: string; model: string; api_key_env: string; timeout_seconds: number; temperature: number;
   decision_temperature: number; max_tokens: number; fallback_model_id: string; verify_model_id: string; ai_decisions: boolean;
-  ai_review: boolean; vision_model: string; api_key_configured: boolean;
+  ai_review: boolean; vision_model: string; api_key_configured: boolean; strict_json?: boolean;
 };
 
 export type GuardSettings = { hold_health_claims: boolean; hold_low_review_score: number; max_caption_retries: number; max_review_rewrites?: number };

@@ -19,6 +19,9 @@ import {
   splitList,
 } from "./vocab";
 
+const SHARED_MODEL_HELP =
+  "Set in ~/.config/local-ai/model.json on the Mac, shared by OpenClaw, the Task Agent and Social Autopilot (two large models can't fit in memory at once). Change it there.";
+
 type Update<T> = (patch: Partial<T>) => void;
 
 function Section<T extends object>({ id, title, description, section, initial, result, render, toPatch }: {
@@ -207,7 +210,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
           base_url: settings.ai.base_url, model: settings.ai.model, timeout_seconds: settings.ai.timeout_seconds,
           temperature: settings.ai.temperature, decision_temperature: settings.ai.decision_temperature, max_tokens: settings.ai.max_tokens,
           fallback_model_id: settings.ai.fallback_model_id, verify_model_id: settings.ai.verify_model_id || "",
-          ai_decisions: settings.ai.ai_decisions, ai_review: settings.ai.ai_review,
+          ai_decisions: settings.ai.ai_decisions, ai_review: settings.ai.ai_review, strict_json: settings.ai.strict_json ?? false,
           vision_model: settings.ai.vision_model,
         }}
         description="Gemma runs locally (oMLX) and writes captions, plans campaigns and reviews posts."
@@ -219,9 +222,14 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
                 : <Badge tone="neutral">No API key ({settings.ai.api_key_env || "none"}) — fine for a local server</Badge>}
             </div>
             <div className="sa-grid">
-              <Field label="Gemma server URL" help="OpenAI-compatible base URL."><input type="url" value={draft.base_url} onChange={(event) => update({ base_url: event.target.value })} /></Field>
-              <Field label="Model"><input type="text" value={draft.model} onChange={(event) => update({ model: event.target.value })} /></Field>
-              <Field label="Vision model" help="Used to look at rendered images during review."><input type="text" value={draft.vision_model} onChange={(event) => update({ vision_model: event.target.value })} /></Field>
+              <Field label="Gemma server URL" help={SHARED_MODEL_HELP}><input type="url" value={draft.base_url} readOnly /></Field>
+              <Field label="Model" help={SHARED_MODEL_HELP}><input type="text" value={draft.model} readOnly /></Field>
+              <Field label="Image review" help="Gemma's partner model looks at each rendered image before a post is approved. The model itself is set in the shared file.">
+                <select value={draft.vision_model ? "on" : "off"} onChange={(event) => update({ vision_model: event.target.value === "on" ? (settings.ai.vision_model || "on") : "" })}>
+                  <option value="on">On{settings.ai.vision_model ? ` (${settings.ai.vision_model})` : ""}</option>
+                  <option value="off">Off</option>
+                </select>
+              </Field>
               <Field label="Fallback model" help="Used only if Gemma fails. Comes from the app's Models page.">
                 <select value={draft.fallback_model_id} onChange={(event) => update({ fallback_model_id: event.target.value })}>
                   <option value="">No fallback</option>
@@ -242,6 +250,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
             <div className="sa-row">
               <Toggle checked={draft.ai_decisions} onChange={(value) => update({ ai_decisions: value })} label="Let Gemma make automation decisions" help="Which products, content mix and angles. Off = simple rotation rules." />
               <Toggle checked={draft.ai_review} onChange={(value) => update({ ai_review: value })} label="Gemma reviews every post" help="Scores each post and lists issues before approval." />
+              <Toggle checked={draft.strict_json ?? false} onChange={(value) => update({ strict_json: value })} label="Strict JSON replies" help="Forces every reply into JSON on the server. About twice as slow, because Gemma's speed-up drafter can't run with it. Leave off unless replies keep failing to read." />
             </div>
           </div>
         )}

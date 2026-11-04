@@ -1,10 +1,27 @@
-"""Shared pytest fixtures. Nothing here is autouse, so existing tests are unaffected."""
+"""Shared pytest fixtures. Only `shared_model_file` is autouse: it keeps tests off the Mac's real model file."""
 from __future__ import annotations
 
 import pytest
 import pytest_asyncio
 
 import db
+
+
+@pytest.fixture(autouse=True)
+def shared_model_file(tmp_path, monkeypatch):
+    """Tests read their own copy of ~/.config/local-ai/model.json, never the Mac's."""
+    import json
+
+    path = tmp_path / "local-ai-model.json"
+    path.write_text(json.dumps({
+        "server_url": "http://127.0.0.1:8000/v1",
+        "text_model": "gemma-4-31b-it-8bit",
+        "vision_model": "mlx-community--Qwen3-VL-8B-Instruct-8bit",
+        "context_window": 65536,
+        "max_output_tokens": 8192,
+    }))
+    monkeypatch.setenv("LOCAL_AI_MODEL_FILE", str(path))
+    return path
 
 
 @pytest_asyncio.fixture

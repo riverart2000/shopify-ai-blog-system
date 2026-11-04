@@ -106,6 +106,12 @@ async def test_settings_and_pause(client):
     assert saved["settings"]["paused"] is True and "paused" in saved["message"]
     assert (await client.post("/api/settings", json={"max_steps": 1000})).status_code == 400
     assert (await client.post("/api/settings", json={"colour": "red"})).status_code == 400
+    # The model is set in the shared file: the page may send it back unchanged, not change it.
+    assert data["model_file"].endswith("local-ai-model.json")
+    same = await client.post("/api/settings", json={"llm_model": "gemma-4-31b-it-8bit", "max_steps": 40})
+    assert same.status_code == 200 and same.json()["settings"]["max_steps"] == 40
+    other = await client.post("/api/settings", json={"llm_model": "gemma-4-26b-a4b-it-8bit"})
+    assert other.status_code == 400 and "local-ai-model.json" in other.text
     status = (await client.get("/api/status")).json()
     assert status["worker"]["state"] == "offline"  # no heartbeat yet
 

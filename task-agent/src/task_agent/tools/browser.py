@@ -152,6 +152,15 @@ async def _locate(deps: JobDeps, ref: str) -> Any:
     if not match:
         raise _ToolProblem(f"'{ref}' isn't a ref. Use the [ref=…] value from the page, e.g. e12.")
     page = await _page(deps)
+    if getattr(page, "is_relay", False):
+        if not page.opened:
+            raise _ToolProblem(
+                "No page is open in this run (the job started again, so its tab was closed). Use open_page with "
+                "the page's address first"
+            )
+        if page.refs is None:  # no look at this page yet (e.g. after a restart): read it so old refs are caught
+            with _suppress():
+                await page.aria_snapshot(mode="ai", timeout=15_000)
     locator = page.locator(f"aria-ref={match.group(1)}")
     try:
         if await locator.count() == 0:
@@ -159,7 +168,7 @@ async def _locate(deps: JobDeps, ref: str) -> Any:
     except _ToolProblem:
         raise
     except Exception as exc:
-        raise _ToolProblem(f"Ref {match.group(1)} didn't work ({type(exc).__name__}). Look at the page again.") from exc
+        raise _ToolProblem(f"Ref {match.group(1)} didn't work ({_why(exc)}). Look at the page again.") from exc
     return locator
 
 
@@ -167,11 +176,46 @@ class _ToolProblem(Exception):
     """A tool couldn't do what was asked; the message goes back to the model."""
 
 
+class Stuck(Exception):
+    """The agent kept failing at the page; the job stops instead of using up its whole budget."""
+
+
+SETTLE_SECONDS = 1.2  # wait after an action before reading the page again
+SAME_FAILURE_WARNING = 3  # the same action failing this often: the model is told to change approach
+FAILURES_TO_STOP = 8  # this many page actions in a row failing: the job stops
+
+
+def _why(exc: Exception) -> str:
+    """What went wrong, in the tool's own words (OpenClaw's message, not just the error's class)."""
+    text = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {text[:200]}" if text else type(exc).__name__
+
+
+async def _failed(deps: JobDeps, action: str, problem: str) -> str:
+    """Tell the model what went wrong, with the page as it is now (fresh refs). Stops a job that's stuck."""
+    deps.failed_actions.append(action)
+    run = deps.failed_actions
+    if len(run) >= FAILURES_TO_STOP:
+        raise Stuck(f"the last {len(run)} page actions all failed, so the job stopped. Last one: {problem}")
+    note = f"[{problem}]"
+    if run.count(action) >= SAME_FAILURE_WARNING:
+        note += (
+            f" [That's {run.count(action)} times the same thing failed. Don't repeat it: use a ref from the page "
+            "below, open the page again, or finish and say what's in the way.]"
+        )
+    return await _show(deps, note + " The page now:")
+
+
 async def _after_action(deps: JobDeps, note: str) -> str:
+    deps.failed_actions.clear()
+    return await _show(deps, note)
+
+
+async def _show(deps: JobDeps, note: str) -> str:
     page = await _page(deps)
     with _suppress():
         await page.wait_for_load_state("domcontentloaded", timeout=8_000)
-    await asyncio.sleep(1.2)  # let scripts update the page (menus, validation messages)
+    await asyncio.sleep(SETTLE_SECONDS)  # let scripts update the page (menus, validation messages)
     return await snapshot(deps, note=note)
 
 
@@ -242,9 +286,9 @@ async def click(ctx: RunContext[JobDeps], ref: str) -> str:
         locator = await _locate(ctx.deps, ref)
         await locator.click(timeout=10_000)
     except _ToolProblem as exc:
-        return f"[{exc}]"
+        return await _failed(ctx.deps, f"click {ref}", str(exc))
     except Exception as exc:
-        return f"[Click on {ref} didn't work ({type(exc).__name__}). Maybe it's covered or hidden; look again.]"
+        return await _failed(ctx.deps, f"click {ref}", f"Click on {ref} didn't work ({_why(exc)})")
     return await _after_action(ctx.deps, f"Clicked {ref}.")
 
 
@@ -258,7 +302,7 @@ async def type_text(
     try:
         locator = await _locate(ctx.deps, ref)
     except _ToolProblem as exc:
-        return f"[{exc}]"
+        return await _failed(ctx.deps, f"type {ref}", str(exc))
     attrs = await _attributes(locator)
     if attrs.get("type") == "password":
         return "[Refused: this is a password box. Use type_saved_login (or save_new_login first for a new account).]"
@@ -274,13 +318,15 @@ async def type_text(
             try:
                 await locator.fill(text, timeout=10_000)
             except Exception:
+                if getattr(locator, "page", None) is not None and getattr(locator.page, "is_relay", False):
+                    raise  # Chrome already typed the way a person does: its error is the one to report
                 await locator.click(timeout=10_000)
                 await locator.press("ControlOrMeta+a")
                 await (await _page(ctx.deps)).keyboard.type(text, delay=10)
         if press_enter:
             await locator.press("Enter")
     except Exception as exc:
-        return f"[Typing into {ref} didn't work ({type(exc).__name__}). Is it a text box? Look again.]"
+        return await _failed(ctx.deps, f"type {ref}", f"Typing into {ref} didn't work ({_why(exc)})")
     return await _after_action(ctx.deps, f"Typed into {ref}.")
 
 
@@ -294,9 +340,14 @@ async def choose_option(ctx: RunContext[JobDeps], ref: str, option: str) -> str:
         except Exception:
             await locator.select_option(option, timeout=5_000)
     except _ToolProblem as exc:
-        return f"[{exc}]"
+        return await _failed(ctx.deps, f"choose {ref}", str(exc))
     except Exception as exc:
-        return f"[Choosing '{option}' in {ref} didn't work ({type(exc).__name__}). If it isn't a plain list, click it.]"
+        return await _failed(
+            ctx.deps,
+            f"choose {ref}",
+            f"Choosing '{option}' in {ref} didn't work ({_why(exc)}). If it isn't a plain "
+            "list, click it open and click the option",
+        )
     return await _after_action(ctx.deps, f"Chose '{option}' in {ref}.")
 
 
@@ -306,9 +357,9 @@ async def set_checkbox(ctx: RunContext[JobDeps], ref: str, checked: bool = True)
         locator = await _locate(ctx.deps, ref)
         await locator.set_checked(checked, timeout=10_000)
     except _ToolProblem as exc:
-        return f"[{exc}]"
+        return await _failed(ctx.deps, f"tick {ref}", str(exc))
     except Exception as exc:
-        return f"[That didn't work ({type(exc).__name__}). Try clicking it.]"
+        return await _failed(ctx.deps, f"tick {ref}", f"Ticking {ref} didn't work ({_why(exc)}). Try clicking it")
     return await _after_action(ctx.deps, f"{'Ticked' if checked else 'Unticked'} {ref}.")
 
 
@@ -320,7 +371,7 @@ async def press_key(ctx: RunContext[JobDeps], key: str) -> str:
     try:
         await page.keyboard.press(key)
     except Exception as exc:
-        return f"[Pressing {key} didn't work ({type(exc).__name__}).]"
+        return await _failed(ctx.deps, f"press {key}", f"Pressing {key} didn't work ({_why(exc)})")
     return await _after_action(ctx.deps, f"Pressed {key}.")
 
 
@@ -354,7 +405,7 @@ async def upload_event_image(ctx: RunContext[JobDeps], ref: str) -> str:
     try:
         locator = await _locate(ctx.deps, ref)
     except _ToolProblem as exc:
-        return f"[{exc}]"
+        return await _failed(ctx.deps, f"upload {ref}", str(exc))
     page = await _page(ctx.deps)
     try:
         attrs = await _attributes(locator)
@@ -368,9 +419,10 @@ async def upload_event_image(ctx: RunContext[JobDeps], ref: str) -> str:
                 await locator.click(timeout=10_000)
             await (await chooser.value).set_files(path)
     except Exception as exc:
-        return (
-            f"[Upload didn't work ({type(exc).__name__}). Give the ref of the file box or the button that opens "
-            "the file picker.]"
+        return await _failed(
+            ctx.deps,
+            f"upload {ref}",
+            f"Upload didn't work ({_why(exc)}). Give the ref of the file box or the button that opens the file picker",
         )
     return await _after_action(ctx.deps, "Uploaded the event picture.")
 
@@ -422,9 +474,9 @@ async def type_saved_login(ctx: RunContext[JobDeps], ref: str, site: str, part: 
         locator = await _locate(ctx.deps, ref)
         await locator.fill(value, timeout=10_000)
     except _ToolProblem as exc:
-        return f"[{exc}]"
-    except Exception as exc:
-        return f"[Filling {ref} didn't work ({type(exc).__name__}).]"
+        return await _failed(ctx.deps, f"login {ref}", str(exc))
+    except Exception as exc:  # the error's class only: its text could echo what was typed
+        return await _failed(ctx.deps, f"login {ref}", f"Filling {ref} didn't work ({type(exc).__name__})")
     return await _after_action(ctx.deps, f"Filled the {part} for {account['label']}.")
 
 
@@ -525,23 +577,30 @@ def tools(*groups: tuple[Any, ...]) -> tuple[Tool[JobDeps], ...]:
     return tuple(Tool(fn, takes_ctx=True) for group in groups for fn in group)
 
 
-def keep_recent_pages(messages: list[ModelMessage], keep: int = 2) -> list[ModelMessage]:
-    """Older page views are replaced by a one-line note so long browser tasks fit the model's memory."""
-    seen = 0
-    for message in reversed(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in message.parts:
-            if isinstance(part, ToolReturnPart) and part.tool_name in VIEW_TOOLS and isinstance(part.content, str):
-                if "<untrusted_data" not in part.content:
-                    continue
-                seen += 1
-                if seen > keep:
-                    first = part.content.split("\n", 1)[0] if not part.content.startswith("<") else ""
-                    address = re.search(r"Address: (\S+)", part.content)
-                    part.content = (
-                        f"{first} [Old page view removed to save space"
-                        + (f"; it was {address.group(1)}" if address else "")
-                        + ". Use look to see the page now.]"
-                    ).strip()
+def keep_recent_pages(messages: list[ModelMessage], keep: int = 1, batch: int = 2) -> list[ModelMessage]:
+    """Older page views are replaced by a one-line note so long browser tasks fit the model's memory.
+
+    Done in batches: once more than `batch` full page views pile up, all but the newest `keep` are shortened at once.
+    In between, the conversation only grows at the end, so oMLX reuses its cached prompt and reads just the new page.
+    (Shortening one view every step changed the prompt two pages back, so every step re-read the last two pages.)"""
+    views = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+        and part.tool_name in VIEW_TOOLS
+        and isinstance(part.content, str)
+        and "<untrusted_data" in part.content
+    ]
+    if len(views) <= batch:
+        return messages
+    for part in views[: len(views) - keep]:
+        first = part.content.split("\n", 1)[0] if not part.content.startswith("<") else ""
+        address = re.search(r"Address: (\S+)", part.content)
+        part.content = (
+            f"{first} [Old page view removed to save space"
+            + (f"; it was {address.group(1)}" if address else "")
+            + ". Use look to see the page now.]"
+        ).strip()
     return messages

@@ -152,7 +152,8 @@ before event types (Social Autopilot is only for Bio Luxe Lab now) and are no lo
 **EventType**
 ```json
 {"key": "comedy", "name": "Comedy", "email": "info@…", "imap_host": "imap.gmail.com", "imap_port": 993,
- "imap_username": "", "has_imap_password": true, "facebook_page": "…", "linkedin_page": "…",
+ "imap_username": "", "has_imap_password": true, "imap_password_from": "own|email_account|",
+ "facebook_page": "…", "linkedin_page": "…",
  "tag_handles": "…", "audience": "…", "enabled": true, "logins": [Account],
  "last_test_at": "…|null", "last_test_ok": true|null, "last_test_message": "…", "updated_at": "…"}
 ```

@@ -454,10 +454,17 @@ def test_old_page_views_are_trimmed():
         )
         return ModelRequest(parts=[ToolReturnPart("click", content, tool_call_id=str(n))])
 
-    messages = b.keep_recent_pages([view(1), view(2), view(3)])
-    contents = [m.parts[0].content for m in messages]
+    history = b.keep_recent_pages([view(1), view(2)])
+    assert all("<untrusted_data" in m.parts[0].content for m in history)  # two full pages: nothing changes yet
+    history = b.keep_recent_pages([*history, view(3)])
+    contents = [m.parts[0].content for m in history]
     assert "Old page view removed" in contents[0] and "https://site/1" in contents[0]
-    assert "<untrusted_data" in contents[1] and "<untrusted_data" in contents[2]
+    assert "Old page view removed" in contents[1] and "<untrusted_data" in contents[2]
+
+    # Between batches the conversation only grows at the end, so the model server can reuse its cached prompt.
+    before = [m.parts[0].content for m in history]
+    history = b.keep_recent_pages([*history, view(4)])
+    assert [m.parts[0].content for m in history][:3] == before and "<untrusted_data" in history[3].parts[0].content
 
 
 def test_new_passwords_are_strong():

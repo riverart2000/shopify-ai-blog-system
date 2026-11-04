@@ -1,13 +1,32 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from task_agent.config import Settings
 from task_agent.db import JobStore
 
+SHARED_MODEL = {
+    "server_url": "http://127.0.0.1:8000/v1",
+    "text_model": "gemma-4-31b-it-8bit",
+    "vision_model": "mlx-community--Qwen3-VL-8B-Instruct-8bit",
+    "context_window": 65536,
+    "max_output_tokens": 8192,
+}
+
+
+@pytest.fixture(autouse=True)
+def shared_model_file(tmp_path, monkeypatch):
+    """Tests read their own copy of ~/.config/local-ai/model.json, never the Mac's."""
+    path = tmp_path / "local-ai-model.json"
+    path.write_text(json.dumps(SHARED_MODEL))
+    monkeypatch.setenv("LOCAL_AI_MODEL_FILE", str(path))
+    return path
+
 
 @pytest.fixture
-def settings(tmp_path) -> Settings:
+def settings(tmp_path, shared_model_file) -> Settings:
     return Settings(
         _env_file=None,
         db_path=tmp_path / "jobs.db",

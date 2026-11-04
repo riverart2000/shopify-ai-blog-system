@@ -290,6 +290,7 @@ export type SettingsResponse = {
   limits: { max_steps: [number, number]; max_minutes: [number, number]; max_attempts: [number, number] };
   models: string[];
   recommended_model: string;
+  model_file?: string; // the shared model file the model comes from
 };
 
 export type AccountsResponse = { accounts: Account[]; email: EmailAccount; browser?: BrowserStatus | null };

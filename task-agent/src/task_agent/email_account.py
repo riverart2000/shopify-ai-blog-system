@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import imaplib
 import smtplib
-import ssl
 from typing import Any
 
 from task_agent.db import JobStore, iso, now
 from task_agent.keychain import get_secret, has_secret, set_secret
+from task_agent.tls import describe_tls_error, tls_context
 
 SECRET = "email"
 FIELDS = ("username", "from_name", "imap_host", "imap_port", "smtp_host", "smtp_port")
@@ -93,12 +93,12 @@ class EmailStore:
 
 
 def _check_imap(account: dict[str, Any], password: str) -> None:
-    with imaplib.IMAP4_SSL(account["imap_host"], account["imap_port"], timeout=20) as imap:
+    with imaplib.IMAP4_SSL(account["imap_host"], account["imap_port"], timeout=20, ssl_context=tls_context()) as imap:
         imap.login(account["username"], password)
 
 
 def _check_smtp(account: dict[str, Any], password: str) -> None:
-    context = ssl.create_default_context()
+    context = tls_context()
     if account["smtp_port"] == 465:
         with smtplib.SMTP_SSL(account["smtp_host"], 465, timeout=20, context=context) as smtp:
             smtp.login(account["username"], password)
@@ -109,6 +109,8 @@ def _check_smtp(account: dict[str, Any], password: str) -> None:
 
 
 def _describe(exc: Exception) -> str:
+    if tls := describe_tls_error(exc):
+        return tls
     if isinstance(exc, imaplib.IMAP4.error | smtplib.SMTPAuthenticationError):
         return "The email server refused the username or password. For Gmail, use an app password."
     if isinstance(exc, TimeoutError | OSError):

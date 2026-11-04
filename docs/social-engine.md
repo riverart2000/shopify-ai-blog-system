@@ -2,7 +2,8 @@
 
 The Social Engine turns the Shopify catalogue into on-brand social posts and
 publishes them through **Postiz Cloud (Team plan)**. It replaces the old
-Publer-based "Social Posts" page. Local **Gemma 4 26B** (oMLX) writes captions and
+Publer-based "Social Posts" page. The local model (oMLX; set in the shared file `~/.config/local-ai/model.json`,
+now Gemma 4 31B, read by `services/local_model.py`, so the settings page only shows it) writes captions and
 makes the auto-pilot decisions; everything is stored in the existing SQLite
 database (`data/ai_blog_server.db`).
 

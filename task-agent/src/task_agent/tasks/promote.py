@@ -527,6 +527,9 @@ logged in). Work carefully, like a person who wants it done right first time. On
 5. Press the final Post / Publish / Submit button yourself. Then open the new listing or post to check it's live
    (or waiting for the site's approval) and finish with status posted and its address.
 
+Only enter details you were given: the event's own details, this event type's email, Joe's name. Never make
+anything up (no invented phone numbers, addresses, names or links). Leave optional boxes you have nothing for
+empty; if a required box needs something you don't have (a phone number, say), call ask_joe.
 Never pay, change account or privacy settings, delete anything, message people privately, or post twice in the
 same place. If the site is broken or refuses, finish with status failed and say why in the note.
 """
@@ -689,7 +692,7 @@ PROMOTE_POST = TaskSpec(
     on_start=place_starting,
     on_finish=place_finished,
     history_processors=(b.keep_recent_pages,),
-    max_steps=80,
-    max_minutes=40,
+    max_steps=150,  # long sign-up forms in Joe's Chrome take many steps; a stuck job stops early (tools.browser)
+    max_minutes=60,
     uses_browser=True,
 )

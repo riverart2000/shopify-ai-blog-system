@@ -1402,6 +1402,7 @@ source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
     { name = "beautifulsoup4" },
+    { name = "certifi" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "keyring" },
@@ -1409,6 +1410,7 @@ dependencies = [
     { name = "pydantic-ai-slim", extra = ["duckduckgo", "openai"] },
     { name = "pydantic-settings" },
     { name = "structlog" },
+    { name = "truststore" },
     { name = "uvicorn" },
 ]
 
@@ -1424,6 +1426,7 @@ dev = [
 requires-dist = [
     { name = "apscheduler", specifier = ">=3.10,<4" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
+    { name = "certifi", specifier = ">=2026.10.23" },
     { name = "fastapi", specifier = ">=0.162.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "keyring", specifier = ">=25.7.0" },
@@ -1431,6 +1434,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["duckduckgo", "openai"], specifier = ">=2.63.0" },
     { name = "pydantic-settings", specifier = ">=2.16.2" },
     { name = "structlog", specifier = ">=26.1.0" },
+    { name = "truststore", specifier = ">=0.10.5" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

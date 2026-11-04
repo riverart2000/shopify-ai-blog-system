@@ -111,8 +111,13 @@ class OpenAICompatibleProvider:
         name: str = "gemma",
         *,
         max_attempts: int = 2,
+        strict_json: bool = True,
     ) -> None:
         self.base_url = (base_url or "").rstrip("/")
+        # True: ask the server to force JSON (response_format). On oMLX that runs a grammar, which switches off
+        # Gemma's speed-up drafter (about 13 instead of 30 tokens/s), so the local model asks in words instead and
+        # the router's own checks and repair round catch a bad reply.
+        self.strict_json = strict_json
         self.model = model
         self.api_key = api_key or ""
         self.timeout = float(timeout)
@@ -131,13 +136,18 @@ class OpenAICompatibleProvider:
         messages: list[dict[str, Any]] = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
+        if request.json_mode and not self.strict_json:
+            if isinstance(user_content, str):
+                user_content += _JSON_ONLY_SUFFIX
+            else:
+                user_content[0]["text"] += _JSON_ONLY_SUFFIX
         messages.append({"role": "user", "content": user_content})
         payload: dict[str, Any] = {"model": self.model, "messages": messages, "stream": False}
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         if request.max_tokens:
             payload["max_tokens"] = request.max_tokens
-        if request.json_mode:
+        if request.json_mode and self.strict_json:
             payload["response_format"] = {"type": "json_object"}
         return payload
 
@@ -526,6 +536,7 @@ def primary_provider(settings: AISettings) -> OpenAICompatibleProvider:
     name = "gemma" if "gemma" in settings.model.lower() else "local"
     return OpenAICompatibleProvider(
         settings.base_url, settings.model, api_key=settings.api_key(), timeout=settings.timeout_seconds, name=name,
+        strict_json=settings.strict_json,
     )
 
 
@@ -548,7 +559,7 @@ async def check_llm(settings: AISettings) -> dict:
     ctx = CallContext()
     provider = OpenAICompatibleProvider(
         settings.base_url, settings.model, api_key=settings.api_key(),
-        timeout=min(float(settings.timeout_seconds), 120.0), max_attempts=1,
+        timeout=min(float(settings.timeout_seconds), 120.0), max_attempts=1, strict_json=settings.strict_json,
     )
     try:
         list_started = time.monotonic()

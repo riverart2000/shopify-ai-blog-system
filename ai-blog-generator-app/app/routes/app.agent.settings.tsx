@@ -80,7 +80,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<SettingsA
     const result = await runAgentIntent(intent, async () => {
       const saved = await taFetch<{ message: string }>("/settings", {
         body: {
-          llm_model: formString(form, "llm_model"),
           llm_thinking: formBool(form, "llm_thinking"),
           max_steps: formInt(form, "max_steps", "Steps per task"),
           max_minutes: formInt(form, "max_minutes", "Minutes per task"),
@@ -302,8 +301,6 @@ function WorkerSection({ settings, result }: { settings: SettingsResponse; resul
 function ModelSection({ settings, result }: { settings: SettingsResponse; result?: SettingsActionResult }) {
   const { busy, isSubmitting } = useBusy();
   const current = settings.settings;
-  const [model, setModel] = useState(current.llm_model);
-  const models = settings.models.includes(current.llm_model) ? settings.models : [current.llm_model, ...settings.models];
   const limits = settings.limits;
 
   return (
@@ -311,20 +308,12 @@ function ModelSection({ settings, result }: { settings: SettingsResponse; result
       <SectionResult result={result} section="settings" />
       <Form method="post" className="sa-stack">
         <Hidden values={{ intent: "save_settings" }} />
-        <Field label="AI model" help="The local model on the Mac the agent uses for every task.">
-          <select name="llm_model" value={model} onChange={(event) => setModel(event.target.value)}>
-            {models.map((id) => (
-              <option key={id} value={id}>{id}{id === settings.recommended_model ? " (recommended)" : ""}</option>
-            ))}
-          </select>
+        <Field
+          label="AI model"
+          help={`Set in ${settings.model_file ?? "~/.config/local-ai/model.json"} on the Mac, shared by OpenClaw, the Task Agent and Social Autopilot (two large models can't fit in memory at once). Change it there.`}
+        >
+          <input type="text" value={current.llm_model} readOnly />
         </Field>
-        {model !== settings.recommended_model ? (
-          <Banner tone="warning" title="Use the same model as Social Autopilot">
-            Use the same model as Social Autopilot ({settings.recommended_model}) so they never compete for memory. Two
-            large models can&apos;t fit on the Mac at once, and a busy one blocks the other — that&apos;s what made a
-            campaign run fail before.
-          </Banner>
-        ) : null}
         <Toggle
           name="llm_thinking"
           checked={current.llm_thinking}

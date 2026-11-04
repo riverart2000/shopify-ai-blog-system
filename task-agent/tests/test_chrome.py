@@ -189,3 +189,73 @@ def test_settings_choose_the_browser(tmp_path: Path) -> None:
 def test_status_needs_no_chrome_call(relay: FakeOpenClaw) -> None:
     status: dict[str, Any] = hub_for(relay).status()
     assert status["mode"] == "chrome" and status["open_tabs"] == 0 and not relay.calls
+
+
+def tool_deps(hub: ChromeHub) -> SimpleNamespace:
+    return SimpleNamespace(browser=hub, owner="job:8", failed_actions=[], seen_domains=set(), payload=None)
+
+
+async def test_after_a_restart_the_agent_is_told_to_open_the_page_again(relay, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    ctx = SimpleNamespace(deps=tool_deps(hub_for(relay)))  # a fresh run: no tab yet, old refs in its memory
+    reply = await tools.type_text(ctx, "f16e169", "Lyceum Tavern Comedy Show")  # type: ignore[arg-type]
+    assert "No page is open in this run" in reply and "open_page" in reply
+    assert not relay.commands("batch")  # nothing was typed anywhere
+
+
+async def test_an_old_ref_after_a_restart_is_caught_and_the_page_shown(relay, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    hub = hub_for(relay)
+    ctx = SimpleNamespace(deps=tool_deps(hub))
+    page = await hub.page("job:8")
+    await page.goto("https://www.whatsonincityoflondon.com/submit-your-event/")  # opened, not looked at yet
+    reply = await tools.type_text(ctx, "f16e169", "Lyceum Tavern Comedy Show")  # type: ignore[arg-type]
+    assert "Nothing on the page has ref f16e169" in reply
+    assert "The page now:" in reply and "[ref=e1]" in reply  # fresh refs to use instead
+
+
+async def test_the_real_error_is_shown_and_a_stuck_job_stops(relay, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    hub = hub_for(relay)
+    ctx = SimpleNamespace(deps=tool_deps(hub))
+    page = await hub.page("job:8")
+    await page.goto("https://example.com/form")
+    await page.aria_snapshot()
+
+    async def refuse(actions):
+        raise RelayError("Element e1 is not an editable field")
+
+    monkeypatch.setattr(page, "act", refuse)
+    first = await tools.type_text(ctx, "e1", "hello")  # type: ignore[arg-type]
+    assert "Element e1 is not an editable field" in first and "times the same thing failed" not in first
+    await tools.type_text(ctx, "e1", "hello")  # type: ignore[arg-type]
+    third = await tools.type_text(ctx, "e1", "hello")  # type: ignore[arg-type]
+    assert "3 times the same thing failed" in third
+
+    await tools.click(ctx, "e1")  # type: ignore[arg-type]  # a success resets the count
+    assert ctx.deps.failed_actions == []
+    for _ in range(tools.FAILURES_TO_STOP - 1):
+        await tools.type_text(ctx, "e1", "hello")  # type: ignore[arg-type]
+    with pytest.raises(tools.Stuck, match="the last 8 page actions all failed"):
+        await tools.type_text(ctx, "e1", "hello")  # type: ignore[arg-type]
+
+
+async def test_a_failed_login_fill_never_shows_the_error_text(relay, monkeypatch) -> None:
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    hub = hub_for(relay)
+    page = await hub.page("job:8")
+    await page.goto("https://example.com/login")
+    await page.aria_snapshot()
+
+    async def refuse(actions):
+        raise RelayError(f"could not type {actions[0]['text']}")
+
+    monkeypatch.setattr(page, "act", refuse)
+    accounts = SimpleNamespace(
+        get=lambda site: {"site": site, "label": "Meetup", "username": "joe", "event_type": ""},
+        password=lambda site: "s3cret-Passw0rd!",
+    )
+    deps = tool_deps(hub)
+    deps.accounts = accounts
+    reply = await tools.type_saved_login(SimpleNamespace(deps=deps), "e1", "meetup", "password")  # type: ignore[arg-type]
+    assert "didn't work (RelayError)" in reply and "s3cret" not in reply

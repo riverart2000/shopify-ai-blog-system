@@ -23,6 +23,7 @@ from task_agent.config import Settings
 from task_agent.db import JOB_STATUSES, Job, JobError, JobStore, now
 from task_agent.email_account import EmailError, EmailStore
 from task_agent.event_types import EventTypeError, EventTypeStore
+from task_agent.local_model import model_file
 from task_agent.promotion import PromotionStore, target_done, target_retry, target_skip
 from task_agent.tasks import TASKS, TEMPLATE_TYPES
 from task_agent.telegram.client import TelegramAPI, TelegramError
@@ -200,9 +201,8 @@ async def available_models(settings: Settings, current: str) -> list[str]:
     except (httpx.HTTPError, ValueError, KeyError):
         models = []
     models = [m for m in models if not any(word in m.lower() for word in NON_CHAT_MODELS)]
-    for must in (runtime.RECOMMENDED_MODEL, current):
-        if must not in models:
-            models.insert(0, must)
+    if current not in models:
+        models.insert(0, current)
     return models
 
 
@@ -406,7 +406,8 @@ def create_app(ctx: AppContext) -> FastAPI:
             "settings": rt.model_dump(),
             "limits": {k: list(v) for k, v in runtime.LIMITS.items()},
             "models": await available_models(ctx.settings, rt.llm_model),
-            "recommended_model": runtime.RECOMMENDED_MODEL,
+            "recommended_model": rt.llm_model,  # the shared model (older pages compare against it)
+            "model_file": str(model_file()),
         }
 
     @app.post("/api/settings", dependencies=auth)

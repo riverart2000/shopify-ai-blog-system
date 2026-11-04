@@ -31,7 +31,10 @@ LinkedIn themselves are one shared personal login (logins with no type). A promo
 agent then sees only that type's logins plus the shared ones. One Chrome can only be logged in to one Eventbrite
 or Meetup account at a time, so the agent checks whose account it's on and switches with the type's saved login.
 `check_inbox` returns only codes and the site's own verify/login links from the last 30 minutes, never whole
-emails. The IMAP password is in the Keychain (`event-type:<key>:imap`).
+emails. The IMAP password is in the Keychain (`event-type:<key>:imap`); a type whose inbox is the same mailbox
+as Settings → Email account uses that account's saved password instead, so it's stored once.
+IMAP and SMTP check certificates against the Mac's own trust store (`tls.py`): Python's built-in list on macOS
+is missing newer roots such as Let's Encrypt's ISRG Root X2.
 
 Web search uses **Brave Search** when `BRAVE_API_KEY` is in `.env` (or `brave:api_key` in the Keychain), with
 DuckDuckGo and Bing as backups.
@@ -90,7 +93,13 @@ One text model for everything: `gemma-4-31b-it-8bit` with its speed-up drafter
 Engine so oMLX never has to swap models (a swap while one was busy made a campaign run fail on 30 Oct).
 Chosen on 31 Oct after testing: the most careful on research (no invented details), about 3× slower than
 the 26B, which stays installed as a backup. The Task Agent turns thinking on per request; the Social
-Engine keeps it off. Images stay on `Qwen3-VL-8B`. Switching model is `LLM_MODEL` in `.env` (or the page).
+Engine keeps it off. Images stay on `Qwen3-VL-8B`.
+
+**The model is set in one file: `~/.config/local-ai/model.json`** (server, text model, vision model, context window,
+answer cap), read by OpenClaw, the Task Agent and Social Autopilot alike, because two large models can't fit in
+memory together. `.env` and the admin page can't override it (`task_agent/local_model.py`; the page shows it).
+After changing it: restart the Task Agent and Social Autopilot, and run `node scripts/sync-local-model.mjs` in
+~/openclaw.
 
 ## How a job runs
 1. A job is queued in `data/task_agent.db` (a repeated `--key` never creates a second job).
@@ -99,8 +108,13 @@ Engine keeps it off. Images stay on `Qwen3-VL-8B`. Switching model is `LLM_MODEL
    the job goes back in the queue and **resumes** without redoing finished steps.
 4. Every tool call is logged to `agent_steps` and `logs/<job_id>/steps.jsonl`; the result goes to
    `logs/<job_id>/result.json`.
-5. Limits: 60 model calls / 20 minutes per job. Model-server or network errors retry with backoff
-   (3 attempts); anything else fails with the error recorded.
+5. Limits: 60 model calls / 20 minutes per job (a task type can set its own: posting one event in one place is
+   150 / 60 min). Model-server or network errors retry with backoff (3 attempts); anything else fails with the
+   error recorded.
+6. A failed page action tells the agent OpenClaw's own error and shows the page as it is now (fresh refs). The same
+   action failing 3 times gets a "do something different" warning; 8 failed page actions in a row stop the job
+   ("the last 8 page actions all failed"), so a stuck job doesn't use its whole budget. After a restart the job's
+   tab is gone: the agent is told to open the page again, and refs from before the restart are checked first.
 
 ## Guardrails in place
 - Web pages and search results are wrapped as `<untrusted_data>`; the rules (sent on every request,

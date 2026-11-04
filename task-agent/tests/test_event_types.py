@@ -36,6 +36,25 @@ def test_the_four_types_are_there_once(store, settings, kinds):
     assert "juggling" not in kinds.names()
 
 
+def test_a_type_uses_the_email_account_password_for_the_same_mailbox(store, kinds):
+    from task_agent.email_account import EmailStore
+
+    EmailStore(store).save(
+        {"username": "comedy@joebains.com", "imap_host": "mail.themedicalpark.com", "smtp_host": "smtp.example"},
+        password="mailbox-pass",
+    )
+    comedy = kinds.save({"email": "Comedy@joebains.com", "imap_host": "mail.themedicalpark.com"}, key="comedy")
+    assert comedy["has_imap_password"] and comedy["imap_password_from"] == "email_account"
+    assert kinds.inbox_ready(comedy) and kinds.imap_password("comedy") == "mailbox-pass"
+    assert get_secret("event-type:comedy:imap") is None  # stored once, under the Email account
+
+    other = kinds.save({"email": "info@joebains.com", "imap_host": "mail.themedicalpark.com"}, key="juggling")
+    assert not other["has_imap_password"] and kinds.imap_password("juggling") == ""
+
+    own = kinds.save({}, imap_password="own-pass", key="comedy")  # its own password wins
+    assert own["imap_password_from"] == "own" and kinds.imap_password("comedy") == "own-pass"
+
+
 def test_save_checks_and_keeps_the_inbox_password_in_the_keychain(kinds):
     saved = kinds.save(
         {"email": "info@joebains.com", "imap_host": "imap.gmail.com", "facebook_page": "Joe Bains Comedy"},
