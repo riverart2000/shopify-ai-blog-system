@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelRequestRejectedError, ModelServerError
+from pydantic_ai.exceptions import ModelRequestRejectedError, ModelServerError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -27,8 +27,14 @@ def flaky(failures: list[Exception]) -> FunctionModel:
     return FunctionModel(answer)
 
 
+ABORTED = UnexpectedModelBehavior(
+    "Invalid response from openai chat completions endpoint: 4 validation errors for ChatCompletion"
+)
+
+
 def test_busy_errors_are_recognised() -> None:
-    assert model_busy(BUSY) and model_busy(PREFILL)
+    assert model_busy(BUSY) and model_busy(PREFILL) and model_busy(ABORTED)
+    assert not model_busy(UnexpectedModelBehavior("Exceeded maximum retries (3) for output validation"))
     assert not model_busy(ModelServerError("m", "status_code: 500, model_name: m, body: crash"))
     assert not model_busy(ValueError("status_code: 507"))
 
@@ -39,7 +45,7 @@ async def test_a_busy_model_is_waited_for() -> None:
     async def nap(seconds: float) -> None:
         naps.append(seconds)
 
-    agent = Agent(WaitWhenBusy(flaky([BUSY, PREFILL, BUSY]), sleep=nap))
+    agent = Agent(WaitWhenBusy(flaky([BUSY, PREFILL, ABORTED]), sleep=nap))
     result = await agent.run("go")
     assert result.output == "done" and naps == [15.0, 30.0, 60.0]
 

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 
 import structlog
 from pydantic_ai import ModelSettings
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -23,15 +23,20 @@ BUSY_MAX_WAIT_SECONDS = 15 * 60  # then the job's normal retry takes over
 # oMLX answers 507 at once when another app's model is busy and both don't fit in memory, and rejects a prompt
 # (400 prefill_memory_exceeded) while memory is short. Both clear when the other model finishes.
 _BUSY = re.compile(r"status_code: 507\b|prefill_memory_exceeded|InsufficientMemory", re.IGNORECASE)
+# When memory runs short mid-answer, oMLX unloads a model at once ("immediate abort") and the request comes back
+# as an empty body, which the OpenAI client reports as an invalid ChatCompletion. Asking again works.
+_ABORTED = "Invalid response from openai chat completions endpoint"
 
 
 def model_busy(exc: BaseException) -> bool:
+    if isinstance(exc, UnexpectedModelBehavior):
+        return _ABORTED in str(exc)
     return isinstance(exc, ModelAPIError) and bool(_BUSY.search(f"{exc} {getattr(exc, 'body', '')}"))
 
 
 class WaitWhenBusy(WrapperModel):
-    """Waits for oMLX when another model is in the way, so a job keeps its place and its Chrome tab instead of
-    failing an attempt and starting again (OpenClaw's agents use a different Gemma on the same server)."""
+    """Waits for oMLX when memory is short (another model in the way, or a request cut off when oMLX unloaded a
+    model), so a job keeps its place and its Chrome tab instead of failing and starting again."""
 
     def __init__(
         self,
@@ -54,7 +59,7 @@ class WaitWhenBusy(WrapperModel):
         while True:
             try:
                 return await super().request(messages, model_settings, model_request_parameters)
-            except ModelAPIError as exc:
+            except (ModelAPIError, UnexpectedModelBehavior) as exc:
                 if not model_busy(exc) or waited + delay > self.max_wait:
                     raise
                 log.warning("model.busy_waiting", wait_seconds=delay, waited_seconds=waited)
