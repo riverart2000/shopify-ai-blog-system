@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..context import StoreContext
 from ..scheduling.slots import ScheduleWindow, SlotPlanner
@@ -48,11 +48,25 @@ class ScheduleConfig(BaseModel):
     window_end: str | None = None
     randomize: bool | None = None
     use_best_times: bool | None = None
+    timezone: str | None = None        # the posting hours are in this zone (US promotions: New York time)
+
+    @field_validator("timezone")
+    @classmethod
+    def _zone(cls, value: str | None) -> str | None:
+        if value:
+            from zoneinfo import ZoneInfo
+
+            try:
+                ZoneInfo(value)
+            except Exception as exc:  # unknown zones are refused
+                raise ValueError(f"Unknown timezone {value!r}") from exc
+        return value or None
 
     def window(self, fixed_time: str | None = None) -> ScheduleWindow:
         return ScheduleWindow(
             days=self.days, window_start=self.window_start, window_end=self.window_end,
             randomize=self.randomize, use_best_times=self.use_best_times, fixed_time=fixed_time,
+            timezone=self.timezone,
         )
 
 

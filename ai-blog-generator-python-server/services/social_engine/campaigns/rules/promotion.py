@@ -58,6 +58,9 @@ class PromotionConfig(BaseModel):
     ai_background: bool | None = None
     postiz_media_search: str = Field("", max_length=80)
     hero_ai_video: bool = False
+    # Who it's for: "GB" (UK time, £), "US" (New York time, $) or "both" (UK afternoon/evening, no prices).
+    # The coupon works for every customer whatever this is.
+    market: Literal["GB", "US", "both"] = "GB"
 
     @field_validator("theme_key")
     @classmethod
@@ -130,8 +133,11 @@ class PromotionRule(CampaignRule):
     priority = 10
 
     async def plan(self, rctx: RuleContext) -> list[PlanItem]:
+        from ...markets import schedule_for
+
         config: PromotionConfig = rctx.config  # type: ignore[assignment]
         theme = get_theme(config.theme_key)
+        rctx.schedule = schedule_for(config.market, rctx.schedule)  # US promotions post on US time
         days = [d for d in rctx.planning_days() if config.start_date <= d <= config.end_date]
         if not days:
             return []
@@ -194,6 +200,7 @@ class PromotionRule(CampaignRule):
                     "ai_background": bool(ai_background),
                     "postiz_media_search": config.postiz_media_search,
                     "priority": self.priority,
+                    "market": config.market,
                 }
                 if config.landing_url:
                     options["link_override"] = config.landing_url

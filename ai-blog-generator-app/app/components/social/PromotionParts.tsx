@@ -6,8 +6,8 @@ import { useState, type KeyboardEvent } from "react";
 import { Form, Link, useFetcher } from "react-router";
 
 import type {
-  ActionResult, ApprovalMode, CampaignSchedule, Channel, Collection, OccasionDate, PostizBudget, ProductFilter,
-  PromotionConfig, PromotionRow, PromotionTheme,
+  ActionResult, ApprovalMode, CampaignSchedule, Channel, Collection, Market, OccasionDate, PostizBudget, ProductFilter,
+  PromotionConfig, PromotionRow, PromotionTheme, ScheduleSettings,
 } from "../../lib/social-engine.types";
 import { addDays, formatDateKey, isDateKey, keyToUtcEpoch, weekdayOfKey } from "../../lib/social-time";
 import { ChannelChip } from "./ChannelChip";
@@ -16,7 +16,7 @@ import { PostizCredits, PostizDesignPicker, creditsLeft } from "./PostizParts";
 import { ProductPicker, type PickedProduct } from "./ProductPicker";
 import { CollectionPicker } from "./SchemaForm";
 import { Badge, Banner, Choice, Field, Hidden, Toggle, useBusy } from "./ui";
-import { APPROVAL_MODES, CAPTION_PLACEHOLDERS, WEEKDAYS, contentTypeInfo, contentTypeLabel } from "./vocab";
+import { APPROVAL_MODES, CAPTION_PLACEHOLDERS, MARKETS, WEEKDAYS, contentTypeInfo, contentTypeLabel, marketInfo, marketLabel } from "./vocab";
 
 export const PROMO_TEXT_MAX = 60;
 const MAX_PROMO_LINES = 12;
@@ -47,6 +47,13 @@ export function promotionEnd(start: string, duration: number): string {
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+// ---------------------------------------------------------------------------- country (market)
+
+/** "🇬🇧 UK", "🇺🇸 US" or "🇬🇧🇺🇸 UK & US" — when it posts and which prices it shows (the code works for everyone). */
+export function MarketBadge({ market }: { market: string | null | undefined }) {
+  return <Badge tone="neutral" title={marketInfo(market).help}>{marketLabel(market)}</Badge>;
+}
 
 // ---------------------------------------------------------------------------- theme cards
 
@@ -137,7 +144,7 @@ type Draft = {
   schedule: CampaignSchedule | null;
 };
 
-type Touched = { texts: boolean; types: boolean; dates: boolean };
+type Touched = { texts: boolean; types: boolean; dates: boolean; market: boolean };
 
 export type PromotionPrefill = { theme_key: string; start_date: string; duration_days: number };
 
@@ -145,6 +152,7 @@ const FALLBACK_CONFIG: Config = {
   theme_key: "", theme: "", scope: "store", collection_ids: [], product_ids: [], coupon_code: "", discount_text: "",
   promo_texts: [], start_date: "", duration_days: 7, posts_per_day: 1, content_types: [], countdown_days: 2, landing_url: "",
   caption_mode: "ai", custom_caption: "", show_logo: true, ai_background: null, postiz_media_search: "", hero_ai_video: false,
+  market: "GB",
 };
 
 const CUSTOM_CAPTION_KEYS = [
@@ -161,6 +169,14 @@ function keepEnterFromSaving(event: KeyboardEvent<HTMLFormElement>) {
   if (event.key === "Enter" && target instanceof HTMLInputElement && !target.name) event.preventDefault();
 }
 
+/** The "usual posting days and times" a promotion gets: Settings' days, and its country's hours (UK = Settings' hours). */
+function usualScheduleHelp(schedule: ScheduleSettings, market: ReturnType<typeof marketInfo>): string {
+  const days = WEEKDAYS.filter(([value]) => schedule.days.includes(value)).map(([, label]) => label).join(", ") || "no days";
+  return market.hours
+    ? `Your posting days from Settings (${days}), ${market.hours[0]}–${market.hours[1]} ${market.zone} for ${market.label} promotions.`
+    : `From Settings: ${days}, ${schedule.window_start}–${schedule.window_end}.`;
+}
+
 function hasCustomSchedule(schedule: CampaignSchedule | undefined): schedule is CampaignSchedule {
   return Boolean(schedule && (schedule.days || schedule.window_start || schedule.window_end));
 }
@@ -169,6 +185,7 @@ function withTheme(config: Config, theme: PromotionTheme, occasion: OccasionDate
   const next: Config = { ...config, theme_key: theme.key };
   if (!touched.texts) next.promo_texts = [...theme.promo_texts];
   if (!touched.types) next.content_types = [...theme.content_types];
+  if (!touched.market) next.market = marketInfo(theme.market).value;
   if (!touched.dates) {
     if (occasion) {
       next.start_date = occasion.suggested_start;
@@ -201,14 +218,16 @@ export function PromotionForm({
   const findTheme = (key: string) => allThemes.find((theme) => theme.key === key);
   const occasionFor = (key: string) => calendar.find((occasion) => occasion.theme_key === key);
 
-  const [touched, setTouched] = useState<Touched>(() => ({ texts: Boolean(promotion), types: Boolean(promotion), dates: Boolean(promotion) }));
+  const [touched, setTouched] = useState<Touched>(() => ({
+    texts: Boolean(promotion), types: Boolean(promotion), dates: Boolean(promotion), market: Boolean(promotion),
+  }));
   const [draft, setDraft] = useState<Draft>(() => {
     if (promotion) {
       const { schedule, ...config } = promotion.config || {};
       return {
         id: promotion.id, name: promotion.name, approval_mode: promotion.approval_mode || "manual",
         channel_ids: promotion.channel_ids || [], product_filter: { in_stock_only: true, ...(promotion.product_filter || {}) },
-        config: { ...FALLBACK_CONFIG, ...config } as Config,
+        config: { ...FALLBACK_CONFIG, ...config, market: marketInfo(config.market || promotion.market).value } as Config,
         schedule: hasCustomSchedule(schedule) ? schedule : null,
       };
     }
@@ -217,7 +236,7 @@ export function PromotionForm({
     let config: Config = { ...FALLBACK_CONFIG, ...base, start_date: base.start_date || addDays(today, 1) } as Config;
     const theme = prefill ? findTheme(prefill.theme_key) : undefined;
     if (theme && prefill) {
-      config = withTheme(config, theme, occasionFor(theme.key), { texts: false, types: false, dates: false });
+      config = withTheme(config, theme, occasionFor(theme.key), { texts: false, types: false, dates: false, market: false });
       if (isDateKey(prefill.start_date)) config.start_date = prefill.start_date;
       if (prefill.duration_days) config.duration_days = Math.min(MAX_DURATION, Math.max(1, prefill.duration_days));
     } else {
@@ -245,6 +264,10 @@ export function PromotionForm({
   const setDates = (patch: Partial<Pick<Config, "start_date" | "duration_days">>) => {
     setTouched((current) => ({ ...current, dates: true }));
     setConfig(patch);
+  };
+  const setMarket = (value: Market) => {
+    setTouched((current) => ({ ...current, market: true }));
+    setConfig({ market: value });
   };
   const pickTheme = (next: PromotionTheme) => {
     setDraft((current) => ({ ...current, config: withTheme(current.config, next, occasionFor(next.key), touched) }));
@@ -274,6 +297,8 @@ export function PromotionForm({
   const texts = config.promo_texts;
   const suggestions = suggest.data && suggest.data !== hiddenSuggestion ? suggest.data : null;
   const title = config.theme.trim() || theme?.label || "Promotion";
+  const market = marketInfo(config.market);
+  const themeMarket = theme ? marketInfo(theme.market).value : "";
 
   const problems: string[] = [];
   if (!theme) problems.push("Pick a theme.");
@@ -510,6 +535,18 @@ export function PromotionForm({
                     {[1, 2, 3, 4, 5].map((count) => <option key={count} value={count}>Last {plural(count, "day")}</option>)}
                   </select>
                 </Field>
+                <Field
+                  label="Country"
+                  help="When it posts and which prices it shows: UK time and £, New York time and $, or both (no prices). The code works for everyone."
+                >
+                  <select value={market.value} onChange={(event) => setMarket(marketInfo(event.target.value).value)}>
+                    {MARKETS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.flag} {item.label}{item.value === themeMarket && theme?.category === "occasion" ? ` (usual for ${theme.label})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               </div>
 
               <div className="sa-stack-sm">
@@ -518,11 +555,11 @@ export function PromotionForm({
                   onChange={(useStore) => set("schedule", useStore ? null : {
                     ...(promotion?.config.schedule || {}),
                     days: storeSchedule?.days ?? [0, 1, 2, 3, 4, 5, 6],
-                    window_start: storeSchedule?.window_start || "09:00",
-                    window_end: storeSchedule?.window_end || "21:00",
+                    window_start: market.hours?.[0] || storeSchedule?.window_start || "09:00",
+                    window_end: market.hours?.[1] || storeSchedule?.window_end || "21:00",
                   })}
                   label="Use my usual posting days and times"
-                  help={storeSchedule ? `From Settings: ${WEEKDAYS.filter(([value]) => storeSchedule.days.includes(value)).map(([, label]) => label).join(", ") || "no days"}, ${storeSchedule.window_start}–${storeSchedule.window_end}.` : undefined}
+                  help={storeSchedule ? usualScheduleHelp(storeSchedule, market) : undefined}
                 />
                 {draft.schedule ? (
                   <div className="sa-stack-sm" style={{ paddingLeft: 24 }}>
@@ -538,7 +575,7 @@ export function PromotionForm({
                       ))}
                     </div>
                     <div className="sa-row">
-                      <Field label="Post between">
+                      <Field label={market.hours ? `Post between (${market.zone})` : "Post between"}>
                         <input type="time" value={draft.schedule.window_start || ""} onChange={(event) => set("schedule", { ...draft.schedule, window_start: event.target.value || null })} />
                       </Field>
                       <Field label="and">

@@ -37,6 +37,7 @@ class ScheduleWindow:
     randomize: bool | None = None
     use_best_times: bool | None = None
     fixed_time: str | None = None     # e.g. product of the day at "18:00"
+    timezone: str | None = None       # the window is in this zone (e.g. America/New_York for US promotions)
 
 
 @dataclass
@@ -87,8 +88,8 @@ class SlotPlanner:
     def local_today(self) -> date:
         return self.now.astimezone(self.tz).date()
 
-    def local_datetime(self, day: date, at: time) -> datetime:
-        return datetime.combine(day, at, tzinfo=self.tz)
+    def local_datetime(self, day: date, at: time, tz: ZoneInfo | None = None) -> datetime:
+        return datetime.combine(day, at, tzinfo=tz or self.tz)
 
     def _count_on_day(self, state: _ChannelState, day: date) -> int:
         start = int(self.local_datetime(day, time(0, 0)).timestamp())
@@ -108,12 +109,13 @@ class SlotPlanner:
         return max(0, state.daily_cap - self._count_on_day(state, day))
 
     def _candidates(self, day: date, window: ScheduleWindow, channel_ids: list[str]) -> list[datetime]:
+        zone = ZoneInfo(window.timezone) if window.timezone else self.tz
         if window.fixed_time:
-            return [self.local_datetime(day, _parse_hhmm(window.fixed_time))]
+            return [self.local_datetime(day, _parse_hhmm(window.fixed_time), zone)]
         start = _parse_hhmm(window.window_start or self.schedule.window_start)
         end = _parse_hhmm(window.window_end or self.schedule.window_end)
-        start_dt = self.local_datetime(day, start)
-        end_dt = self.local_datetime(day, end)
+        start_dt = self.local_datetime(day, start, zone)
+        end_dt = self.local_datetime(day, end, zone)
         if end_dt <= start_dt:
             end_dt += timedelta(days=1)  # window crosses midnight
         minutes = int((end_dt - start_dt).total_seconds() // 60)
@@ -125,7 +127,7 @@ class SlotPlanner:
             for channel_id in channel_ids:
                 state = self.channels.get(channel_id)
                 for hhmm in profile_for(state.provider if state else "").default_times:
-                    base = self.local_datetime(day, _parse_hhmm(hhmm))
+                    base = self.local_datetime(day, _parse_hhmm(hhmm), zone)
                     jitter = timedelta(minutes=self.rng.randrange(-15, 16, _GRANULARITY_MINUTES))
                     candidate = base + jitter
                     if start_dt <= candidate < end_dt:

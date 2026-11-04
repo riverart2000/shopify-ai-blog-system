@@ -8,10 +8,12 @@ calendar whose promotion window includes today (it opens the day before the occa
 2. has Gemma write the promo lines (falls back to the theme's own lines);
 3. saves and starts a promotion for that window, posting to every connected channel.
 
-Each occasion gets its own promotion and code; overlapping promotions are fine. An occasion is
-skipped if a promotion for it already covers the window (one set up by hand, or this one, even if
-it was later removed). If the code can't be created, no promotion is made, so a post never
-advertises a code that doesn't work. Awareness days are in `skip_themes` by default.
+Each occasion gets its own promotion and code; overlapping promotions are fine (a UK and a US one can run
+on the same day). Each promotion has the market of its occasion: UK-only occasions post on UK time in £,
+US-only ones on New York time in $, shared ones at hours that suit both, without prices. Codes work for
+every customer anywhere. An occasion is skipped if a promotion for it already covers the window (one set
+up by hand, or this one, even if it was later removed). If the code can't be created, no promotion is
+made, so a post never advertises a code that doesn't work. Wellness days get a greeting and a sale.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from db.social_engine import products as product_store
 from ..activity import record
 from ..discounts import MARKER, DiscountError, GraphQL, code_for, ensure_code
 from ..jobs.queue import enqueue
+from ..markets import get_market, market_for
 from ..settings import AutoPromotionSettings, EngineSettings, load_settings
 from .holidays import OCCASIONS, occasion_date
 from .themes import THEMES, PromotionTheme
@@ -33,7 +36,13 @@ from .themes import THEMES, PromotionTheme
 logger = logging.getLogger("ai_blog_server.social_engine.auto_promotions")
 
 AUTO_KEY = "auto_occasion"
-OCCASION_DAYS: dict[str, int] = {"mental_health_week": 7}  # everything else is a single day
+OCCASION_DAYS: dict[str, int] = {"mental_health_week": 7, "hanukkah": 8}  # everything else is a single day
+
+
+def theme_code(theme: PromotionTheme, percent: int) -> str:
+    """The theme's short code if it has one (MOMSDAY20, SMALLBIZ20), else from its label (THANKSGIVING20)."""
+    base = str(theme.extra.get("code") or "")
+    return f"{base}{percent}" if base else code_for(theme.label, percent)
 
 
 def windows(today: date, ap: AutoPromotionSettings, *, horizon_days: int = 0) -> list[dict[str, Any]]:
@@ -54,7 +63,8 @@ def windows(today: date, ap: AutoPromotionSettings, *, horizon_days: int = 0) ->
                 continue
             rows.append({
                 "key": f"{theme.key}:{when.isoformat()}", "theme": theme, "occasion_date": when,
-                "start": start, "end": end, "code": code_for(theme.label, ap.percent),
+                "start": start, "end": end, "code": theme_code(theme, ap.percent),
+                "market": market_for(OCCASIONS[theme.occasion_key].countries),
             })
     return sorted(rows, key=lambda r: (r["start"], r["theme"].label))
 
@@ -108,6 +118,7 @@ async def _create(
     ap = settings.auto_promotions
     theme: PromotionTheme = window["theme"]
     year = window["occasion_date"].year
+    market = get_market(window["market"])
     sctx = await load_store_context(store_id)
     discount = await ensure_code(
         sctx.store_config,
@@ -125,16 +136,18 @@ async def _create(
         **model_defaults(PromotionConfig),
         "theme_key": theme.key, "scope": "store", "coupon_code": discount.code, "discount_text": discount_text,
         "promo_texts": texts, "start_date": first_day.isoformat(),
-        "duration_days": (window["end"] - first_day).days + 1, "countdown_days": 1,
+        "duration_days": (window["end"] - first_day).days + 1, "countdown_days": 1, "market": market.key,
     })
     name = f"{theme.label} {year}"
+    if market.key in ("GB", "US") and f"({market.label})" not in theme.label:
+        name += f" ({market.label})"
     campaign_id = await config_store.save_campaign(store_id, {
         "name": name, "rule_type": "promotion", "status": "active", "config": config,
         "channel_ids": [], "approval_mode": settings.default_approval_mode, "product_filter": {},
         "content": {AUTO_KEY: {
             "key": window["key"], "code": discount.code, "discount_id": discount.discount_id,
             "percent": ap.percent, "start": window["start"].isoformat(), "end": window["end"].isoformat(),
-            "texts_source": texts_source,
+            "texts_source": texts_source, "market": market.key,
         }},
     })
     await enqueue("campaigns.evaluate", {"campaign_id": campaign_id}, store_id=store_id,
@@ -197,6 +210,7 @@ async def overview(store_id: str, settings: EngineSettings, today: date) -> dict
             "theme_key": window["theme"].key, "label": window["theme"].label, "emoji": window["theme"].emoji,
             "occasion_date": window["occasion_date"].isoformat(), "start": window["start"].isoformat(),
             "end": window["end"].isoformat(), "code": auto.get("code") or window["code"],
+            "market": window["market"], "market_label": get_market(window["market"]).label,
             "status": ("created" if auto else "manual") if existing else "planned",
             "campaign_id": existing["id"] if existing else "",
         })

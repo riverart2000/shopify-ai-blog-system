@@ -49,6 +49,9 @@ def language_instruction(code: str) -> str:
     if name == "British English":
         return ("Write in British English: British spelling and idiom (colour, flavour, favourite, "
                 "optimise, programme, practise as a verb), £ for prices, day-month dates.")
+    if name == "American English":
+        return ("Write in American English for US shoppers: American spelling (color, favorite, optimize), "
+                "$ for prices, month-day dates.")
     if name.endswith("English"):
         return f"Write in {name}."
     return (f"Write every caption, headline and title in {name}. Keep product and brand names unchanged. "
@@ -330,7 +333,7 @@ def details_block(texts: dict[str, str]) -> str:
         "promo_text": "Promotion headline", "discount_text": "Discount (quote exactly)",
         "coupon_code": "Coupon code (quote exactly, in capitals)", "ends_at": "Offer ends",
         "end_date": "Ends", "occasion": "Occasion", "quote": "Quote text", "blog_title": "Article title",
-        "blog_excerpt": "Article excerpt", "theme": "Theme",
+        "blog_excerpt": "Article excerpt", "theme": "Theme", "audience": "Who it's for",
     }
     lines = []
     for key, value in (texts or {}).items():

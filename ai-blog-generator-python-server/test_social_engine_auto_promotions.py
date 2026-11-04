@@ -59,12 +59,30 @@ def test_code_names():
     assert code_for("Singles' Day", 20) == "SINGLESDAY20"
 
 
-def test_windows_skip_awareness_days_and_span_day_before_to_day_after():
+def test_windows_span_day_before_to_day_after_and_wellness_days_get_sales():
     ap = AutoPromotionSettings()
     singles = [w for w in windows(date(2026, 11, 10), ap) if w["theme"].key == "singles_day"]
     assert singles and (singles[0]["start"], singles[0]["end"]) == (date(2026, 11, 10), date(2026, 11, 12))
-    assert not [w for w in windows(date(2027, 1, 18), ap) if w["theme"].key == "blue_monday"]
-    assert not [w for w in windows(date(2027, 10, 10), ap) if w["theme"].key == "world_mental_health_day"]
+    blue = [w for w in windows(date(2027, 1, 18), ap) if w["theme"].key == "blue_monday"]
+    assert blue and blue[0]["code"] == "BLUEMONDAY20"  # wellness days get a sale too now
+    skipping = AutoPromotionSettings(skip_themes=["world_mental_health_day"])
+    assert not [w for w in windows(date(2027, 10, 10), skipping) if w["theme"].key == "world_mental_health_day"]
+
+
+def test_each_occasion_runs_in_its_own_country():
+    ap = AutoPromotionSettings()
+    late_nov = {w["theme"].key: w for w in windows(date(2026, 11, 26), ap)}
+    assert late_nov["thanksgiving"]["market"] == "US" and late_nov["thanksgiving"]["code"] == "THANKSGIVING20"
+    assert late_nov["black_friday"]["market"] == "both"  # shared days: one promotion for both countries
+    boxing = {w["theme"].key: w for w in windows(date(2026, 12, 26), ap)}
+    assert boxing["boxing_day"]["market"] == "GB"
+    may = {w["theme"].key: w for w in windows(date(2027, 5, 31), ap)}
+    assert may["memorial_day"]["market"] == "US" and may["bank_holiday_spring"]["market"] == "GB"  # same day
+    assert may["bank_holiday_spring"]["code"] == "BANKHOLIDAY20"
+    moms = {w["theme"].key: w for w in windows(date(2027, 5, 9), ap)}
+    assert moms["mothers_day_us"]["code"] == "MOMSDAY20"  # not the UK MOTHERSDAY20
+    diwali = {w["theme"].key: w for w in windows(date(2027, 10, 29), ap)}
+    assert diwali["diwali"]["market"] == "both" and diwali["diwali"]["occasion_date"] == date(2027, 10, 29)
 
 
 @pytest.mark.asyncio
@@ -93,6 +111,20 @@ async def test_creates_code_and_starts_promotion_once(store):
 
     again = await ensure_occasion_promotions(store, now=SINGLES_EVE, graphql=shopify)
     assert [r["action"] for r in again["results"]] == ["exists"] and len(shopify.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_us_occasion_makes_a_us_promotion_with_an_open_code(store):
+    shopify = FakeShopify()
+    eve = datetime(2026, 11, 25, 8, 0, tzinfo=timezone.utc)  # Thanksgiving is tomorrow
+    result = await ensure_occasion_promotions(store, now=eve, graphql=shopify)
+    created = {r["code"]: r for r in result["results"] if r["action"] == "created"}
+    assert "THANKSGIVING20" in created
+    campaign = await config_store.get_campaign(store, created["THANKSGIVING20"]["campaign_id"])
+    assert campaign["name"] == "Thanksgiving 2026 (US)" and campaign["config"]["market"] == "US"
+    assert campaign["content"][AUTO_KEY]["market"] == "US"
+    discount = next(d for d in shopify.created if d["code"] == "THANKSGIVING20")
+    assert discount["context"] == {"all": "ALL"}  # anyone, anywhere can use it
 
 
 @pytest.mark.asyncio
@@ -161,5 +193,7 @@ async def test_page_overview_lists_upcoming_occasions(store):
     view = await auto_promotions.overview(store, await load_settings(store), date(2026, 11, 10))
     first = view["upcoming"][0]
     assert first["label"] == "Singles' Day" and first["status"] == "created" and first["code"] == "SINGLESDAY20"
-    assert view["upcoming"][1]["label"] == "Black Friday" and view["upcoming"][1]["status"] == "planned"
-    assert "Blue Monday" in view["skipped_labels"] and view["percent"] == 20
+    assert view["upcoming"][1]["label"] == "Thanksgiving" and view["upcoming"][1]["market"] == "US"
+    black_friday = next(u for u in view["upcoming"] if u["label"] == "Black Friday")
+    assert black_friday["status"] == "planned" and black_friday["market"] == "both"
+    assert view["skipped_labels"] == [] and view["percent"] == 20  # wellness days get sales now

@@ -54,6 +54,7 @@ async def _promotion_rows(store_id: str, today: date) -> list[dict]:
             "campaign_status": campaign["status"], "theme_key": theme.key, "theme_label": theme.label,
             "emoji": theme.emoji, "category": theme.category, "start_date": start, "end_date": end,
             "coupon_code": config.get("coupon_code", ""), "posts_per_day": config.get("posts_per_day", 1),
+            "market": config.get("market") or "GB",
             "channel_ids": campaign.get("channel_ids") or [], "approval_mode": campaign.get("approval_mode"),
             "post_counts": counts, "config": config, "product_filter": campaign.get("product_filter") or {},
             "last_error": campaign.get("last_error", ""),

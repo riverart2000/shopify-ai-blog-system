@@ -575,15 +575,24 @@ export type ActionResult<T = unknown> = {
 
 export type PromotionCategory = "occasion" | "offer" | "new_arrivals" | "custom";
 
+/**
+ * Who a promotion is for (backend services/social_engine/markets.py): "GB" = UK time and £, "US" = 9am–9pm
+ * New York time, US $ and American English, "both" = UK afternoon/evening with no prices. Never limits who
+ * can use the discount code.
+ */
+export type Market = "GB" | "US" | "both";
+
 export type PromotionTheme = {
   key: string; label: string; category: PromotionCategory | string; occasion_key: string; emoji: string;
   promo_texts: string[]; palette: string; colors: Partial<BrandColors>; sticker: string; lead_days: number;
   duration_days: number; content_types: string[]; background_prompt: string; description: string;
+  /** The occasion's usual country; offers and new arrivals are "GB". */
+  market: Market;
 };
 
 export type OccasionDate = {
   theme_key: string; label: string; emoji: string; date: string; days_until: number; suggested_start: string;
-  suggested_duration: number; sticker: string;
+  suggested_duration: number; sticker: string; market: Market;
 };
 
 export type PromotionConfig = {
@@ -591,14 +600,14 @@ export type PromotionConfig = {
   product_ids: string[]; coupon_code: string; discount_text: string; promo_texts: string[]; start_date: string;
   duration_days: number; posts_per_day: number; content_types: string[]; countdown_days: number; landing_url: string;
   caption_mode: "ai" | "custom"; custom_caption: string; show_logo: boolean; ai_background: boolean | null;
-  postiz_media_search: string; hero_ai_video: boolean;
+  postiz_media_search: string; hero_ai_video: boolean; market: Market;
   schedule?: CampaignSchedule;
 };
 
 export type PromotionRow = {
   id: string; name: string; status: "running" | "upcoming" | "paused" | "ended" | "archived" | "invalid" | string;
   campaign_status: string; theme_key: string; theme_label: string; emoji: string; category: string;
-  start_date: string; end_date: string; coupon_code: string; posts_per_day: number; channel_ids: string[];
+  start_date: string; end_date: string; coupon_code: string; posts_per_day: number; market: Market; channel_ids: string[];
   approval_mode: ApprovalMode; post_counts: Record<string, number>; config: Partial<PromotionConfig>;
   product_filter: ProductFilter; last_error: string;
 };
@@ -615,6 +624,9 @@ export type AutoOccasion = {
   code: string;
   status: "created" | "manual" | "planned";
   campaign_id: string;
+  market: Market;
+  /** "UK", "US" or "UK & US". */
+  market_label: string;
 };
 
 /** Promotions → Automatic occasion promotions (a real Shopify code + a running promotion). */

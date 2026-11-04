@@ -84,7 +84,9 @@ def _render_product(product: dict, sctx: StoreContext, *, image_offset: int):
     from ..creatives.base import RenderProduct
 
     brand = sctx.settings.brand
-    price = format_price(product.get("price_min") or 0, brand.currency_symbol, brand.include_taxes_pct)
+    # No price known (e.g. no US price yet): show none rather than "$0.00".
+    price = format_price(product["price_min"], brand.currency_symbol, brand.include_taxes_pct) \
+        if product.get("price_min") else ""
     compare = ""
     if product.get("on_sale") and product.get("compare_at_max"):
         compare = format_price(product["compare_at_max"], brand.currency_symbol, brand.include_taxes_pct)
@@ -195,10 +197,18 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
 
     texts = await _brand_content_texts(sctx, post, dict(options.get("texts") or {}))
 
+    # The promotion's country (UK / US / both) sets the language, currency and prices it's written and drawn
+    # with. `products` keeps the store's own prices (the post's snapshot); `shown_products` is what's shown.
+    from ..markets import apply_market
+
+    sctx, shown_products, texts, market_notes = await apply_market(sctx, products, texts, options.get("market"))
+    settings = sctx.settings
+
     # Postiz creative sources (AI video / library designs) ---------------------
     from .media_sources import SourceNotes, ai_background, ai_video, postiz_design, tiktok_music
 
     notes = SourceNotes()
+    notes.warnings.extend(market_notes)
     render_content_type = content_type
     premade: list[dict] = []          # media that already lives in Postiz (no rendering, no re-upload)
     if content_type == ContentType.AI_VIDEO:
@@ -278,7 +288,7 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
 
     fix_attempt = int(options.get(ATTEMPT_KEY) or 0)
     caption_request = CaptionRequest(
-        store_id=store_id, content_type=content_type, products=products, channels=caption_channels,
+        store_id=store_id, content_type=content_type, products=shown_products, channels=caption_channels,
         angle=post.get("angle", ""), brief=post.get("brief", "") or texts.get("brand_caption", ""),
         texts=texts, caption_overrides=options.get("caption_overrides") or {}, correlation_id=post_id,
         feedback=str(options.get(FEEDBACK_KEY) or "") if fix_attempt else "",
@@ -347,7 +357,7 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
     render_request = RenderRequest(
         store_id=store_id, post_id=post_id, content_type=render_content_type, template_key=template_key,
         formats=formats,
-        products=[_render_product(p, sctx, image_offset=image_offset) for p in products],
+        products=[_render_product(p, sctx, image_offset=image_offset) for p in shown_products],
         texts={k: str(v) for k, v in render_texts.items() if v is not None},
         brand=brand,
         logo_png=await load_store_logo(store_id) if show_logo else None,

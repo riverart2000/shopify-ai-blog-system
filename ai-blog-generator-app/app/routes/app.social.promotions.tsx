@@ -6,7 +6,7 @@ import { NetworkDot } from "../components/social/ChannelChip";
 import { useSocial } from "../components/social/context";
 import { toPicked, type PickedProduct } from "../components/social/ProductPicker";
 import {
-  PromotionForm, ThemePicker, daysBetween, formatDay, inDays, type PromotionPrefill,
+  MarketBadge, PromotionForm, ThemePicker, daysBetween, formatDay, inDays, type PromotionPrefill,
 } from "../components/social/PromotionParts";
 import { ActionBanner, Badge, Banner, Card, EmptyState, Hidden, LoadError, StatusBadge, TimeText, useBusy } from "../components/social/ui";
 import { PROMOTION_STATUS, approvalLabel, contentTypeLabel, providerLabel } from "../components/social/vocab";
@@ -211,17 +211,19 @@ function AutoOccasions({ auto }: { auto?: AutoPromotions }) {
           Every morning from {String(auto.run_hour).padStart(2, "0")}:00, an occasion starting the next day gets a real Shopify code
           ({auto.percent}% off everything, once per customer, doesn&apos;t combine with other discounts, no minimum order)
           and a promotion that starts straight away. Both run from {auto.days_before} day before the occasion until {auto.days_after} day
-          after it ends. Gemma writes the promo lines; posts go out on every connected channel.
+          after it ends. Gemma writes the promo lines; posts go out on every connected channel, at the times and prices
+          of the occasion&apos;s country (UK, US or both). The code works for every customer, wherever they are.
           {auto.skipped_labels.length ? ` Never automatic: ${auto.skipped_labels.join(", ")}.` : ""}
         </p>
         {auto.upcoming.length ? (
           <div className="sa-table-wrap">
             <table className="sa-table">
-              <thead><tr><th>Occasion</th><th>Code valid</th><th>Code</th><th>Status</th></tr></thead>
+              <thead><tr><th>Occasion</th><th>Country</th><th>Code valid</th><th>Code</th><th>Status</th></tr></thead>
               <tbody>
                 {auto.upcoming.map((item) => (
                   <tr key={`${item.theme_key}-${item.occasion_date}`}>
                     <td>{item.emoji} {item.label} <span className="sa-muted">({shortDate(item.occasion_date)})</span></td>
+                    <td className="sa-nowrap"><MarketBadge market={item.market} /></td>
                     <td>{shortDate(item.start)} – {shortDate(item.end)}</td>
                     <td><code>{item.code}</code></td>
                     <td><Badge tone={AUTO_STATUS[item.status].tone}>{AUTO_STATUS[item.status].label}</Badge></td>
@@ -296,6 +298,7 @@ function UpcomingOccasions({ calendar, promotions, today }: { calendar: Occasion
                       <strong>{occasion.label}</strong>
                       <span>{formatDay(occasion.date)}</span>
                       <Badge tone={occasion.days_until <= 14 ? "attention" : "neutral"}>{inDays(occasion.days_until)}</Badge>
+                      <MarketBadge market={occasion.market} />
                       {existing ? <Badge tone="success">Promotion planned</Badge> : null}
                     </div>
                     <span className="sa-small sa-muted">
@@ -359,6 +362,7 @@ function PromotionCard({ promotion, today, channelById, preview, result, planDay
             <strong>{promotion.name}</strong>
             <StatusBadge map={PROMOTION_STATUS} status={status} />
             <Badge tone="info">{promotion.theme_label}</Badge>
+            <MarketBadge market={promotion.market || promotion.config.market} />
           </div>
           <div className="sa-row">
             {active && status !== "ended" ? (
@@ -530,7 +534,7 @@ export default function PromotionsPage() {
 
       <s-section heading="Upcoming occasions">
         <div className="sa-stack">
-          <p className="sa-muted">Plan ahead for the big days. “Create promotion” fills in the theme, start date and length for you.</p>
+          <p className="sa-muted">Plan ahead for the big days in the UK and the US. “Create promotion” fills in the theme, start date, length and country for you.</p>
           <UpcomingOccasions calendar={data.calendar} promotions={visible} today={today} />
         </div>
       </s-section>

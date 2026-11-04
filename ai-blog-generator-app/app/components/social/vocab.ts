@@ -59,6 +59,30 @@ export const PROMOTION_STATUS: Record<string, StatusInfo> = {
   invalid: { label: "Needs fixing", tone: "critical", help: "Its settings no longer validate — open it and save again" },
 };
 
+/**
+ * A promotion's country (backend services/social_engine/markets.py). It sets when posts go out and which prices
+ * they show — never who can use the code: discount codes work for every customer, anywhere.
+ * `hours` = the posting window the market uses when the promotion keeps the usual schedule (null = Settings).
+ */
+export const MARKETS: Array<{
+  value: "GB" | "US" | "both"; label: string; flag: string; help: string; zone: string; hours: [string, string] | null;
+}> = [
+  { value: "GB", label: "UK", flag: "🇬🇧", help: "Posts on UK time with £ prices.", zone: "UK time", hours: null },
+  { value: "US", label: "US", flag: "🇺🇸", help: "Posts 9am–9pm New York time with US $ prices and American English.", zone: "New York time", hours: ["09:00", "21:00"] },
+  { value: "both", label: "UK & US", flag: "🇬🇧🇺🇸", help: "Posts in the UK afternoon and evening (the US morning), with no prices.", zone: "UK time", hours: ["12:00", "22:00"] },
+];
+
+/** Unknown or missing (older promotions) = UK. */
+export function marketInfo(market: string | null | undefined): (typeof MARKETS)[number] {
+  return MARKETS.find((item) => item.value === market) || MARKETS[0];
+}
+
+/** "🇬🇧 UK", "🇺🇸 US" or "🇬🇧🇺🇸 UK & US". */
+export function marketLabel(market: string | null | undefined): string {
+  const info = marketInfo(market);
+  return `${info.flag} ${info.label}`;
+}
+
 /** Postiz tools recorded in a post's generation (`postiz_tools`). */
 export const POSTIZ_TOOLS: Record<string, string> = {
   postiz_ai_image: "Postiz AI background scene",

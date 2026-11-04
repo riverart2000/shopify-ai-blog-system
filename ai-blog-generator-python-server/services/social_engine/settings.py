@@ -227,7 +227,7 @@ class AutoPromotionSettings(_Model):
     days_before: int = Field(1, ge=0, le=7)       # the code starts this many days before the occasion
     days_after: int = Field(1, ge=0, le=7)        # and stays valid this many days after it ends
     run_hour: int = Field(7, ge=0, le=23)         # store time; checked hourly from then on
-    skip_themes: list[str] = Field(default_factory=lambda: list(AWARENESS_THEMES))
+    skip_themes: list[str] = Field(default_factory=list)  # wellness days get sales too (Joe, 4 Nov 2026)
 
 
 class FounderVideoSettings(_Model):

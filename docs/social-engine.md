@@ -94,8 +94,28 @@ Useful SQL tables: `social_jobs`, `social_activity`, `social_api_calls`,
 `social_decisions`, `social_webhook_events`, `social_planned_posts`,
 `social_post_targets`.
 
+## UK and US promotions
+
+The store sells to the UK and the US from one web address (Shopify shows US visitors dollar prices).
+Every promotion has a `market` (`services/social_engine/markets.py`):
+
+| Market | Posts | Prices | Captions |
+|---|---|---|---|
+| `GB` (default, as before) | the store schedule, UK time | £ | British English |
+| `US` | 09:00–21:00 New York time | Shopify's own US $ price (`contextualPricing`, country US); none if missing | American English |
+| `both` | 12:00–22:00 UK time (UK afternoon/evening = US morning) | none (the offer is the message) | for both |
+
+Discount codes work for every customer anywhere, whatever the market. The occasion calendar
+(`campaigns/holidays.py`) marks each occasion's countries: shared days (Black Friday, Christmas…), festivals
+(Diwali, Eid, Lunar New Year, Hanukkah, Holi, St Patrick's) and wellness days get one promotion for both; UK-only
+(Boxing Day, UK Mother's Day, bank holidays) and US-only (Thanksgiving, 4th of July, Memorial/Labor/Presidents'
+Day, US Mother's Day, Small Business Saturday) get their own. Lunar festival dates are a table
+(`FESTIVAL_DATES`, to 2030): extend it before 2031. Wellness days now get a sale as well as a greeting.
+
 ## Adding features
 
+* **New occasion:** add an `Occasion` (with its `countries`) and its date in `campaigns/holidays.py`, and a
+  `PromotionTheme` in `campaigns/themes.py` (optional short code in `extra={"code": …}`).
 * **New auto-pilot rule:** add a `CampaignRule` subclass in
   `campaigns/rules/` with a pydantic `config_model`, decorate with
   `@register_rule`, import it in `rules/__init__.py`. The UI form is generated
