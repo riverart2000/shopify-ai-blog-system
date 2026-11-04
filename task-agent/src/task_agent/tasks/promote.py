@@ -1,6 +1,10 @@
 """Promote an event: `promote_event` reads the event pages and plans where to promote it; then one
-`promote_post` job per place (listing site, Facebook group, forum) posts it there, fully by itself, in the shared
-browser. Joe's own Social Autopilot channels get posts through the Social Engine (no browser needed).
+`promote_post` job per place (listing site, Facebook group, forum, or the event type's own Facebook/LinkedIn Page)
+posts it there, fully by itself, in Joe's Chrome.
+
+Each task has an event type (task_agent.event_types): Comedy, Bloomsbury speakers, … The type gives the agent its
+email, its own Eventbrite/Meetup logins and its Pages. Social Autopilot is only for Bio Luxe Lab, so promotions
+never post through it.
 """
 
 from __future__ import annotations
@@ -23,12 +27,10 @@ from task_agent.promotion import (
     PromotionStore,
     download_image,
     host_of,
-    match_channels,
     need_owner,
     normalize,
     pace,
     parse_local,
-    post_own_channels_target,
 )
 from task_agent.tasks.base import Finish, JobDeps, TaskSpec
 from task_agent.tasks.research import fetch_page as research_fetch_page
@@ -56,6 +58,7 @@ def parse_urls(value: Any) -> list[str]:
 
 class PromotePayload(BaseModel):
     brief: str = Field(min_length=5, max_length=6_000)  # the filled-in template text
+    event_type: str = Field("", max_length=60)  # key of an event type (task_agent.event_types)
     event_urls: list[str] = Field(min_length=1, max_length=6)
     post_from: str = Field("", max_length=2_000)
     tag: str = Field("", max_length=1_000)
@@ -135,13 +138,14 @@ class PromotionPlan(BaseModel):
 class PlacePayload(BaseModel):
     target_id: int
     promotion_id: int
-    kind: Literal["listing", "group", "forum"]
+    kind: Literal["listing", "group", "forum", "page"]
     name: str
     url: str
     why: str = ""
     account: str = ""
     event: EventDetails
     event_urls: list[str] = Field(default_factory=list)
+    event_type: str = ""
     post_from: str = ""
     tag: str = ""
     signup_email: str = ""
@@ -208,7 +212,8 @@ join, post or change anything while planning.
      Nextdoor, local forums and noticeboards.
    Check each one is real, active and suits this event, and give its exact address. Never invent a place or an
    address: only use ones you saw in a search result or a page.
-3. For each place say which of Joe's accounts to use there (from the accounts he listed), if it matters.
+3. For each place say which of Joe's accounts to use there, if it matters (the event type's own logins, or his
+   shared Facebook login). Don't list the event type's own Facebook Page or LinkedIn Page: they're added for you.
 Return the plan when you're done.
 """
 
@@ -298,35 +303,37 @@ async def prepare_plan(deps: JobDeps, payload: PromotePayload) -> str:
                 "These places worked for the last event and will be used again automatically, so don't list them:\n"
                 + listed
             )
-    channels = await _channels(deps)
-    if channels:
-        names = ", ".join(f"{c['provider']} {c.get('profile') or c.get('name')}" for c in channels)
-        sections.append(
-            f"Joe's own social accounts ({names}) get posts automatically through Social Autopilot: don't list them."
-        )
+    kind_text = type_section(deps, payload.event_type)
+    if kind_text:
+        sections.insert(0, kind_text)
     return "\n\n".join(sections)
 
 
-async def _channels(deps: JobDeps) -> list[dict[str, Any]]:
-    from task_agent.social import SocialClient, SocialError
+def type_section(deps: JobDeps, key: str) -> str:
+    """What the agent is told about the task's event type: email, Pages, logins (no passwords)."""
+    if not key or deps.store is None:
+        return ""
+    from task_agent.event_types import EventTypeStore, describe_for_agent
 
-    client = SocialClient(deps.settings)
-    if not client.configured:
-        return []
     try:
-        data = await client.get("/channels")
-    except SocialError:
-        return []
-    return [c for c in data.get("channels") or [] if isinstance(c, dict)]
+        kind = EventTypeStore(deps.store).get(key)
+    except LookupError:
+        return f"(The event type '{key}' no longer exists; use the shared logins only.)"
+    logins = deps.accounts.list(event_type=key) if deps.accounts is not None else []
+    return describe_for_agent(kind, logins)
+
+
+async def prepare_place(deps: JobDeps, payload: PlacePayload) -> str:
+    return type_section(deps, payload.event_type)
 
 
 def render_plan_prompt(payload: PromotePayload) -> str:
-    accounts = payload.post_from.strip() or "(none listed: the shared browser's logins)"
+    accounts = payload.post_from.strip() or "(the event type's logins below, and Joe's shared Facebook login)"
     return (
         f"Joe's request:\n{payload.brief}\n\n"
         f"Event links:\n" + "\n".join(f"- {u}" for u in payload.event_urls) + "\n"
         f"Joe's accounts to post from:\n{accounts}\n"
-        f"Handles to tag: {payload.tag.strip() or '(none)'}\n"
+        f"Handles to tag: {payload.tag.strip() or '(see the event type, if any)'}\n"
         f"Our own event: {'yes' if payload.my_event else 'no, someone else runs it: only share it, no listings'}\n"
         f"Find up to {payload.max_places} places.\n"
         + (f"Notes from Joe: {payload.notes}\n" if payload.notes.strip() else "")
@@ -412,7 +419,8 @@ async def plan_finished(fin: Finish) -> None:
         child = PlacePayload(
             target_id=target_id, promotion_id=job.id, kind=place.kind, name=place.name, url=place.url,
             why=place.why, account=place.account, event=plan.event, event_urls=payload.event_urls,
-            post_from=payload.post_from, tag=payload.tag, signup_email=payload.signup_email,
+            event_type=payload.event_type, post_from=payload.post_from, tag=payload.tag,
+            signup_email=payload.signup_email,
             my_event=payload.my_event, notes=payload.notes, image_path=image_path,
         )  # fmt: skip
         child_id, _ = store.enqueue(
@@ -427,23 +435,50 @@ async def plan_finished(fin: Finish) -> None:
         )
         ps.update(target_id, status="queued", job_id=child_id, scheduled_at=iso_utc(when))
 
-    # Joe's own channels through Social Autopilot.
-    if not too_late:
-        from task_agent.social import SocialClient, SocialError
+    # The event type's own Facebook Page and LinkedIn Page (posted in the browser, like any other place).
+    # Social Autopilot is only for Bio Luxe Lab, so it's never used here.
+    if not too_late and payload.event_type:
+        from task_agent.event_types import EventTypeStore
 
-        client = SocialClient(settings)
-        channels: list[dict[str, Any]] = []
-        if client.configured:
-            try:
-                channels = match_channels((await client.get("/channels")).get("channels") or [], payload.post_from)
-            except SocialError as exc:
-                log_note = f"Couldn't reach Social Autopilot: {exc}"
-                ps.add(job.id, kind="own_social", name="Your channels", status="failed", note=log_note[:300])
-        if channels:
-            names = ", ".join(f"{c.get('provider')} {c.get('profile') or c.get('name')}" for c in channels)
-            target_id = ps.add(job.id, kind="own_social", name=f"Your channels: {names}"[:200],
-                               data={"channel_ids": [str(c["channel_id"]) for c in channels]})  # fmt: skip
-            await post_own_channels_target(store, settings, store.require(job.id), target_id)
+        try:
+            kind = EventTypeStore(store).get(payload.event_type)
+        except LookupError:
+            kind = None
+        pages = []
+        if kind and kind["facebook_page"]:
+            pages.append((f"Facebook Page: {kind['facebook_page']}", _page_url(kind["facebook_page"], "facebook")))
+        if kind and kind["linkedin_page"]:
+            pages.append((f"LinkedIn Page: {kind['linkedin_page']}", _page_url(kind["linkedin_page"], "linkedin")))
+        for name, url in pages:
+            if normalize(url) in seen_urls:
+                continue
+            order += 1
+            when = start + timedelta(seconds=order)
+            target_id = ps.add(job.id, kind="page", name=name[:200], url=url, why="This event type's own Page",
+                               account="Joe's shared login, posting as the Page", source="own")  # fmt: skip
+            child = PlacePayload(
+                target_id=target_id, promotion_id=job.id, kind="page", name=name, url=url,
+                why="This event type's own Page", account="Joe's shared login, posting as the Page",
+                event=plan.event, event_urls=payload.event_urls, event_type=payload.event_type,
+                my_event=payload.my_event, notes=payload.notes, image_path=image_path,
+            )  # fmt: skip
+            child_id, _ = store.enqueue(
+                spec.type, f"{plan.event.title[:60]} → {name[:50]}", child.model_dump(mode="json"), spec.tool_names,
+                priority=1, run_at=when, created_by="promotion", parent_id=job.id,
+            )  # fmt: skip
+            ps.update(target_id, status="queued", job_id=child_id, scheduled_at=iso_utc(when))
+
+
+def _page_url(value: str, site: str) -> str:
+    """A Page's address: as given if it's a link, else a search for it on that site."""
+    value = value.strip()
+    if value.startswith("http"):
+        return value
+    from urllib.parse import quote_plus
+
+    if site == "facebook":
+        return f"https://www.facebook.com/search/pages/?q={quote_plus(value)}"
+    return f"https://www.linkedin.com/search/results/companies/?keywords={quote_plus(value)}"
 
 
 def now_utc() -> datetime:
@@ -461,19 +496,29 @@ def iso_utc(value: datetime) -> str:
 # ── promote_post: one place ─────────────────────────────────────────────────
 
 POST_INSTRUCTIONS = """\
-Your job: promote one event in one place on the web, by yourself, in the shared browser (it's often already
-logged in). Work carefully, like a person who wants it done right first time.
+Your job: promote one event in one place on the web, by yourself, in Joe's own Chrome (it's usually already
+logged in). Work carefully, like a person who wants it done right first time. Only use tabs you opened.
 
-1. Open the place. If you need to log in: saved_logins lists Joe's saved logins and type_saved_login fills a
-   username or password (you never see passwords). If there's no account and organisers can join free, sign up
-   with the sign-up email: call save_new_login first, then use type_saved_login for the password box.
-2. If only a person can do the next step (a captcha, a code sent by text or email, a verification email, a
-   2-step login, a payment), call ask_joe and say exactly what he must do. Never guess codes.
+1. Open the place. Logins: saved_logins lists the ones for this task (this event type's own, plus shared ones such
+   as Facebook) and type_saved_login fills a username or password (you never see passwords).
+   Eventbrite and Meetup: Joe has a separate account for each event type, and Chrome may be logged in to another
+   type's account. Before creating anything, open the account or profile menu and check whose account it is. If
+   it isn't this event type's account (its email is given below), log out and log in with this type's saved login.
+   If there's no account and organisers can join free, sign up with this event type's email: call save_new_login
+   first, then use type_saved_login for the password box.
+2. Codes and verification emails: use check_inbox (this type's inbox) to get the code or link the site just sent;
+   open a link with open_page. If only a person can do the next step (a captcha, a code sent by text, a 2-step
+   login, a payment, or the inbox has nothing after a second check), call ask_joe and say exactly what he must do.
+   Never guess codes.
 3. Check it isn't already there (search the site or group for the event's title). If it is, finish with status
    already_listed and its address.
 4. kind "listing": create the event as its organiser with exactly the event's details: title, start and end
    (UK time), venue and address (or online), price, booking link, description, category and the event picture
    (upload_event_image). Free listings only.
+   kind "page": this is the event type's own Facebook or LinkedIn Page. Post as the Page, not as Joe: on Facebook
+   switch to the Page (profile menu → the Page's name) or use the Page's own "Create post"; on LinkedIn use the
+   Page's admin view ("Create a post" as the Page). Write a short post with what, when, where, price and the
+   booking link, with the event picture if you can. Check the Page hasn't already posted this event.
    kind "group" or "forum": read the rules first (About, rules or sidebar). If they don't allow event or
    promotional posts, finish with status skipped and say why. If Joe isn't a member, ask to join this one group;
    if that needs approval, finish skipped with note "asked to join". Otherwise write a short, friendly post in
@@ -495,7 +540,7 @@ def render_post_prompt(p: PlacePayload) -> str:
         f"Account to use there: {p.account}" if p.account else "",
         f"Joe's accounts: {' '.join(p.post_from.split()) or '(the shared browser logins)'}",
         f"Handles to tag: {' '.join(p.tag.split()) or '(none)'}",
-        f"Email for new sign-ups: {p.signup_email or '(none given: use a saved login, or ask_joe)'}",
+        f"Email for new sign-ups: {p.signup_email or _signup_fallback(p)}",
         "It's our own event." if p.my_event else "Someone else runs this event: share it, don't list it as ours.",
         f"Event picture: {'ready for upload_event_image' if p.image_path else 'none'}",
         f"Notes from Joe: {p.notes}" if p.notes.strip() else "",
@@ -510,6 +555,10 @@ def render_post_prompt(p: PlacePayload) -> str:
         ),
     ]
     return "\n".join(line for line in lines if line is not None and (line or line == ""))
+
+
+def _signup_fallback(p: PlacePayload) -> str:
+    return "this event type's email (below)" if p.event_type else "(none given: use a saved login, or ask_joe)"
 
 
 def check_place(ctx: RunContext[JobDeps], result: PlaceResult) -> PlaceResult:
@@ -598,8 +647,18 @@ PROMOTE_EVENT = TaskSpec(
     render_prompt=render_plan_prompt,
     configure=_configure_plan,
     prompt_field="brief",
-    value_fields=("event_urls", "post_from", "tag", "signup_email", "my_event", "notes", "reuse_from"),
+    value_fields=(
+        "event_type",
+        "event_urls",
+        "post_from",
+        "tag",
+        "signup_email",
+        "my_event",
+        "notes",
+        "reuse_from",
+    ),
     sample_values={
+        "event_type": "comedy",
         "event_urls": "https://www.eventbrite.co.uk/e/example",
         "signup_email": "events@example.com",
         "my_event": "yes",
@@ -626,6 +685,7 @@ PROMOTE_POST = TaskSpec(
     render_prompt=render_post_prompt,
     configure=_configure_post,
     prompt_field="name",
+    prepare=prepare_place,
     on_start=place_starting,
     on_finish=place_finished,
     history_processors=(b.keep_recent_pages,),

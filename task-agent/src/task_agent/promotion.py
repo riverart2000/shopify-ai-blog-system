@@ -25,8 +25,11 @@ from task_agent.db import JobError, JobStore, iso, now
 
 log = structlog.get_logger()
 
-KINDS = ("listing", "group", "forum", "own_social")
-KIND_LABELS = {"listing": "Listing site", "group": "Facebook group", "forum": "Forum", "own_social": "Your channels"}
+KINDS = ("listing", "group", "forum", "page", "own_social")
+KIND_LABELS = {
+    "listing": "Listing site", "group": "Facebook group", "forum": "Forum", "page": "Your Page",
+    "own_social": "Your channels",
+}  # fmt: skip
 TERMINAL = ("posted", "already_listed", "skipped", "failed")
 DONE_OK = ("posted", "already_listed")
 WAIT_FOR_JOE = timedelta(hours=24)

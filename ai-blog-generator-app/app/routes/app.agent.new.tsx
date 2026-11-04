@@ -164,8 +164,32 @@ function isYesNo(field: TemplateField): boolean {
   return /^(yes|no)$/i.test((field.default ?? "").trim());
 }
 
+/** The choice to start on: the saved/default value when it's still offered, else the first one (or none when optional). */
+function startingOption(field: TemplateField, value: string): string {
+  const options = field.options || [];
+  const offered = (candidate: string) => options.some((option) => option.value === candidate);
+  if (value && offered(value)) return value;
+  if (field.default && offered(field.default)) return field.default;
+  return field.required ? options[0]?.value ?? "" : "";
+}
+
 function FieldInput({ field, value }: { field: TemplateField; value: string }) {
   const name = `field:${field.name}`;
+  if (field.options) {
+    if (!field.options.length) {
+      return (
+        <span className="sa-error-text">
+          Nothing to choose yet. <Link to="/app/agent/settings#event-types">Add an event type in Settings first</Link>.
+        </span>
+      );
+    }
+    return (
+      <select name={name} defaultValue={startingOption(field, value)} required={field.required} aria-required={field.required}>
+        {!field.required ? <option value="">None</option> : null}
+        {field.options.map((option) => <option key={option.value} value={option.value}>{option.label || option.value}</option>)}
+      </select>
+    );
+  }
   if (field.multiline) {
     return <textarea name={name} rows={4} defaultValue={value} required={field.required} aria-required={field.required} />;
   }
@@ -192,13 +216,18 @@ function TaskForm({ template, result, clone }: { template: Template; result?: Ne
       {template.fields.length ? (
         <div className="sa-grid-2">
           {template.fields.map((field) => {
+            const value = valueFor(field);
+            // A copied task's choice that's no longer offered (switched off or deleted): say so, don't swap it silently.
+            const copied = clone?.values?.[field.name] || "";
+            const gone = Boolean(field.options?.length && copied && !field.options.some((option) => option.value === copied));
             const box = (
               <Field
                 key={field.name}
                 label={<>{field.label}{field.required ? <span className="sa-error-text"> *</span> : <span className="sa-muted"> (optional)</span>}</>}
+                help={gone ? `The copied task used “${copied}”, which isn't available any more (switched off or deleted). Pick one.` : undefined}
                 error={missing.has(field.name) ? "Please fill this in." : undefined}
               >
-                <FieldInput field={field} value={valueFor(field)} />
+                <FieldInput field={field} value={value} />
               </Field>
             );
             // Lists of links, accounts and notes get the full width.

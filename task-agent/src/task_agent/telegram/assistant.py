@@ -227,7 +227,15 @@ async def task_result(rc: RunContext[AssistantDeps], job_id: int) -> str:
 
 
 async def templates(rc: RunContext[AssistantDeps]) -> str:
-    """Task templates Joe can queue, with the blanks each one needs."""
+    """Task templates Joe can queue, with the blanks each one needs (and the choices for list fields)."""
+    options = rc.deps.ctx.templates.field_options()
+
+    def field(f: dict[str, Any], choices: dict[str, list[dict[str, str]]]) -> str:
+        text = f["name"] + ("" if f["required"] else " (optional)")
+        if f["name"] in choices:
+            text += " — one of: " + ", ".join(f"{o['value']} ({o['label']})" for o in choices[f["name"]])
+        return text
+
     return _data(
         "templates",
         [
@@ -235,7 +243,7 @@ async def templates(rc: RunContext[AssistantDeps]) -> str:
                 "key": t.key,
                 "name": t.name,
                 "description": t.description,
-                "fields": [f["name"] + ("" if f["required"] else " (optional)") for f in t.fields],
+                "fields": [field(f, t.choices(options)) for f in t.fields],
             }
             for t in rc.deps.ctx.templates.list()
             if t.enabled

@@ -5,7 +5,6 @@ No real browser, model or internet: a fake browser hub, scripted models and a mo
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -117,10 +116,12 @@ def plan_output(starts: datetime, places: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-def promote_job(store, *, my_event: bool = True, post_from: str = "", reuse_from: int | None = None):
+def promote_job(
+    store, *, my_event: bool = True, post_from: str = "", reuse_from: int | None = None, event_type: str = ""
+):
     payload = PromotePayload(
         brief="Promote this event", event_urls=[EVENT_URL], post_from=post_from, tag="@hydeparkbookclub",
-        signup_email="events@bioluxelab.com", my_event=my_event, reuse_from=reuse_from,
+        signup_email="events@bioluxelab.com", my_event=my_event, reuse_from=reuse_from, event_type=event_type,
     ).model_dump(mode="json")  # fmt: skip
     job_id, _ = store.enqueue("promote_event", "Promote an event", payload, [], template_key="promote-event")
     return job_id
@@ -134,24 +135,39 @@ async def finish_plan(store, settings, job_id, output) -> None:
 # ── template and payload ────────────────────────────────────────────────────
 
 
-def test_template_takes_links_and_answers_as_they_are(store):
+def test_template_takes_the_event_type_links_and_answers(store):
     templates = TemplateStore(store)
     template = templates.get("promote-event")
     fields = {f["name"]: f for f in template.fields}
     assert fields["event_urls"]["multiline"] and fields["event_urls"]["label"].startswith("Event links")
-    assert fields["my_event"]["default"] == "yes" and not fields["post_from"]["required"]
-    _, payload = templates.build_job(
+    assert fields["my_event"]["default"] == "yes" and fields["event_type"]["required"]
+    assert "post_from" not in fields and "signup_email" not in fields  # the event type gives these now
+    title, payload = templates.build_job(
         template,
         {
+            "event_type": "Comedy",  # by name or key
             "event_urls": f"{EVENT_URL}\nhttps://www.meetup.com/leeds-breath/events/9/, and again {EVENT_URL}",
-            "post_from": "Facebook: joe.bains\nInstagram: @bioluxelab2026",
-            "signup_email": "events@bioluxelab.com",
             "my_event": "No",
         },
     )
     assert payload["event_urls"] == [EVENT_URL, "https://www.meetup.com/leeds-breath/events/9/"]
-    assert payload["my_event"] is False and "Instagram: @bioluxelab2026" in payload["post_from"]
-    assert listed_handles(payload["post_from"]) == {"joe.bains", "bioluxelab2026"}
+    assert payload["my_event"] is False and payload["event_type"] == "comedy"
+    assert "Event type: Comedy." in payload["brief"] and title == "Promote an event: Comedy"
+    with pytest.raises(ValueError, match="no event type 'cooking'"):
+        templates.build_job(template, {"event_type": "cooking", "event_urls": EVENT_URL})
+
+
+def test_only_promotions_get_the_event_type_list(store):
+    templates = TemplateStore(store)
+    options = templates.field_options()
+    assert [o["label"] for o in options["event_type"]] == ["Biohacking", "Bloomsbury speakers", "Comedy", "Juggling"]
+    promote = {f["name"]: f for f in templates.get("promote-event").to_dict(options)["fields"]}
+    listings = {f["name"]: f for f in templates.get("find-event-listings").to_dict(options)["fields"]}
+    assert promote["event_type"]["options"] and "options" not in listings["event_type"]  # "a talk" stays free text
+
+
+def test_listed_handles_are_read_from_account_lines():
+    assert listed_handles("Facebook: joe.bains\nInstagram: @bioluxelab2026") == {"joe.bains", "bioluxelab2026"}
 
 
 def test_a_copy_of_the_promote_template_can_be_saved(store):
@@ -211,7 +227,12 @@ def test_pacing_continues_after_other_promotions_group_posts():
 # ── planning ────────────────────────────────────────────────────────────────
 
 
-async def test_plan_makes_places_reuses_last_time_and_posts_on_own_channels(store, social_settings):
+async def test_plan_makes_places_reuses_last_time_and_adds_the_types_pages(store, social_settings):
+    from task_agent.event_types import EventTypeStore
+
+    EventTypeStore(store).save(
+        {"facebook_page": "https://www.facebook.com/joebainscomedy", "linkedin_page": "Joe Bains Comedy"}, key="comedy"
+    )
     old = promote_job(store)
     old_targets = PromotionStore(store)
     reused = old_targets.add(old, kind="listing", name="AllEvents", url="https://allevents.in/leeds/old")
@@ -219,7 +240,7 @@ async def test_plan_makes_places_reuses_last_time_and_posts_on_own_channels(stor
     failed = old_targets.add(old, kind="forum", name="r/Leeds", url="https://www.reddit.com/r/Leeds/")
     old_targets.update(failed, status="failed")
 
-    job_id = promote_job(store, reuse_from=old)
+    job_id = promote_job(store, reuse_from=old, event_type="comedy")
     starts = now() + timedelta(days=6)
     output = plan_output(
         starts,
@@ -232,11 +253,10 @@ async def test_plan_makes_places_reuses_last_time_and_posts_on_own_channels(stor
         ],
     )
     with respx.mock(assert_all_called=False) as mock:
-        mock.get(f"{SE}/channels").mock(return_value=httpx.Response(200, json={"channels": CHANNELS}))
-        posts = mock.post(f"{SE}/posts").mock(
-            return_value=httpx.Response(200, json={"ok": True, "post_id": "p1", "scheduled_at": 1793700000})
-        )
+        channels = mock.get(f"{SE}/channels").mock(return_value=httpx.Response(200, json={"channels": CHANNELS}))
+        posts = mock.post(f"{SE}/posts").mock(return_value=httpx.Response(200, json={"ok": True}))
         await finish_plan(store, social_settings, job_id, output)
+    assert channels.call_count == 0 and posts.call_count == 0  # Social Autopilot is only for Bio Luxe Lab
 
     targets = PromotionStore(store).for_promotion(job_id)
     names = [t["name"] for t in targets]
@@ -244,19 +264,19 @@ async def test_plan_makes_places_reuses_last_time_and_posts_on_own_channels(stor
     assert sum(1 for t in targets if "allevents" in t["url"]) == 1
     assert store.require(job_id).title == "Promote: Breathwork in Leeds"
     children = store.children(job_id)
-    assert len(children) == 5 and all(c.type == "promote_post" and c.parent_id == job_id for c in children)
+    assert len(children) == 7 and all(c.type == "promote_post" and c.parent_id == job_id for c in children)
+    assert all(c.payload["event_type"] == "comedy" for c in children)
+    pages = [t for t in targets if t["kind"] == "page"]
+    assert [p["url"] for p in pages] == [
+        "https://www.facebook.com/joebainscomedy",
+        "https://www.linkedin.com/search/results/companies/?keywords=Joe+Bains+Comedy",
+    ]
+    assert all(p["status"] == "queued" and p["source"] == "own" for p in pages)
+    assert not any(t["kind"] == "own_social" for t in targets)
     groups = sorted(datetime.fromisoformat(t["scheduled_at"]) for t in targets if t["kind"] in ("group", "forum"))
     assert all(b - a >= timedelta(minutes=20) for a, b in zip(groups, groups[1:], strict=False))
     meetup = next(c for c in children if c.payload["name"] == "Meetup")
     assert meetup.payload["event"]["title"] == "Breathwork in Leeds" and meetup.priority == 1
-
-    own = next(t for t in targets if t["kind"] == "own_social")
-    assert own["status"] == "posted" and "reminder" in own["note"]
-    assert posts.call_count == 2  # one soon, one the day before
-    body = json.loads(posts.calls[0].request.content)
-    assert body["approval_mode"] == "ai_review" and body["channel_ids"] == ["fb", "ig"]
-    assert body["link_url"] == EVENT_URL and body["texts"]["occasion"] == "Breathwork in Leeds"
-    assert "@hydeparkbookclub" in body["brief"]
 
 
 async def test_someone_elses_event_is_shared_but_not_listed(store, social_settings):
@@ -460,12 +480,7 @@ async def client(store, settings):
 
 
 async def test_clone_reuses_places_and_keeps_values(client, store):
-    values = {
-        "event_urls": EVENT_URL,
-        "post_from": "Facebook: joe.bains",
-        "signup_email": "events@bioluxelab.com",
-        "my_event": "yes",
-    }
+    values = {"event_type": "comedy", "event_urls": EVENT_URL, "my_event": "yes"}
     first = (await client.post("/api/jobs", json={"template_key": "promote-event", "values": values})).json()["job"]
     detail = (await client.get(f"/api/jobs/{first['id']}")).json()["job"]
     assert detail["template_values"] == values and detail["promotion"]["targets"] == []

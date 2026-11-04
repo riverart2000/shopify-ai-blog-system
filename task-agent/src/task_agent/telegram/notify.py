@@ -243,6 +243,9 @@ class Notifier:
             first = datetime.fromisoformat(paced[0]).timestamp()
             last = datetime.fromisoformat(paced[-1]).timestamp()
             lines.append(f"• {len(paced)} group/forum post(s), {self.ctx.when(first)} to {self.ctx.when(last)}")
+        pages = [t for t in queued if t["kind"] == "page"]
+        if pages:
+            lines.append("• Your Pages: " + ", ".join(t["name"] for t in pages))
         own = [t for t in targets if t["kind"] == "own_social"]
         for t in own:
             lines.append(f"• {t['name']}: {t['status'].replace('_', ' ')}")

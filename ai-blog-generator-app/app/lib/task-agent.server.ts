@@ -3,7 +3,10 @@
  * Contract: task-agent/API.md. The browser never sees the key; only loaders/actions call this.
  */
 import { seg } from "./task-agent.shared";
-import type { AgentActionResult, JobActionResponse } from "./task-agent.types";
+import type {
+  AgentActionResult, EventTypeInput, EventTypeSaveResponse, EventTypeTestResponse, EventTypesResponse, JobActionResponse,
+  MessageResponse,
+} from "./task-agent.types";
 
 export * from "./task-agent.types";
 export { seg } from "./task-agent.shared";
@@ -156,6 +159,28 @@ export async function runAgentIntent(
     if (error instanceof Response) throw error;
     return { ok: false, intent, error: errorMessage(error, "That didn't work."), ...tag };
   }
+}
+
+// ------------------------------------------------------------------ event types
+
+/** Every event type (with its logins) and the logins all types share (Facebook, LinkedIn). */
+export function listEventTypes(): Promise<EventTypesResponse> {
+  return taFetch<EventTypesResponse>("/event-types");
+}
+
+/** Create (no `key`) or update (with `key`) an event type. Leave `imap_password` out to keep the saved one. */
+export function saveEventType(body: EventTypeInput): Promise<EventTypeSaveResponse> {
+  return taFetch<EventTypeSaveResponse>("/event-types", { body });
+}
+
+/** Also removes that type's logins and their saved passwords. */
+export function deleteEventType(key: string): Promise<MessageResponse> {
+  return taFetch<MessageResponse>(`/event-types/${seg(key)}/delete`, { method: "POST" });
+}
+
+/** Logs in to the type's inbox (IMAP) and reads nothing. */
+export function testEventTypeEmail(key: string): Promise<EventTypeTestResponse> {
+  return taFetch<EventTypeTestResponse>(`/event-types/${seg(key)}/test-email`, { method: "POST", timeoutMs: 60_000 });
 }
 
 // ------------------------------------------------------------------ form helpers

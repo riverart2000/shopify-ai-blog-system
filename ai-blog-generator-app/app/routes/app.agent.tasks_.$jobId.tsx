@@ -383,6 +383,7 @@ export default function AgentTaskDetail() {
           {job.started_at ? <><dt>Took</dt><dd>{elapsed(job.started_at, job.finished_at)}{job.status === "running" ? " so far" : ""}</dd></> : null}
           <dt>Attempts</dt><dd>{job.attempts}</dd>
           {job.template_key ? <><dt>Template</dt><dd>{job.template_key}</dd></> : null}
+          {job.event_type ? <><dt>Event type</dt><dd>{job.event_type.name || job.event_type.key}</dd></> : null}
         </dl>
         {job.error ? (
           <div style={{ marginTop: 10 }}>

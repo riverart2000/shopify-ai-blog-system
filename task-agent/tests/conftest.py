@@ -47,3 +47,11 @@ def memory_keyring(monkeypatch) -> MemoryKeyring:
     monkeypatch.setattr(keyring, "get_password", lambda s, n: kr.data.get((s, n)))
     monkeypatch.setattr(keyring, "delete_password", delete)
     return kr
+
+
+@pytest.fixture(autouse=True)
+def no_brave(monkeypatch) -> None:
+    """Tests never call the Brave Search API (a real key may be in task-agent/.env)."""
+    from task_agent.tools import web
+
+    monkeypatch.setattr(web, "brave_key", lambda: "")

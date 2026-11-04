@@ -92,10 +92,10 @@ Passwords are write-only: they go to the macOS Keychain and are never returned.
 | POST | `/api/telegram/unlink` | | `{"telegram", "message"}`: the next /start from the username links again |
 | POST | `/api/telegram/disconnect` | | `{"telegram", "message"}`: removes the token |
 
-## Event promotion, cloning and the shared browser
+## Event promotion, cloning and the browser
 
-All agents share **one browser profile** (`profiles/shared`, real Google Chrome). A login done once — by Joe in a
-login window, or by an agent — is used by every later task.
+Agents work in Joe's everyday Chrome through the OpenClaw extension (`BROWSER=chrome`, the default), or in a
+separate agent profile (`BROWSER=own`, `profiles/shared`).
 
 **JobSummary** also has `"parent_id": int|null`. A promotion's per-place jobs have `parent_id` = the promotion's
 job id; `GET /api/jobs` hides them unless `?include_children=1`.
@@ -116,8 +116,8 @@ title Joe typed is in `"_title"`) and
 
 **Target** (one place to promote on)
 ```json
-{"id": 5, "kind": "listing|group|forum|own_social", "name": "AllEvents", "url": "https://…", "why": "…",
- "account": "Facebook: joe.bains", "source": "found|reused",
+{"id": 5, "kind": "listing|group|forum|page|own_social", "name": "AllEvents", "url": "https://…", "why": "…",
+ "account": "Facebook: joe.bains", "source": "found|reused|own",
  "status": "planned|queued|working|posted|already_listed|needs_you|skipped|failed",
  "job_id": 14|null, "scheduled_at": "…|null", "result_url": "…|null", "note": "…|null",
  "need": {"site": "meetup", "url": "https://…", "reason": "Enter the code Meetup emailed you"}|null,
@@ -126,7 +126,12 @@ title Joe typed is in `"_title"`) and
 `needs_you`: the page is open in the shared browser on the Mac (and a Telegram card was sent). After Joe finishes
 there, `done` puts the place back in the queue straight away; it otherwise waits up to 24 hours, then is skipped.
 
-**Template** `fields[]` items also have `"multiline": bool` (show a textarea: lists of URLs, accounts, notes).
+**Template** `fields[]` items also have `"multiline": bool` (show a textarea: lists of URLs, accounts, notes) and,
+for list fields, `"options": [{"value", "label"}]` (show a drop-down). Only `promote_event` templates get options for
+`event_type` (a research template's free-text "event_type", e.g. "talk", stays free text).
+
+`page` targets are the event type's own Facebook/LinkedIn Page (`source` "own"). `own_social` targets are from
+before event types (Social Autopilot is only for Bio Luxe Lab now) and are no longer created.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
@@ -140,3 +145,25 @@ there, `done` puts the place back in the queue straight away; it otherwise waits
 **BrowserStatus**: `{"running": bool, "visible": bool, "open_tabs": int, "login_tabs": ["meetup", …],
 "profile_saved": bool, "busy_job_id": int|null}`. `GET /api/accounts` also returns `"browser": BrowserStatus`.
 `POST /api/accounts/{site}/login-window` now opens that site's login page as a tab in the shared browser.
+
+
+## Event types
+
+**EventType**
+```json
+{"key": "comedy", "name": "Comedy", "email": "info@…", "imap_host": "imap.gmail.com", "imap_port": 993,
+ "imap_username": "", "has_imap_password": true, "facebook_page": "…", "linkedin_page": "…",
+ "tag_handles": "…", "audience": "…", "enabled": true, "logins": [Account],
+ "last_test_at": "…|null", "last_test_ok": true|null, "last_test_message": "…", "updated_at": "…"}
+```
+**Account** also has `"event_type"` (a type key, or `""` = shared by every type) and `"event_type_name"`.
+**JobDetail** also has `"event_type": {"key", "name"}|null`. **BrowserStatus** also has `"mode": "chrome"` and
+`"offline": str|null` (why Joe's Chrome can't be used right now).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/event-types` | | `{"event_types": [EventType], "shared_logins": [Account]}` |
+| POST | `/api/event-types` | `{"key"?, "name"?, "email"?, "imap_host"?, "imap_port"?, "imap_username"?, "imap_password"? ("" keeps it), "facebook_page"?, "linkedin_page"?, "tag_handles"?, "audience"?, "enabled"?}` | `{"event_type", "message"}` (no key = new) |
+| POST | `/api/event-types/{key}/delete` | | `{"message"}`; also removes that type's own logins and passwords |
+| POST | `/api/event-types/{key}/test-email` | | `{"ok", "message", "event_type"}` (logs in to IMAP, reads nothing) |
+| POST | `/api/accounts` | also `"event_type"?: str` | a new login for a type gets a site key like `eventbrite-comedy` |

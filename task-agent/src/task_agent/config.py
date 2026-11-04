@@ -40,6 +40,13 @@ class Settings(BaseSettings):
 
     # Tools
     fetch_max_chars: int = 12_000  # page text handed to the model per fetch
+    brave_api_key: SecretStr = SecretStr("")  # env BRAVE_API_KEY: Brave Search for web_search (else DuckDuckGo)
+
+    # Browser for agents: "chrome" = Joe's everyday Chrome (his logins) through the OpenClaw extension;
+    # "own" = a separate Chrome profile the agents keep in profiles/shared.
+    browser: str = "chrome"
+    openclaw_dir: Path = Path.home() / "openclaw"
+    openclaw_browser_profile: str = "chrome"  # the OpenClaw browser profile that is the extension relay
 
     # Private API for the Shopify admin app (this Mac only)
     api_host: str = "127.0.0.1"

@@ -45,20 +45,16 @@ CREATE TABLE IF NOT EXISTS agent_jobs (
 );
 """
 
-SCHEMA = (
-    JOBS_TABLE
-    + """
-CREATE INDEX IF NOT EXISTS idx_agent_jobs_ready ON agent_jobs (status, run_at, priority);
-
+TARGETS_TABLE = """
 CREATE TABLE IF NOT EXISTS promotion_targets (
     id            INTEGER PRIMARY KEY,
     promotion_id  INTEGER NOT NULL REFERENCES agent_jobs (id),
-    kind          TEXT NOT NULL CHECK (kind IN ('listing', 'group', 'forum', 'own_social')),
+    kind          TEXT NOT NULL CHECK (kind IN ('listing', 'group', 'forum', 'page', 'own_social')),
     name          TEXT NOT NULL,
     url           TEXT NOT NULL DEFAULT '',
     why           TEXT NOT NULL DEFAULT '',
     account       TEXT NOT NULL DEFAULT '',
-    source        TEXT NOT NULL DEFAULT 'found' CHECK (source IN ('found', 'reused')),
+    source        TEXT NOT NULL DEFAULT 'found' CHECK (source IN ('found', 'reused', 'own')),
     status        TEXT NOT NULL DEFAULT 'planned'
                   CHECK (status IN ('planned', 'queued', 'working', 'posted', 'already_listed', 'needs_you',
                                     'skipped', 'failed')),
@@ -75,7 +71,16 @@ CREATE TABLE IF NOT EXISTS promotion_targets (
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_promotion_targets ON promotion_targets (promotion_id);
+"""
+
+SCHEMA = (
+    JOBS_TABLE
+    + """
+CREATE INDEX IF NOT EXISTS idx_agent_jobs_ready ON agent_jobs (status, run_at, priority);
+
+"""
+    + TARGETS_TABLE
+    + """CREATE INDEX IF NOT EXISTS idx_promotion_targets ON promotion_targets (promotion_id);
 CREATE INDEX IF NOT EXISTS idx_promotion_targets_job ON promotion_targets (job_id);
 
 CREATE TABLE IF NOT EXISTS agent_steps (
@@ -137,6 +142,25 @@ CREATE TABLE IF NOT EXISTS email_account (
     updated_at        TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS event_types (
+    key               TEXT PRIMARY KEY,
+    name              TEXT NOT NULL,
+    email             TEXT NOT NULL DEFAULT '',
+    imap_host         TEXT NOT NULL DEFAULT '',
+    imap_port         INTEGER NOT NULL DEFAULT 993,
+    imap_username     TEXT NOT NULL DEFAULT '',
+    facebook_page     TEXT NOT NULL DEFAULT '',
+    linkedin_page     TEXT NOT NULL DEFAULT '',
+    tag_handles       TEXT NOT NULL DEFAULT '',
+    audience          TEXT NOT NULL DEFAULT '',
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    last_test_at      TEXT,
+    last_test_ok      INTEGER,
+    last_test_message TEXT NOT NULL DEFAULT '',
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
@@ -152,6 +176,14 @@ CREATE TABLE IF NOT EXISTS worker_state (
 """
 )
 
+# Joe's event types, added once when the event_types table is first made (he can rename or remove them).
+DEFAULT_EVENT_TYPES = (
+    ("comedy", "Comedy"),
+    ("bloomsbury-speakers", "Bloomsbury speakers"),
+    ("biohacking", "Biohacking"),
+    ("juggling", "Juggling"),
+)
+
 # Columns added to agent_jobs after the rebuild (ALTER TABLE is enough for these).
 JOB_COLUMNS = {"parent_id": "INTEGER", "template_values": "TEXT"}
 
@@ -162,6 +194,7 @@ SITE_PROFILE_COLUMNS = {
     "username": "TEXT NOT NULL DEFAULT ''",
     "created_at": "TEXT",
     "updated_at": "TEXT",
+    "event_type": "TEXT NOT NULL DEFAULT ''",  # '' = shared by every event type (e.g. Facebook, LinkedIn)
 }
 
 
@@ -219,6 +252,7 @@ class JobStore:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)
         self._migrate_jobs_table()
+        self._migrate_targets_table()
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             have_jobs = {r["name"] for r in db.execute("PRAGMA table_info(agent_jobs)")}
@@ -226,7 +260,16 @@ class JobStore:
                 for column, ddl in JOB_COLUMNS.items():
                     if column not in have_jobs:
                         db.execute(f"ALTER TABLE agent_jobs ADD COLUMN {column} {ddl}")
+            new_event_types = not db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_types'"
+            ).fetchone()
             db.executescript(SCHEMA)
+            if new_event_types:
+                stamp = iso(now())
+                db.executemany(
+                    "INSERT OR IGNORE INTO event_types (key, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    [(key, name, stamp, stamp) for key, name in DEFAULT_EVENT_TYPES],
+                )
             have = {r["name"] for r in db.execute("PRAGMA table_info(site_profiles)")}
             for column, ddl in SITE_PROFILE_COLUMNS.items():
                 if column not in have:
@@ -268,6 +311,30 @@ class JobStore:
             if problems:
                 db.execute("ROLLBACK")
                 raise RuntimeError(f"Job table upgrade stopped: foreign key problems {problems[:3]}")
+            db.execute("COMMIT")
+        finally:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.close()
+
+    def _migrate_targets_table(self) -> None:
+        """Rebuild promotion_targets from before event types (no 'page' kind, no 'own' source)."""
+        db = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        try:
+            row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'promotion_targets'"
+            ).fetchone()
+            if not row or "'page'" in row["sql"]:
+                return
+            old_columns = [r["name"] for r in db.execute("PRAGMA table_info(promotion_targets)")]
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(TARGETS_TABLE.replace("promotion_targets", "promotion_targets_new", 1))
+            new_columns = {r["name"] for r in db.execute("PRAGMA table_info(promotion_targets_new)")}
+            columns = ", ".join(c for c in old_columns if c in new_columns)
+            db.execute(f"INSERT INTO promotion_targets_new ({columns}) SELECT {columns} FROM promotion_targets")
+            db.execute("DROP TABLE promotion_targets")
+            db.execute("ALTER TABLE promotion_targets_new RENAME TO promotion_targets")
             db.execute("COMMIT")
         finally:
             db.execute("PRAGMA foreign_keys=ON")

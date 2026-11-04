@@ -64,17 +64,23 @@ class AccountStore:
                 return account
         return None
 
-    def list(self) -> list[dict[str, Any]]:
+    def list(self, event_type: str | None = None) -> list[dict[str, Any]]:
+        """Every login, or (with `event_type`) that type's own logins plus the shared ones."""
         with self.store._connect() as db:
             rows = db.execute("SELECT * FROM site_profiles ORDER BY label COLLATE NOCASE, site").fetchall()
-        return [self._view(dict(r)) for r in rows]
+            names = {r["key"]: r["name"] for r in db.execute("SELECT key, name FROM event_types")}
+        views = [self._view(dict(r), names) for r in rows]
+        if event_type is None:
+            return views
+        return [a for a in views if a["event_type"] in ("", event_type)]
 
     def get(self, site: str) -> dict[str, Any]:
         with self.store._connect() as db:
             row = db.execute("SELECT * FROM site_profiles WHERE site = ?", (site,)).fetchone()
+            names = {r["key"]: r["name"] for r in db.execute("SELECT key, name FROM event_types")}
         if row is None:
             raise LookupError(f"No saved login for '{site}'.")
-        return self._view(dict(row))
+        return self._view(dict(row), names)
 
     def save(
         self,
@@ -85,7 +91,9 @@ class AccountStore:
         password: str = "",
         notes: str = "",
         site: str | None = None,
+        event_type: str | None = None,
     ) -> dict[str, Any]:
+        """Save a login. `event_type`: the type it belongs to ("" = shared by all; None = keep as it is)."""
         label, login_url, username = label.strip(), login_url.strip(), username.strip()
         if not label:
             raise AccountError("Give the site a name, e.g. Eventbrite.")
@@ -94,6 +102,8 @@ class AccountStore:
             raise AccountError("The login page must be a full web address starting with https://")
         stamp = iso(now())
         with self.store._connect() as db:
+            if event_type and not db.execute("SELECT 1 FROM event_types WHERE key = ?", (event_type,)).fetchone():
+                raise AccountError(f"There's no event type '{event_type}'.")
             if site:
                 if not db.execute(
                     """UPDATE site_profiles SET label = ?, login_url = ?, username = ?, notes = ?, updated_at = ?
@@ -101,13 +111,16 @@ class AccountStore:
                     (label, login_url, username, notes.strip(), stamp, site),
                 ).rowcount:
                     raise LookupError(f"No saved login for '{site}'.")
+                if event_type is not None:
+                    db.execute("UPDATE site_profiles SET event_type = ? WHERE site = ?", (event_type, site))
             else:
-                site = self._new_site(db, label)
+                site = self._new_site(db, f"{label} {event_type}" if event_type else label)
                 db.execute(
                     """INSERT INTO site_profiles (site, profile_dir, label, login_url, username, notes,
-                           created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (site, str(self.shared_profile), label, login_url, username, notes.strip(), stamp, stamp),
-                )
+                           created_at, updated_at, event_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (site, str(self.shared_profile), label, login_url, username, notes.strip(), stamp, stamp,
+                     event_type or ""),
+                )  # fmt: skip
         if password:
             set_secret(secret_name(site), password)
         return self.get(site)
@@ -123,9 +136,12 @@ class AccountStore:
         with self.store._connect() as db:
             db.execute("UPDATE site_profiles SET last_login_ok_at = ? WHERE site = ?", (iso(now()), site))
 
-    def _view(self, row: dict[str, Any]) -> dict[str, Any]:
+    def _view(self, row: dict[str, Any], type_names: dict[str, str] | None = None) -> dict[str, Any]:
         site = row["site"]
+        event_type = row.get("event_type") or ""
         return {
+            "event_type": event_type,
+            "event_type_name": (type_names or {}).get(event_type, "") if event_type else "",
             "site": site,
             "label": row.get("label") or site,
             "login_url": row.get("login_url") or "",
@@ -219,6 +235,8 @@ class LoginWindows:
 
 async def prefill(page: Any, username: str, password: str) -> None:
     """Best effort: type the saved username and password into the login form. Never submits it."""
+    if getattr(page, "is_relay", False):
+        return  # Joe's own Chrome: its password manager fills logins in
     with suppress(Exception):
         if username:
             box = page.locator(

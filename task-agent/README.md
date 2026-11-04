@@ -15,12 +15,26 @@ Shopify admin → **Task Agent**. The app talks to the worker's private API on `
 (contract: `API.md`) with `TASK_AGENT_API_KEY`, which must be the same in `task-agent/.env` and the
 live release `.env`. Passwords typed on the page go to the macOS Keychain (service `task-agent`).
 
-## One shared browser
-Every agent uses **one** Google Chrome profile, `profiles/shared/` (never committed). A login done once,
-by Joe in a login tab or by an agent, works for every later task. Chrome runs hidden while agents work
-alone, and is shown on the Mac while Joe has a tab open (Logins page → Open shared browser / Open login
-window, or a task asking for him). When the last tab closes, Chrome quits. Code, not the model, types
-passwords (from the Keychain); the model can't type into password or payment-card boxes.
+## The browser: Joe's own Chrome
+Agents work in **Joe's everyday Google Chrome**, where he's already logged in everywhere, through the OpenClaw
+extension (`task_agent/chrome.py`: each action is one `openclaw browser --browser-profile chrome --json …`
+command, about 4 seconds; typed text goes in on stdin, never on the command line). Agents open and close only
+their own tabs. If Chrome or the extension isn't connected, the task hands itself to Joe (Telegram card) instead
+of failing. Setting `BROWSER=own` switches back to a separate agent profile (`profiles/shared/`, never committed).
+Code, not the model, types passwords (from the Keychain); the model can't type into password or payment boxes.
+
+## Event types
+Joe runs several kinds of events (seeded: Comedy, Bloomsbury speakers, Biohacking, Juggling; edit them on the
+Settings page). Each type has its own email (with IMAP, so the agent can read sign-up codes), its own Eventbrite
+and Meetup logins (logins tagged with the type) and its own Facebook Page and LinkedIn Page. Facebook and
+LinkedIn themselves are one shared personal login (logins with no type). A promotion task picks a type, and the
+agent then sees only that type's logins plus the shared ones. One Chrome can only be logged in to one Eventbrite
+or Meetup account at a time, so the agent checks whose account it's on and switches with the type's saved login.
+`check_inbox` returns only codes and the site's own verify/login links from the last 30 minutes, never whole
+emails. The IMAP password is in the Keychain (`event-type:<key>:imap`).
+
+Web search uses **Brave Search** when `BRAVE_API_KEY` is in `.env` (or `brave:api_key` in the Keychain), with
+DuckDuckGo and Bing as backups.
 
 ## Promote an event (template `promote-event`)
 1. `promote_event` reads the event pages (their schema.org data first), then plans up to 15 places:
@@ -29,8 +43,8 @@ passwords (from the Keychain); the model can't type into password or payment-car
 2. Each place becomes a `promote_post` job (`parent_id` = the promotion; hidden in the task list).
    Listing sites go first. Groups and forums are paced: at most 5 a day per event, 20 minutes apart
    (after any group post already planned), 09:00–21:00, never in the last 2 hours before the event.
-3. Joe's Social Autopilot channels (all, or the ones he listed) get a greeting-card post soon and a
-   reminder the day before, through the Social Engine with AI review.
+3. The event type's own Facebook Page and LinkedIn Page become places too (posted as the Page, in Chrome).
+   Social Autopilot is only for Bio Luxe Lab, so promotions never post through it.
 4. When a site needs Joe (captcha, code, verification email), the job hands its tab to him on the Mac,
    sends a Telegram card (Done / Skip) and waits up to a day; Done restarts it straight away.
 5. A posted result must be an address the browser really opened. Telegram gets the plan and one

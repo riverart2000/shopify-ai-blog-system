@@ -40,6 +40,8 @@ export type JobDetail = JobSummary & {
   template_values?: Record<string, unknown> | null;
   /** Only for `promote_event` jobs. */
   promotion?: Promotion | null;
+  /** The event type a promotion was started with (its email, logins and Pages). */
+  event_type?: { key: string; name: string } | null;
 };
 
 /** The event a promotion is for, read from its pages. Times are UK local, e.g. "2026-11-15T19:00". */
@@ -96,7 +98,10 @@ export type Promotion = {
 
 export type TargetActionResponse = { target: PromotionTarget; message: string };
 
-/** The one browser profile every agent shares (real Google Chrome on the Mac). */
+/**
+ * The browser every agent shares. In "chrome" mode that's Joe's everyday Chrome, reached through the
+ * OpenClaw extension (then `profile_saved` and `visible` are always true).
+ */
 export type BrowserStatus = {
   running: boolean;
   visible: boolean;
@@ -104,6 +109,9 @@ export type BrowserStatus = {
   login_tabs: string[];
   profile_saved: boolean;
   busy_job_id: number | null;
+  mode?: "chrome";
+  /** Why Chrome can't be used right now (null when it's fine). */
+  offline?: string | null;
 };
 
 export type BrowserResponse = { browser: BrowserStatus; message?: string };
@@ -125,7 +133,11 @@ export type TemplateField = {
   default: string | null;
   /** Show a textarea (lists of URLs, accounts, notes). Older backends omit it. */
   multiline?: boolean;
+  /** Show a dropdown of these choices (e.g. the enabled event types). */
+  options?: TemplateFieldOption[];
 };
+
+export type TemplateFieldOption = { value: string; label: string };
 
 export type Template = {
   key: string;
@@ -152,6 +164,49 @@ export type Account = {
   has_profile: boolean;
   last_login_ok_at: string | null;
   login_window_open: boolean;
+  /** The event type this login belongs to; "" = shared by every type (e.g. Facebook, LinkedIn). Older backends omit it. */
+  event_type?: string;
+  /** That type's name ("" when shared). */
+  event_type_name?: string;
+};
+
+/** One kind of event Joe runs (Comedy, Biohacking, …), with its own email, logins and Pages. */
+export type EventType = {
+  key: string;
+  name: string;
+  email: string;
+  imap_host: string;
+  imap_port: number;
+  imap_username: string;
+  has_imap_password: boolean;
+  facebook_page: string;
+  linkedin_page: string;
+  tag_handles: string;
+  audience: string;
+  enabled: boolean;
+  /** Logins saved for this type (Eventbrite, Meetup, …). */
+  logins: Account[];
+  last_test_at: string | null;
+  last_test_ok: boolean | null;
+  last_test_message: string;
+  updated_at: string | null;
+};
+
+/** Body of POST /api/event-types: no key = create, with key = update. */
+export type EventTypeInput = {
+  key?: string;
+  name: string;
+  email?: string;
+  imap_host?: string;
+  imap_port?: number;
+  imap_username?: string;
+  /** "" (or left out) keeps the saved one. */
+  imap_password?: string;
+  facebook_page?: string;
+  linkedin_page?: string;
+  tag_handles?: string;
+  audience?: string;
+  enabled?: boolean;
 };
 
 /** Telegram bot: token in the Keychain; only `owner_username` may use it (locked to their id on first /start). */
@@ -238,6 +293,9 @@ export type SettingsResponse = {
 };
 
 export type AccountsResponse = { accounts: Account[]; email: EmailAccount; browser?: BrowserStatus | null };
+export type EventTypesResponse = { event_types: EventType[]; shared_logins: Account[] };
+export type EventTypeSaveResponse = { event_type: EventType; message: string };
+export type EventTypeTestResponse = { ok: boolean; message: string; event_type: EventType };
 export type AccountSaveResponse = { account: Account; message: string };
 export type EmailSaveResponse = { email: EmailAccount; message: string };
 export type EmailTestResponse = { ok: boolean; message: string; email: EmailAccount };

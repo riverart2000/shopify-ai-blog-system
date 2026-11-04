@@ -18,9 +18,11 @@ from pydantic import BaseModel, Field, ValidationError
 from task_agent import runtime
 from task_agent.accounts import AccountError, AccountStore, LoginWindows
 from task_agent.browser import BrowserHub
+from task_agent.chrome import make_browser
 from task_agent.config import Settings
 from task_agent.db import JOB_STATUSES, Job, JobError, JobStore, now
 from task_agent.email_account import EmailError, EmailStore
+from task_agent.event_types import EventTypeError, EventTypeStore
 from task_agent.promotion import PromotionStore, target_done, target_retry, target_skip
 from task_agent.tasks import TASKS, TEMPLATE_TYPES
 from task_agent.telegram.client import TelegramAPI, TelegramError
@@ -42,11 +44,12 @@ class AppContext:
     telegram: TelegramStore
     browser: BrowserHub
     promotions: PromotionStore
+    event_types: EventTypeStore
 
     @classmethod
     def build(cls, store: JobStore, settings: Settings, browser: BrowserHub | None = None) -> AppContext:
         accounts = AccountStore(store, settings.path(settings.profiles_dir))
-        browser = browser or BrowserHub(accounts.shared_profile)
+        browser = browser or make_browser(settings, accounts.shared_profile)
         return cls(
             store=store,
             settings=settings,
@@ -57,6 +60,7 @@ class AppContext:
             telegram=TelegramStore(store, settings),
             browser=browser,
             promotions=PromotionStore(store),
+            event_types=EventTypeStore(store),
         )
 
 
@@ -101,6 +105,22 @@ class AccountSave(BaseModel):
     username: str = Field("", max_length=200)
     password: str = Field("", max_length=500)
     notes: str = Field("", max_length=1_000)
+    event_type: str | None = Field(None, max_length=60)  # a type key, "" = shared by every type, None = unchanged
+
+
+class EventTypeSave(BaseModel):
+    key: str | None = None
+    name: str | None = Field(None, max_length=80)
+    email: str | None = Field(None, max_length=200)
+    imap_host: str | None = Field(None, max_length=200)
+    imap_port: int | None = None
+    imap_username: str | None = Field(None, max_length=200)
+    imap_password: str = Field("", max_length=500)  # "" keeps the saved one
+    facebook_page: str | None = Field(None, max_length=500)
+    linkedin_page: str | None = Field(None, max_length=500)
+    tag_handles: str | None = Field(None, max_length=1_000)
+    audience: str | None = Field(None, max_length=3_000)
+    enabled: bool | None = None
 
 
 class TelegramSave(BaseModel):
@@ -211,7 +231,7 @@ def create_app(ctx: AppContext) -> FastAPI:
     async def invalid(_: Request, exc: ValidationError) -> JSONResponse:
         return JSONResponse({"detail": _validation_message(exc)}, status_code=400)
 
-    for error_type in (JobError, TemplateError, AccountError, EmailError):
+    for error_type in (JobError, TemplateError, AccountError, EmailError, EventTypeError):
 
         @app.exception_handler(error_type)
         async def bad_request(_: Request, exc: Exception) -> JSONResponse:
@@ -256,6 +276,12 @@ def create_app(ctx: AppContext) -> FastAPI:
             "counts": ctx.store.counts(),
         }
 
+    def job_event_type(job: Any) -> dict[str, str] | None:
+        key = str((job.payload or {}).get("event_type") or "")
+        if not key:
+            return None
+        return {"key": key, "name": ctx.event_types.names().get(key, key)}
+
     @app.get("/api/jobs/{job_id}", dependencies=auth)
     async def get_job(job_id: int) -> dict[str, Any]:
         job = ctx.store.require(job_id)
@@ -267,6 +293,7 @@ def create_app(ctx: AppContext) -> FastAPI:
             "tools_allowed": job.tools_allowed,
             "template_values": job.template_values,
             "promotion": ctx.promotions.promotion_view(job) if job.type == "promote_event" else None,
+            "event_type": job_event_type(job),
         }
         keys = ("n", "tool", "args", "result_summary", "tokens", "duration_ms", "created_at")
         return {"job": detail, "steps": [{k: s.get(k) for k in keys} for s in steps]}
@@ -321,8 +348,9 @@ def create_app(ctx: AppContext) -> FastAPI:
 
     @app.get("/api/templates", dependencies=auth)
     async def list_templates() -> dict[str, Any]:
+        options = ctx.templates.field_options()
         return {
-            "templates": [t.to_dict() for t in ctx.templates.list()],
+            "templates": [t.to_dict(options) for t in ctx.templates.list()],
             "task_types": [
                 {"type": s.type, "summary": s.summary, "prompt_field": s.prompt_field}
                 for s in TASKS.values()
@@ -421,6 +449,7 @@ def create_app(ctx: AppContext) -> FastAPI:
             username=body.username,
             password=body.password,
             notes=body.notes,
+            event_type=body.event_type,
         )
         return {"account": account_view(account), "message": f"Saved the login for {account['label']}."}
 
@@ -446,8 +475,8 @@ def create_app(ctx: AppContext) -> FastAPI:
         return {
             "account": account_view(account),
             "message": (
-                f"{account['label']}'s login page is opening in the shared browser on the Mac. Log in there "
-                "(including any 2-step code), then close the tab. Every task can use the login after that."
+                f"{account['label']}'s login page is opening in Chrome on the Mac. Log in there (including any "
+                "2-step code), then close the tab. Every task can use the login after that."
             ),
         }
 
@@ -470,7 +499,7 @@ def create_app(ctx: AppContext) -> FastAPI:
         return {
             "browser": ctx.browser.status(),
             "message": (
-                "The shared browser is open on the Mac. Log in to any sites you like; every task can use those "
+                "The page is open in Chrome on the Mac. Log in to any sites you like; every task can use those "
                 f"logins. Close the tab when you're done (it closes itself after {ctx.settings.login_window_minutes} "
                 "minutes)."
             ),
@@ -493,6 +522,43 @@ def create_app(ctx: AppContext) -> FastAPI:
     async def target_again(target_id: int) -> dict[str, Any]:
         target, message = await target_retry(ctx.store, target_id, ctx.settings)
         return {"target": target_view(target), "message": message}
+
+    # Event types -----------------------------------------------------------------
+
+    def event_type_view(kind: dict[str, Any], logins: list[dict[str, Any]]) -> dict[str, Any]:
+        return {**kind, "logins": [account_view(a) for a in logins if a["event_type"] == kind["key"]]}
+
+    @app.get("/api/event-types", dependencies=auth)
+    async def list_event_types() -> dict[str, Any]:
+        logins = ctx.accounts.list()
+        return {
+            "event_types": [event_type_view(k, logins) for k in ctx.event_types.list()],
+            "shared_logins": [account_view(a) for a in logins if not a["event_type"]],
+        }
+
+    @app.post("/api/event-types", dependencies=auth)
+    async def save_event_type(body: EventTypeSave) -> dict[str, Any]:
+        values = body.model_dump(exclude={"key", "imap_password"}, exclude_none=True)
+        kind = ctx.event_types.save(values, imap_password=body.imap_password, key=body.key)
+        return {
+            "event_type": event_type_view(kind, ctx.accounts.list()),
+            "message": f"Saved the event type {kind['name']}.",
+        }
+
+    @app.post("/api/event-types/{key}/delete", dependencies=auth)
+    async def delete_event_type(key: str) -> dict[str, Any]:
+        name = ctx.event_types.get(key)["name"]
+        ctx.event_types.delete(key)
+        return {"message": f"Removed the event type {name}, its inbox password and its own logins."}
+
+    @app.post("/api/event-types/{key}/test-email", dependencies=auth)
+    async def test_event_type_email(key: str) -> dict[str, Any]:
+        ok, message = await ctx.event_types.test_email(key)
+        return {
+            "ok": ok,
+            "message": message,
+            "event_type": event_type_view(ctx.event_types.get(key), ctx.accounts.list()),
+        }
 
     @app.post("/api/email", dependencies=auth)
     async def save_email(body: EmailSave) -> dict[str, Any]:

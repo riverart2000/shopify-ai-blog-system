@@ -41,8 +41,18 @@ class Template:
     def fields(self) -> list[dict[str, Any]]:
         return template_fields(self.prompt)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {**asdict(self), "fields": self.fields}
+    def choices(self, options: dict[str, list[dict[str, str]]] | None) -> dict[str, list[dict[str, str]]]:
+        """The list choices that apply to this template: only fields its task type takes as values (a research
+        template's free-text "event_type", e.g. "talk", stays free text)."""
+        spec = TASKS.get(self.task_type)
+        takes = set(spec.value_fields) if spec else set()
+        return {name: opts for name, opts in (options or {}).items() if name in takes}
+
+    def to_dict(self, options: dict[str, list[dict[str, str]]] | None = None) -> dict[str, Any]:
+        """As the admin page gets it. `options`: choices for fields like event_type (rendered as a list)."""
+        mine = self.choices(options)
+        fields = [{**f, "options": mine[f["name"]]} if f["name"] in mine else f for f in self.fields]
+        return {**asdict(self), "fields": fields}
 
 
 BUILTINS: tuple[Template, ...] = (
@@ -101,11 +111,12 @@ BUILTINS: tuple[Template, ...] = (
     Template(
         "promote-event",
         "Promote an event",
-        "Give it the event's links and your accounts. It finds listing sites, Facebook groups and forums that suit "
-        "the event, then posts it on each one by itself (groups at a careful pace) and on your own channels.",
+        "Pick the event type and give it the event's links. It finds listing sites, Facebook groups and forums that "
+        "suit the event, then posts it on each one by itself (groups at a careful pace) and on the type's own "
+        "Facebook and LinkedIn Pages, using that type's email and logins.",
         "promote_event",
-        "Promote this event everywhere suitable. Event links: {event_urls}. Accounts to post from: {post_from?}. "
-        "Handles to tag: {tag?}. Email for new sign-ups: {signup_email}. Our own event: {my_event=yes}. {notes?}",
+        "Promote this event everywhere suitable. Event type: {event_type}. Event links: {event_urls}. "
+        "Our own event: {my_event=yes}. {notes?}",
         {"max_places": 15},
         builtin=True,
     ),
@@ -129,6 +140,7 @@ class TemplateError(ValueError):
 
 
 LABELS = {
+    "event_type": "Event type",
     "event_urls": "Event links (one per line)",
     "post_from": "Accounts to post from (e.g. Facebook: joe.bains)",
     "tag": "Handles to tag",
@@ -187,6 +199,13 @@ def render(prompt: str, values: dict[str, Any]) -> tuple[str, list[str]]:
 class TemplateStore:
     def __init__(self, store: JobStore) -> None:
         self.store = store
+
+    def field_options(self) -> dict[str, list[dict[str, str]]]:
+        """Choices for list fields: the enabled event types."""
+        from task_agent.event_types import EventTypeStore
+
+        kinds = EventTypeStore(self.store).list(enabled_only=True)
+        return {"event_type": [{"value": k["key"], "label": k["name"]} for k in kinds]}
 
     def list(self) -> list[Template]:
         with self.store._connect() as db:
@@ -262,7 +281,16 @@ class TemplateStore:
         spec = TASKS.get(template.task_type)
         if spec is None:
             raise TemplateError(f"Unknown task type '{template.task_type}'.")
-        text, missing = render(template.prompt, values)
+        values = dict(values or {})
+        shown = dict(values)
+        if "event_type" in spec.value_fields and str(values.get("event_type") or "").strip():
+            from task_agent.event_types import EventTypeStore
+
+            kind = EventTypeStore(self.store).find(str(values["event_type"]))
+            if kind is None:
+                raise TemplateError(f"There's no event type '{values['event_type']}'. Add it in Settings first.")
+            values["event_type"], shown["event_type"] = kind["key"], kind["name"]
+        text, missing = render(template.prompt, shown)
         if missing:
             raise TemplateError("Fill in: " + ", ".join(humanize(m) for m in missing))
         # Some task types also take the values as they are (e.g. a list of event links), not only as prompt text.
@@ -271,7 +299,7 @@ class TemplateStore:
             payload = spec.payload_model.model_validate({**template.defaults, **raw, spec.prompt_field: text})
         except ValidationError as exc:
             raise TemplateError(f"This task can't be queued: {_short(exc)}") from exc
-        return (title.strip() or default_title(template, values, text))[:120], payload.model_dump(mode="json")
+        return (title.strip() or default_title(template, shown, text))[:120], payload.model_dump(mode="json")
 
     @staticmethod
     def _new_key(db: Any, name: str) -> str:

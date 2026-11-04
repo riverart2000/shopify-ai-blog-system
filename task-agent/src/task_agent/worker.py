@@ -36,6 +36,7 @@ from task_agent import runtime
 from task_agent.accounts import AccountStore, prefill
 from task_agent.audit import AuditLog, StepRecorder
 from task_agent.browser import BrowserHub
+from task_agent.chrome import make_browser
 from task_agent.config import Settings
 from task_agent.db import Job, JobStore, now
 from task_agent.llm import build_model, model_settings
@@ -279,7 +280,7 @@ class Worker:
         self.current: Job | None = None
         self.accounts = AccountStore(store, settings.path(settings.profiles_dir))
         # One shared browser for every agent, the login tabs and Telegram's "Done" buttons.
-        self.browser = browser or BrowserHub(self.accounts.shared_profile)
+        self.browser = browser or make_browser(settings, self.accounts.shared_profile)
 
     async def drain(self) -> int:
         """Run ready jobs until none are left (or the worker is paused). Returns how many ran."""

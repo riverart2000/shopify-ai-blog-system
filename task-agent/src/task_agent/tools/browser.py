@@ -107,7 +107,7 @@ async def snapshot(deps: JobDeps, *, note: str = "", max_chars: int = SNAPSHOT_M
             f"\n[... {len(lines) - len(shown)} more lines below. Use find_on_page('some words') to jump to "
             "something further down, or scroll.]"
         )
-    head = f"Page: {title}\nAddress: {page.url}\n"
+    head = (f"Page: {title}\n" if title else "") + f"Address: {page.url}\n"
     if deps.browser and deps.browser.take_reopened(deps.owner):
         note = (
             note + " " if note else ""
@@ -135,6 +135,15 @@ class _suppress:
 async def _page(deps: JobDeps) -> Any:
     if deps.browser is None:
         raise RuntimeError("This task has no browser.")
+    check = getattr(deps.browser, "ensure_connected", None)  # Joe's Chrome (task_agent.chrome)
+    if check is not None:
+        reason = await check()
+        if reason:
+            raise NeedsJoe(
+                "Chrome",
+                "",
+                f"{reason}. Open Chrome on the Mac and check the OpenClaw extension is on, then press Done.",
+            )
     return await deps.browser.page(deps.owner)
 
 
@@ -349,7 +358,10 @@ async def upload_event_image(ctx: RunContext[JobDeps], ref: str) -> str:
     page = await _page(ctx.deps)
     try:
         attrs = await _attributes(locator)
-        if attrs.get("tag") == "input" and attrs.get("type") == "file":
+        file_box = attrs.get("tag") == "input" and attrs.get("type") == "file"
+        if hasattr(locator, "upload_file"):  # Joe's Chrome: OpenClaw sets the file box or clicks and picks
+            await locator.upload_file(path, file_input=file_box)
+        elif file_box:
             await locator.set_input_files(path, timeout=10_000)
         else:
             async with page.expect_file_chooser(timeout=10_000) as chooser:
@@ -366,20 +378,31 @@ async def upload_event_image(ctx: RunContext[JobDeps], ref: str) -> str:
 # ── logins ──────────────────────────────────────────────────────────────────
 
 
+def _event_type(deps: JobDeps) -> str | None:
+    """The task's event type key, or None for a task without one (then every login is available)."""
+    return getattr(deps.payload, "event_type", "") or None
+
+
+def _allowed(deps: JobDeps, account: dict[str, Any]) -> bool:
+    kind = _event_type(deps)
+    return kind is None or account.get("event_type", "") in ("", kind)
+
+
 async def saved_logins(ctx: RunContext[JobDeps]) -> str:
     """List the site logins saved for Joe (site key, login page, username). Passwords are never shown."""
     if ctx.deps.accounts is None:
         return "[No saved logins are available to this task.]"
-    rows = ctx.deps.accounts.list()
+    rows = ctx.deps.accounts.list(event_type=_event_type(ctx.deps))
     if not rows:
         return "No saved logins yet. The shared browser may still be logged in to some sites: open them and look."
     lines = [
         f"- {a['site']}: {a['label']}, login page {a['login_url']}, username {a['username'] or '(none)'}, "
         f"{'password saved' if a['has_password'] else 'no password saved'}"
+        + (f", for {a['event_type_name'] or a['event_type']} events" if a.get("event_type") else ", shared")
         + (f", last worked {a['last_login_ok_at'][:10]}" if a.get("last_login_ok_at") else "")
         for a in rows
     ]
-    return "Saved logins (the shared browser often stays logged in, so check the page first):\n" + "\n".join(lines)
+    return "Saved logins (the browser is often already logged in, so check the page first):\n" + "\n".join(lines)
 
 
 async def type_saved_login(ctx: RunContext[JobDeps], ref: str, site: str, part: Literal["username", "password"]) -> str:
@@ -390,6 +413,8 @@ async def type_saved_login(ctx: RunContext[JobDeps], ref: str, site: str, part: 
         account = ctx.deps.accounts.get(site)
     except LookupError:
         return f"[No saved login '{site}'. Check saved_logins, or save_new_login when signing up.]"
+    if not _allowed(ctx.deps, account):
+        return f"[{account['label']} belongs to another event type. Use this task's logins (saved_logins).]"
     value = account["username"] if part == "username" else ctx.deps.accounts.password(site)
     if not value:
         return f"[The saved login for {account['label']} has no {part}.]"
@@ -415,7 +440,8 @@ async def save_new_login(ctx: RunContext[JobDeps], site_name: str, login_url: st
     site key. Then fill the sign-up form's password box with type_saved_login(ref, site, 'password')."""
     if ctx.deps.accounts is None:
         return "[Saving logins isn't available to this task.]"
-    for account in ctx.deps.accounts.list():
+    kind = _event_type(ctx.deps)
+    for account in ctx.deps.accounts.list(event_type=kind):
         if account["label"].lower() == site_name.strip().lower():
             if not account["has_password"]:
                 ctx.deps.accounts.save(
@@ -429,11 +455,53 @@ async def save_new_login(ctx: RunContext[JobDeps], site_name: str, login_url: st
             return f"There's already a saved login for {account['label']}: site key '{account['site']}'."
     try:
         account = ctx.deps.accounts.save(
-            label=site_name, login_url=login_url, username=username, password=new_password(), notes="Made by an agent"
+            label=site_name,
+            login_url=login_url,
+            username=username,
+            password=new_password(),
+            notes="Made by an agent",
+            event_type=kind or "",
         )
     except ValueError as exc:
         return f"[{exc}]"
     return f"Saved. Site key '{account['site']}'. Use type_saved_login(ref, '{account['site']}', 'password')."
+
+
+async def check_inbox(ctx: RunContext[JobDeps], site_name: str) -> str:
+    """Look in this event type's inbox for a code or link the site just sent (last 30 minutes). Returns only codes
+    and the site's verify/login links, never whole emails. If nothing yet, wait 20 seconds and check once more."""
+    from task_agent.event_types import EventTypeError, EventTypeStore, codes_and_links, matches_site, site_words
+
+    kind = _event_type(ctx.deps)
+    if not kind or ctx.deps.store is None:
+        return "[This task has no event type inbox. Use ask_joe for the code.]"
+    page_url = ""
+    if ctx.deps.browser is not None and ctx.deps.browser.has_tab(ctx.deps.owner):
+        page_url = (await _page(ctx.deps)).url
+    words = site_words(site_name, page_url)
+    try:
+        messages = await EventTypeStore(ctx.deps.store).recent_messages(kind)
+    except (EventTypeError, LookupError) as exc:
+        return f"[{exc} Use ask_joe for the code.]"
+    except Exception as exc:  # the mail server is down or refused: Joe can still read it himself
+        return f"[Couldn't read the inbox ({type(exc).__name__}). Use ask_joe for the code.]"
+    lines = []
+    for message in messages:
+        if not matches_site(message, words):
+            continue
+        codes, links = codes_and_links(message, words)
+        when = message["received"].strftime("%H:%M UTC")
+        lines.append(
+            f'- {when} from {message["from"]}: "{message["subject"]}"\n'
+            f"  codes: {', '.join(codes) or '(none found)'}\n"
+            f"  links: {' '.join(links) or '(none)'}"
+        )
+    if not lines:
+        return (
+            f"[No email from {site_name} in the last 30 minutes. Wait 20 seconds (wait_for_page 20) and check once "
+            "more; if there's still nothing, use ask_joe.]"
+        )
+    return wrap_untrusted("inbox", "Newest first:\n" + "\n".join(lines[:5]))
 
 
 async def ask_joe(ctx: RunContext[JobDeps], site_name: str, what_joe_must_do: str) -> str:
@@ -448,7 +516,7 @@ async def ask_joe(ctx: RunContext[JobDeps], site_name: str, what_joe_must_do: st
 
 READ_TOOLS = (open_page, look, find_on_page, click, scroll, go_back, wait_for_page)
 ACT_TOOLS = (type_text, choose_option, set_checkbox, press_key, upload_event_image)
-LOGIN_TOOLS = (saved_logins, type_saved_login, save_new_login, ask_joe)
+LOGIN_TOOLS = (saved_logins, type_saved_login, save_new_login, check_inbox, ask_joe)
 BROWSER_TOOL_NAMES = {f.__name__ for f in (*READ_TOOLS, *ACT_TOOLS, *LOGIN_TOOLS)}
 VIEW_TOOLS = {f.__name__ for f in (*READ_TOOLS, *ACT_TOOLS, type_saved_login)} - {"find_on_page"}
 
