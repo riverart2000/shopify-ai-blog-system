@@ -1,7 +1,7 @@
 """Certificate checks for the agent's own connections (IMAP, SMTP).
 
 Python's built-in default reads /etc/ssl/cert.pem, which on macOS is missing newer roots such as
-Let's Encrypt's ISRG Root X2 (used by mail.themedicalpark.com), so a valid certificate fails with
+Let's Encrypt's ISRG Root X2 (which some mail servers use), so a valid certificate fails with
 "self-signed certificate in certificate chain". This checks against the Mac's own trust store, as
 Chrome and Mail do, or certifi's up-to-date list. Certificates are always checked.
 """

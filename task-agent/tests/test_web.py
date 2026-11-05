@@ -15,7 +15,7 @@ from task_agent.tools import web
         "http://localhost:4000/",  # the live server
         "http://10.0.0.5/",
         "http://192.168.1.1/",
-        "http://100.118.145.53:8800/",  # Tailscale address
+        "http://100.64.0.1:8800/",  # Tailscale address
         "http://169.254.169.254/latest/meta-data/",
         "file:///etc/passwd",
         "ftp://8.8.8.8/",
