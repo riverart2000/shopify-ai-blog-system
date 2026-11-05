@@ -159,6 +159,28 @@ async def test_a_click_that_opens_a_new_tab_is_followed(relay: FakeOpenClaw) -> 
     assert "t1" in relay.tabs
 
 
+async def test_a_tab_joe_opened_meanwhile_is_never_taken_over(relay: FakeOpenClaw) -> None:
+    """A tab that appeared between two clicks is Joe's: only a tab that opens during a click is its pop-up."""
+    hub = hub_for(relay)
+    page = await hub.page("job:8")
+    await page.goto("https://example.com/form")
+    await page.locator("aria-ref=e1").click()
+    relay.tabs["t77"] = "https://search.google.com/search-console"  # Joe opens a tab while the agent works
+    relay.popup_ref = "none"
+    same_page = page.url
+
+    async def stay(cmd, stdin, timeout, original=relay.__call__):
+        code, out, err = await original(cmd, stdin, timeout)
+        if cmd[cmd.index("--json") + 1] == "click":
+            relay.tabs[page.tab] = same_page  # the click changed nothing on the page
+            out = json.dumps({"ok": True, "url": same_page})
+        return code, out, err
+
+    hub.relay._runner = stay
+    await page.locator("aria-ref=e1").click()
+    assert (await hub.page("job:8")).tab == page.tab and "t77" in relay.tabs  # still its own tab; Joe's untouched
+
+
 async def test_hand_over_keeps_the_tab_as_it_is(relay: FakeOpenClaw) -> None:
     hub = hub_for(relay)
     page = await hub.page("job:1")

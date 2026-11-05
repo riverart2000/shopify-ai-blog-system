@@ -561,9 +561,10 @@ class ChromeHub:
 
     async def _click(self, page: RelayPage, ref: str) -> None:
         """Click; if the click opened a new tab, the agent carries on in it (its old tab is kept as a spare)."""
-        if self._known_tabs is None:
-            with contextlib.suppress(RelayError):
-                self._known_tabs = set(await self._tab_ids())
+        # Looked at just before every click: a tab Joe (or anyone else) opened since the last click is his, not
+        # this click's pop-up. Without this the agent took over tabs opened while it was working.
+        with contextlib.suppress(RelayError):
+            self._known_tabs = set(await self._tab_ids())
         before = page.url
         await page.call("click", ref)
         if page.url != before or self._known_tabs is None:
