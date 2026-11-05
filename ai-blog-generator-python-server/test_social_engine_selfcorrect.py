@@ -282,3 +282,67 @@ async def test_template_previews_use_the_stores_own_products_without_claim_photo
     assert products[0].image_urls == ["https://cdn.test/3b.jpg"] and products[0].price == "£21.50"
     media = await render_preview(se_db, "product_editorial", "square")
     assert media.path and media.width > 0
+
+
+# ---------------------------------------------------------------------------
+# Postiz AI images that hang
+# ---------------------------------------------------------------------------
+
+class _HangingMCP:
+    """generateImageTool times out; the media library holds whatever `library` says."""
+
+    def __init__(self, library):
+        self.library = library
+        self.calls = []
+
+    async def call(self, tool, arguments, *, idempotent, timeout=None):
+        from services.social_engine.errors import ExternalServiceError
+
+        self.calls.append((tool, timeout))
+        if tool == "generateImageTool":
+            raise ExternalServiceError("postiz", "ReadTimeout: ", retryable=True)
+        if tool == "mediaListTool":
+            return {"pages": 1, "output": self.library}
+        return {}
+
+    async def aclose(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_a_hanging_postiz_image_gives_up_after_90s_and_is_found_late_in_the_library(se_db, monkeypatch):
+    from datetime import datetime, timezone
+
+    from services.social_engine.context import load_store_context
+    from services.social_engine.errors import ExternalServiceError
+    from services.social_engine.publishers import postiz_tools
+    from services.social_engine.publishers.guard import LIVE_PUBLISHING_ENV
+
+    monkeypatch.setenv(LIVE_PUBLISHING_ENV, "1")
+    monkeypatch.setattr(postiz_tools, "LATE_IMAGE_RECHECK_SECONDS", 0)
+    sctx = await load_store_context(se_db, correlation_id="t")
+    now = datetime.now(timezone.utc).isoformat()
+    old = "2026-01-01T00:00:00Z"
+    library = [
+        {"id": "upload-1", "path": "https://uploads.postiz.com/6fba0ef5febb4400ae8778a5b854224d.png", "createdAt": now},
+        {"id": "old-ai", "path": "https://uploads.postiz.com/AbCdEfGhIj.png", "createdAt": old},
+        {"id": "late-ai", "path": "https://uploads.postiz.com/kc5p4XuNeS.png", "createdAt": now},
+    ]
+    mcp = _HangingMCP(library)
+    image = await postiz_tools.PostizCreativeTools(sctx, mcp=mcp).generate_image("A calm sunrise studio scene, no text")
+    assert image.external_id == "late-ai" and image.url.endswith("kc5p4XuNeS.png")
+    assert ("generateImageTool", postiz_tools.IMAGE_TIMEOUT_SECONDS) in mcp.calls
+
+    with pytest.raises(ExternalServiceError, match="didn't arrive within 90 s"):
+        await postiz_tools.PostizCreativeTools(sctx, mcp=_HangingMCP(library[:2])).generate_image("Another calm scene, no text")
+
+
+@pytest.mark.asyncio
+async def test_timed_out_postiz_images_count_against_the_monthly_budget(se_db):
+    from db.social_engine import observability
+    from services.social_engine.publishers.postiz_tools import SERVICE, _used_this_month
+
+    for status, ok, error in ((200, True, ""), (None, False, "ReadTimeout: ")):
+        await observability.record_api_call(service=SERVICE, operation="mcp.generateImageTool", method="POST",
+                                            url_path="", status_code=status, ok=ok, duration_ms=1, error=error)
+    assert await _used_this_month("mcp.generateImageTool") == 2

@@ -12,9 +12,12 @@ same generators as the Postiz UI (they are discovered at run time — e.g.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +33,11 @@ logger = logging.getLogger("ai_blog_server.social_engine.publishers")
 SERVICE = "postiz_mcp"
 _PROTOCOL = "2025-06-18"
 _MONTH = 30 * 86400
+# A Postiz AI image normally arrives in 11–38 s; the ones that fail hang until any timeout (2 or 5 minutes), so
+# waiting longer doesn't help. Give up after 90 s, then look for the image in the media library in case it landed.
+IMAGE_TIMEOUT_SECONDS = 90.0
+LATE_IMAGE_RECHECK_SECONDS = 30.0
+_AI_IMAGE_PATH = re.compile(r"^https://uploads\.postiz\.com/[A-Za-z0-9]{10}\.(?:png|jpe?g|webp)$")
 
 
 @dataclass
@@ -96,11 +104,14 @@ class PostizMCP:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _rpc(self, method: str, params: dict | None, *, operation: str, idempotent: bool) -> dict:
+    async def _rpc(
+        self, method: str, params: dict | None, *, operation: str, idempotent: bool, timeout: float | None = None,
+    ) -> dict:
         self._ids += 1
         body = {"jsonrpc": "2.0", "id": self._ids, "method": method, "params": params or {}}
         response = await self._client.request("POST", "", operation=operation, ctx=self.ctx, json=body,
-                                              idempotent=idempotent, max_attempts=3 if idempotent else 1)
+                                              idempotent=idempotent, max_attempts=3 if idempotent else 1,
+                                              timeout=timeout)
         message = _parse_rpc(response.text, response.headers.get("content-type", ""))
         if message.get("error"):
             error = message["error"]
@@ -117,10 +128,10 @@ class PostizMCP:
         }, operation="mcp.initialize", idempotent=True)
         self._initialised = True
 
-    async def call(self, tool: str, arguments: dict, *, idempotent: bool) -> Any:
+    async def call(self, tool: str, arguments: dict, *, idempotent: bool, timeout: float | None = None) -> Any:
         await self._ensure_initialised()
         result = await self._rpc("tools/call", {"name": tool, "arguments": arguments},
-                                 operation=f"mcp.{tool}", idempotent=idempotent)
+                                 operation=f"mcp.{tool}", idempotent=idempotent, timeout=timeout)
         payload = _tool_payload(result)
         if result.get("isError"):
             raise ExternalServiceError("postiz", f"{tool} failed: {payload}", retryable=False)
@@ -135,8 +146,20 @@ class PostizMCP:
 
 
 async def _used_this_month(operation: str) -> int:
+    """Credit-spending calls in the last 30 days, including ones that timed out (Postiz may still have charged)."""
     return await observability.count_api_calls(service=SERVICE, operation=operation,
-                                               since=int(time.time()) - _MONTH)
+                                               since=int(time.time()) - _MONTH, reached_server_only=False)
+
+
+def _timed_out(exc: BaseException) -> bool:
+    return "timeout" in f"{type(exc).__name__} {exc} {exc.__cause__!r}".lower()
+
+
+def _created_at(item: dict) -> float | None:
+    try:
+        return datetime.fromisoformat(str(item.get("createdAt") or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 class PostizCreativeTools:
@@ -177,10 +200,42 @@ class PostizCreativeTools:
         if await _used_this_month("mcp.generateImageTool") >= budget:
             raise RateLimited(f"Postiz AI image budget used ({budget} this month).",
                               retry_at=int(time.time()) + 86400)
-        result = await self.mcp.call("generateImageTool", {"prompt": prompt[:1500]}, idempotent=False)
+        started = time.time()
+        try:
+            result = await self.mcp.call("generateImageTool", {"prompt": prompt[:1500]}, idempotent=False,
+                                         timeout=IMAGE_TIMEOUT_SECONDS)
+        except ExternalServiceError as exc:
+            if not _timed_out(exc):
+                raise
+            late = await self._late_image(started)
+            if late is not None:
+                logger.info("Postiz AI image arrived late; found it in the media library: %s", late.url)
+                return late
+            raise ExternalServiceError(
+                "postiz", f"Postiz AI image didn't arrive within {int(IMAGE_TIMEOUT_SECONDS)} s or in the media "
+                "library (counted against the monthly budget in case Postiz charged it).", retryable=False,
+            ) from exc
         if not isinstance(result, dict) or not result.get("path"):
             raise ExternalServiceError("postiz", f"generateImageTool returned no image: {result}", retryable=False)
         return GeneratedMedia(external_id=str(result.get("id", "")), url=str(result["path"]), kind="image")
+
+    async def _late_image(self, started: float) -> GeneratedMedia | None:
+        """An AI image made since `started` that reached the media library after the request gave up."""
+        for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(LATE_IMAGE_RECHECK_SECONDS)
+            try:
+                library = await self.media_library(page=1)
+            except Exception as exc:  # the library being unavailable just means no recovery
+                logger.info("Couldn't look for a late Postiz AI image: %s", exc)
+                return None
+            fresh = [item for item in library["items"] if isinstance(item, dict)
+                     and _AI_IMAGE_PATH.match(str(item.get("path") or ""))
+                     and (_created_at(item) or 0) >= started - 5]
+            if fresh:
+                newest = max(fresh, key=lambda item: _created_at(item) or 0)
+                return GeneratedMedia(external_id=str(newest.get("id", "")), url=str(newest["path"]), kind="image")
+        return None
 
     async def video_generators(self) -> list[dict]:
         result = await self.mcp.call("generateVideoOptions", {}, idempotent=True)

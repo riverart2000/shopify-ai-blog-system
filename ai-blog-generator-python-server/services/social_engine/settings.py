@@ -158,7 +158,7 @@ class PostizSettings(_Model):
     # auto-posting ("generate picture") draws on the same image allowance, so the
     # engine's share is set per store (see docs/social-engine/postiz-maximise.md).
     ai_video_monthly_budget: int = Field(10, ge=0, le=100)
-    ai_image_monthly_budget: int = Field(60, ge=0, le=500)
+    ai_image_monthly_budget: int = Field(100, ge=0, le=500)  # the Team plan's 100 AI images a month
     mcp_url: str = "https://mcp.postiz.com/mcp"
     video_voice_id: str = ""                    # ElevenLabs voice for image-text-slides (empty = first offered)
     # Models-page image model (e.g. Grok) used when Postiz image credits are
