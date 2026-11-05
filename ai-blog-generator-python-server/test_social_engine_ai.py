@@ -1016,3 +1016,17 @@ async def test_the_shared_model_file_decides_the_model(se_db, shared_model_file)
     shared_model_file.write_text(json.dumps({"text_model": "gemma-5-40b", "server_url": "http://127.0.0.1:9000/v1"}))
     settings = await load_settings("store_1")
     assert settings.ai.model == "gemma-5-40b" and settings.ai.base_url == "http://127.0.0.1:9000/v1"
+
+
+def test_product_names_are_not_claims():
+    """Gemma 31B reports the product's printed name as a claim; anything more than the name still counts."""
+    from services.social_engine.ai.review import not_product_name
+
+    titles = ["Yoga Balance Board – Core Stability &amp; Sensory Training", "Yoga Wheel for Back Stretching & Balance"]
+    assert not_product_name(["Core Stability", "Sensory Training", "Yoga Wheel for Back Stretching & Balance"], titles) == []
+    assert not_product_name(["Fat Burning", "Core Stability cures back pain"], titles) == [
+        "Fat Burning", "Core Stability cures back pain",
+    ]
+    assert not_product_name(["guide you to a state of profound calm and chakra balance"], ["Bronze Lotus Singing Bowl Set"]) == [
+        "guide you to a state of profound calm and chakra balance",
+    ]

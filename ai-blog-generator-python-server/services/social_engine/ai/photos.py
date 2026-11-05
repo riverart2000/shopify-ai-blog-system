@@ -34,7 +34,7 @@ def photo_urls(product: dict, limit: int = MAX_PHOTOS_PER_PRODUCT) -> list[str]:
     return [u for u in dict.fromkeys(urls) if u][:limit]
 
 
-async def _look(sctx: StoreContext, url: str, *, subject_id: str) -> tuple[list[str], str] | None:
+async def _look(sctx: StoreContext, url: str, *, subject_id: str, title: str = "") -> tuple[list[str], str] | None:
     """Claims printed on the photo, or None when the model could not answer (nothing is stored)."""
     from ..creatives.images import ImageFetcher, cache_file, sized_url
 
@@ -50,19 +50,19 @@ async def _look(sctx: StoreContext, url: str, *, subject_id: str) -> tuple[list[
         path = cache_file(sized_url(url, fetcher.width))
     provider = OpenAICompatibleProvider(
         ai.base_url, ai.vision_model, api_key=ai.api_key(), timeout=min(float(ai.timeout_seconds), 180.0),
-        name="vision", max_attempts=1,
+        name="vision", max_attempts=1, strict_json=ai.strict_json,
     )
     request = LLMRequest(system=prompts.VISION_SYSTEM, prompt=prompts.photo_audit_prompt(), images=[str(path)],
                          json_mode=True, temperature=0, max_tokens=300)
     try:
-        from .review import VisionDraft, _vision_payload
+        from .review import VisionDraft, _vision_payload, not_product_name
 
         response = await provider.complete(request, sctx.call_context(subject_id), operation="llm.photo_audit")
         draft = VisionDraft.model_validate(_vision_payload(response.text))
     except Exception as exc:
         logger.info("Photo audit skipped: %s", describe(exc)[1], extra={"store_id": sctx.store_id})
         return None
-    return list(draft.claims), response.model
+    return not_product_name(list(draft.claims), [title]), response.model
 
 
 async def audit_product(sctx: StoreContext, product: dict) -> dict[str, dict]:
@@ -73,7 +73,7 @@ async def audit_product(sctx: StoreContext, product: dict) -> dict[str, dict]:
     for url in urls:
         if url in known:
             continue
-        looked = await _look(sctx, url, subject_id=f"photo:{pid}")
+        looked = await _look(sctx, url, subject_id=f"photo:{pid}", title=str(product.get("title") or ""))
         if looked is None:
             continue
         claims, model = looked

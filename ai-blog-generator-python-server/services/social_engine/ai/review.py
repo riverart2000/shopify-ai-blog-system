@@ -1,6 +1,7 @@
 """AI review of a generated post (Gemma), with an optional vision check of the image."""
 from __future__ import annotations
 
+import html
 import logging
 import re
 import time
@@ -93,6 +94,18 @@ class VisionDraft(BaseModel):
 _VISION_FLAG = re.compile(r'"(product[ _.\-]?visible|text[ _.\-]?legible|has[ _.\-]?text)"\s*:\s*(true|false)',
                           re.IGNORECASE)
 _SPELLING_NOISE = re.compile(r"misspel|spelling|typo", re.IGNORECASE)
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", html.unescape(text or "").lower()).split())
+
+
+def not_product_name(claims: list[str], titles: list[str]) -> list[str]:
+    """Drop "claims" that are only words from the product's own name ("Core Stability" on a balance board titled
+    "Yoga Balance Board – Core Stability & Sensory Training"): Gemma 31B reports the printed name as a claim.
+    A claim that says more than the name is kept."""
+    names = [_plain(title) for title in titles if title]
+    return [claim for claim in claims if not (_plain(claim) and any(_plain(claim) in name for name in names))]
 _QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
 
@@ -139,7 +152,7 @@ async def _vision_check(
     expects_product = bool(products) and content_type not in _NO_PRODUCT_TYPES
     provider = OpenAICompatibleProvider(
         ai.base_url, ai.vision_model, api_key=ai.api_key(), timeout=min(float(ai.timeout_seconds), 180.0),
-        name="vision", max_attempts=1,
+        name="vision", max_attempts=1, strict_json=ai.strict_json,
     )
     request = LLMRequest(
         system=prompts.VISION_SYSTEM,
@@ -169,8 +182,9 @@ async def _vision_check(
     if draft.has_text is not False and draft.text_legible is False:
         issues.append("Vision: text on the image is not legible.")
         critical = True
-    if draft.claims:
-        quoted = ", ".join(f'"{claim}"' for claim in draft.claims[:3])
+    claims = not_product_name(draft.claims, [str(product.get("title") or "") for product in products])
+    if claims:
+        quoted = ", ".join(f'"{claim}"' for claim in claims[:3])
         issues.append(f"Vision: the image shows a health or body claim ({quoted}) — use another photo or product.")
         critical = True
     # Our on-image text is drawn from exact strings, so "misspelt" reports from the
