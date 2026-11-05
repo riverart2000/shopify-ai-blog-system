@@ -14,9 +14,22 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 import db
-from services.local_model import local_model
+from services.local_model import LocalModel, LocalModelError, local_model
 
 SETTINGS_KEY = "social_engine.settings"
+
+
+def _shared() -> LocalModel | None:
+    """The shared local model, or None when its file is missing or broken (logged by local_model)."""
+    try:
+        return local_model()
+    except LocalModelError:
+        return None
+
+
+def _shared_value(name: str) -> str:
+    shared = _shared()
+    return str(getattr(shared, name)) if shared else ""
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
@@ -174,9 +187,10 @@ class PostizSettings(_Model):
 
 class AISettings(_Model):
     # The server, text model and vision model come from the shared file ~/.config/local-ai/model.json (also read by
-    # OpenClaw and the Task Agent), whatever is saved here: two different models can't fit in memory together.
-    base_url: str = Field(default_factory=lambda: local_model().server_url)
-    model: str = Field(default_factory=lambda: local_model().text_model)
+    # OpenClaw and the Task Agent), whatever is saved here: two different models can't fit in memory together. If the
+    # file is missing or broken they're empty: AI calls go to the fallback model and the AI check says why.
+    base_url: str = Field(default_factory=lambda: _shared_value("server_url"))
+    model: str = Field(default_factory=lambda: _shared_value("text_model"))
     api_key_env: str = "OMLX_API_KEY"
     timeout_seconds: int = Field(240, ge=10, le=1800)
     temperature: float = Field(0.7, ge=0, le=2)
@@ -188,16 +202,16 @@ class AISettings(_Model):
     # Force JSON with the server's grammar. Off: the prompt asks for JSON and replies are checked and repaired here,
     # which lets oMLX's speed-up drafter run (it can't with a grammar). Turn on only if replies keep failing to parse.
     strict_json: bool = False
-    vision_model: str = Field(default_factory=lambda: local_model().vision_model)
+    vision_model: str = Field(default_factory=lambda: _shared_value("vision_model"))
     # A Models-page model asked for a second opinion only when Gemma rejects a
     # post on its wording; if it finds nothing blocking, the post is approved.
     verify_model_id: str = ""
 
     @model_validator(mode="after")
     def _shared_model(self) -> "AISettings":
-        shared = local_model()
-        wanted = [("base_url", shared.server_url), ("model", shared.text_model)]
-        if self.vision_model:  # empty = image review is off; otherwise it's the shared vision model
+        shared = _shared()
+        wanted = [("base_url", shared.server_url if shared else ""), ("model", shared.text_model if shared else "")]
+        if self.vision_model and shared:  # empty = image review is off; otherwise it's the shared vision model
             wanted.append(("vision_model", shared.vision_model))
         for name, value in wanted:
             if getattr(self, name) != value:

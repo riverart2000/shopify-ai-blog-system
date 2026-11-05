@@ -105,6 +105,10 @@ async def _postiz(sctx: StoreContext, live: bool) -> Check:
 
 async def _gemma(sctx: StoreContext, live: bool) -> Check:
     ai = sctx.settings.ai
+    if not ai.model or not ai.base_url:
+        from .ai.llm import no_local_model
+
+        return _check("gemma", "error", no_local_model())
     if not live:
         return _check("gemma", "ok", f"{ai.model} at {ai.base_url} (not tested)")
     try:
@@ -117,8 +121,11 @@ async def _gemma(sctx: StoreContext, live: bool) -> Check:
     ok = result.get("ok", result.get("status") == "ok")
     # The LLM result has its own name/status/message keys; keep them out of the check's details.
     details = {k: v for k, v in result.items() if k not in ("name", "status", "message")}
-    return _check("gemma", "ok" if ok else "error", result.get("message") or
-                  f"{ai.model} responded in {result.get('latency_ms', '?')} ms", **details)
+    message = result.get("message") or (
+        f"{ai.model} responded in {result.get('latency_ms', '?')} ms" if ok
+        else result.get("error") or f"{ai.model} at {ai.base_url} didn't pass the check ({result.get('status')})"
+    )
+    return _check("gemma", "ok" if ok else "error", message, **details)
 
 
 async def _ffmpeg() -> Check:

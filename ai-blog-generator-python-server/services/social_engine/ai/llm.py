@@ -31,6 +31,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 import db
 from db.social_engine import observability
+from services.local_model import local_model_problem, model_file
 
 from ..context import StoreContext
 from ..errors import ConfigurationError, ExternalServiceError, SocialEngineError, ValidationError, describe
@@ -153,7 +154,7 @@ class OpenAICompatibleProvider:
 
     async def complete(self, request: LLMRequest, ctx: CallContext, *, operation: str = "llm.complete") -> LLMResponse:
         if not self.base_url or not self.model:
-            raise ConfigurationError("The AI base URL and model must be set in Social Engine → AI settings.")
+            raise ConfigurationError(no_local_model())
         payload = self.build_payload(request)
         slot = _local_slot(self.base_url)
         async with slot or nullcontext():
@@ -532,6 +533,10 @@ class LLMRouter:
             return 0
 
 
+def no_local_model() -> str:
+    return local_model_problem() or f"No local AI model is set: name it in {model_file()}."
+
+
 def primary_provider(settings: AISettings) -> OpenAICompatibleProvider:
     name = "gemma" if "gemma" in settings.model.lower() else "local"
     return OpenAICompatibleProvider(
@@ -561,6 +566,9 @@ async def check_llm(settings: AISettings) -> dict:
         settings.base_url, settings.model, api_key=settings.api_key(),
         timeout=min(float(settings.timeout_seconds), 120.0), max_attempts=1, strict_json=settings.strict_json,
     )
+    if not settings.base_url or not settings.model:
+        result.update(status="not_configured", error=no_local_model(), latency_ms=0)
+        return result
     try:
         list_started = time.monotonic()
         async with ServiceClient(

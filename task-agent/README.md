@@ -88,18 +88,24 @@ message. The bot runs inside the worker and long-polls Telegram, so no public ad
 - Needs `SOCIAL_API_KEY` in `.env` (the live server's `AI_BLOG_BACKEND_API_KEY`).
 
 ## Model
-One text model for everything: `gemma-4-31b-it-8bit` with its speed-up drafter
-(`~/.omlx/drafters/gemma-4-31B-it-assistant-bf16`, set in oMLX's model settings), shared with the Social
-Engine so oMLX never has to swap models (a swap while one was busy made a campaign run fail on 30 Oct).
-Chosen on 31 Oct after testing: the most careful on research (no invented details), about 3× slower than
-the 26B, which stays installed as a backup. The Task Agent turns thinking on per request; the Social
-Engine keeps it off. Images go to the same 31B (it reads images too), so no second model loads.
-
 **The model is set in one file: `~/.config/local-ai/model.json`** (server, text model, vision model, context window,
 answer cap), read by OpenClaw, the Task Agent and Social Autopilot alike, because two large models can't fit in
-memory together. `.env` and the admin page can't override it (`task_agent/local_model.py`; the page shows it).
-After changing it: restart the Task Agent and Social Autopilot, and run `node scripts/sync-local-model.mjs` in
-~/openclaw.
+memory together. No code names a model: `.env` and the admin page can't override the file, and if it's missing or
+incomplete the Task Agent stops with a message naming the file and the problem (`task_agent/local_model.py`;
+Social Autopilot instead switches to its fallback model and its AI check says why). Without a `vision_model`,
+images go to the text model.
+
+To change models:
+1. In oMLX, give the new model the same model settings as the current one (speed-up drafter, context window), pin it,
+   and unpin and unload the old one.
+2. Edit the file. Social Autopilot picks it up at once.
+3. Restart the Task Agent and run `node scripts/sync-local-model.mjs` in ~/openclaw.
+
+One model does text and images, with oMLX's speed-up drafter, so oMLX never swaps models (a swap while one was busy
+made a campaign run fail on 30 Oct). It's a Gemma 4 31B: chosen on 31 Oct as the most careful on research (no
+invented details), and switched from 8-bit to 6-bit on 5 Nov (6.5 GB less memory, 10–25% faster, the same answers in
+a side-by-side test). Use the chat (`-it`) version: the plain one is the base model, which doesn't follow
+instructions. The Task Agent turns thinking on per request; the Social Engine keeps it off.
 
 ## How a job runs
 1. A job is queued in `data/task_agent.db` (a repeated `--key` never creates a second job).

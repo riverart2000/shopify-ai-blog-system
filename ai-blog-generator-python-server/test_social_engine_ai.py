@@ -315,9 +315,10 @@ async def test_check_llm_reports_status(se_db, shared_model_file):
     report = await check_llm(AISettings())
     assert report["ok"] and report["status"] == "ok" and report["model_listed"] and not report["vision_model_listed"]
     assert report["latency_ms"] is not None
-    shared_model_file.write_text('{"text_model": "not-served"}')  # the model comes from the shared file
+    shared = json.loads(shared_model_file.read_text())
+    shared_model_file.write_text(json.dumps(shared | {"text_model": "not-served"}))  # the shared file names the model
     missing = await check_llm(AISettings())
-    shared_model_file.write_text('{"text_model": "gemma-4-31b-it-8bit"}')
+    shared_model_file.write_text(json.dumps(shared))
     assert missing["status"] == "model_missing" and "not-served" in missing["error"]
     FakeLLM(httpx.ConnectError("refused")).install()
     down = await check_llm(AISettings())
@@ -340,7 +341,7 @@ async def test_doctor_gemma_check_live(sctx):
     assert "status" not in check["details"] and check["details"]["model_listed"]
     FakeLLM(httpx.ConnectError("refused")).install()
     down = await _gemma(sctx, live=True)
-    assert down["status"] == "error", down
+    assert down["status"] == "error" and "responded" not in down["message"], down
 
 
 # ---------------------------------------------------------------------------
@@ -1013,9 +1014,39 @@ async def test_the_shared_model_file_decides_the_model(se_db, shared_model_file)
     settings = await load_settings("store_1")
     assert settings.ai.model == "gemma-4-31b-it-8bit"
     assert settings.ai.vision_model == "mlx-community--Qwen3-VL-8B-Instruct-8bit"
-    shared_model_file.write_text(json.dumps({"text_model": "gemma-5-40b", "server_url": "http://127.0.0.1:9000/v1"}))
+    shared = json.loads(shared_model_file.read_text())
+    del shared["vision_model"]  # no separate vision model: images go to the text model
+    shared_model_file.write_text(json.dumps(shared | {"text_model": "gemma-5-40b", "server_url": "http://127.0.0.1:9000/v1"}))
     settings = await load_settings("store_1")
     assert settings.ai.model == "gemma-5-40b" and settings.ai.base_url == "http://127.0.0.1:9000/v1"
+    assert settings.ai.vision_model == "gemma-5-40b"
+
+
+@pytest.mark.asyncio
+async def test_no_model_is_built_in(se_db, sctx, shared_model_file):
+    """Without the shared file nothing names a model: AI calls stop with the file's path (the router then uses the
+    fallback model), the AI check says what's wrong, and the rest of the settings still load."""
+    from services.social_engine.errors import ConfigurationError
+    from services.social_engine.health import _gemma
+    from services.social_engine.settings import load_settings
+    from services.social_engine.ai.llm import primary_provider
+
+    good = shared_model_file.read_text()
+    shared_model_file.unlink()
+    settings = await load_settings("store_1")
+    assert settings.ai.model == "" and settings.ai.base_url == "" and settings.postiz  # the rest still loads
+    with pytest.raises(ConfigurationError, match="local-ai-model.json is missing"):
+        await primary_provider(settings.ai).complete(LLMRequest(prompt="x"), sctx.call_context())
+    report = await check_llm(settings.ai)
+    assert report["status"] == "not_configured" and "is missing" in report["error"]
+    sctx.settings = settings
+    check = await _gemma(sctx, live=False)
+    assert check["status"] == "error" and "is missing" in check["message"], check
+
+    shared_model_file.write_text(json.dumps(json.loads(good) | {"context_window": 4096}))
+    assert (await load_settings("store_1")).ai.model == ""  # max_output_tokens 8192 doesn't fit in 4096
+    shared_model_file.write_text(good)
+    assert (await load_settings("store_1")).ai.model == "gemma-4-31b-it-8bit"  # fixed file: back at once
 
 
 def test_product_names_are_not_claims():
