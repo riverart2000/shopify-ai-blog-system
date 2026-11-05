@@ -34,6 +34,36 @@ log = structlog.get_logger()
 Runner = Callable[[list[str], str | None, float], Awaitable[tuple[int, str, str]]]
 UPLOAD_DIR = Path("/tmp/openclaw/uploads")  # the only folder OpenClaw will upload files from
 SNAPSHOT_NODES = "3000"
+# The dialog on top of the page, as a CSS selector that matches only it ("" when there's none). Sites draw dialogs
+# last in the page, so on a page too long to read in full the dialog is the part that gets cut off.
+TOP_DIALOG = """() => {
+  const seen = (d) => { const r = d.getBoundingClientRect(), s = getComputedStyle(d);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  let found = [...document.querySelectorAll('[aria-modal="true"]')];
+  try { found.push(...document.querySelectorAll('dialog:modal')); } catch (e) {}
+  found = found.filter(seen).reverse();
+  if (!found.length) return '';
+  const inside = (v, max) => Math.min(Math.max(v, 0), max - 1);
+  const onTop = (d) => { const r = d.getBoundingClientRect();
+    const x = inside(r.left + r.width / 2, innerWidth), y = inside(r.top + r.height / 2, innerHeight);
+    const top = document.elementFromPoint(x, y);
+    return !!top && d.contains(top); };
+  const el = found.find(onTop) || found[0];
+  const only = (sel) => { try { const m = document.querySelectorAll(sel); return m.length === 1 && m[0] === el; }
+    catch (e) { return false; } };
+  const quote = (v) => '"' + v.replace(/\\\\/g, '\\\\\\\\').replace(/"/g, '\\\\"') + '"';
+  const tries = el.id ? ['#' + CSS.escape(el.id)] : [];
+  for (const name of ['aria-labelledby', 'aria-label', 'data-testid']) {
+    const value = el.getAttribute(name);
+    if (value) tries.push(el.tagName.toLowerCase() + '[' + name + '=' + quote(value) + ']');
+  }
+  tries.push('[aria-modal="true"]', 'dialog[open]');
+  for (const sel of tries) if (only(sel)) return sel;
+  const path = [];
+  for (let n = el; n.parentElement; n = n.parentElement)
+    path.unshift(n.tagName.toLowerCase() + ':nth-child(' + ([...n.parentElement.children].indexOf(n) + 1) + ')');
+  return 'html > ' + path.join(' > ');
+}"""
 _TAB_GONE = re.compile(r"tab.{0,40}(not found|closed|no longer|unknown|revoked)|no such tab|target closed", re.I)
 
 
@@ -100,9 +130,9 @@ class Relay:
             except OSError as exc:
                 raise RelayError(f"OpenClaw couldn't be started ({exc.strerror or exc}).") from exc
         data = _parse(out)
-        if code != 0 or data.get("ok") is False or ("error" in data and not data.get("ok")):
-            message = str(data.get("error") or _last_line(err) or _last_line(out) or f"exit code {code}")
-            raise RelayError(message[:300])
+        failed = [r for r in data.get("results") or [] if isinstance(r, dict) and r.get("ok") is False]
+        if code != 0 or data.get("ok") is False or ("error" in data and not data.get("ok")) or failed:
+            raise RelayError(_error_text(data, failed, out, err, code))
         return data
 
 
@@ -119,6 +149,18 @@ def _parse(text: str) -> dict[str, Any]:
         except ValueError:
             return {}
     return value if isinstance(value, dict) else {"result": value}
+
+
+def _error_text(data: dict[str, Any], failed: list[dict[str, Any]], out: str, err: str, code: int) -> str:
+    """OpenClaw's own words for what went wrong: its error, or the first failed action of a batch (typing is one)."""
+    error = data.get("error")
+    if isinstance(error, dict):
+        error = error.get("message") or json.dumps(error)
+    if not error and failed:
+        error = failed[0].get("error")
+    text = str(error or _last_line(err) or _last_line(out) or f"exit code {code}")
+    # Playwright adds its call log after the message; the first part says it all.
+    return text.split("\nCall log", 1)[0].split(" | locator.", 1)[0].strip()[:300]
 
 
 def _last_line(text: str) -> str:
@@ -144,6 +186,7 @@ class RelayPage:
         self._title = ""
         self._closed = False
         self.refs: dict[str, Any] | None = None  # refs in the last snapshot
+        self.dialog_only = False  # the last snapshot shows only the dialog that's open on top of the page
         self.keyboard = _Keyboard(self)
         self.mouse = _Mouse(self)
 
@@ -203,9 +246,28 @@ class RelayPage:
     async def aria_snapshot(self, mode: str = "ai", timeout: float = 15_000) -> str:
         if self.tab is None:
             return "- text: [No page is open yet. Use open_page.]"
-        data = await self.call("snapshot", "--limit", SNAPSHOT_NODES, timeout=max(30.0, timeout / 1000 + 20))
+        seconds = max(30.0, timeout / 1000 + 20)
+        data = await self.call("snapshot", "--limit", SNAPSHOT_NODES, timeout=seconds)
+        self.dialog_only = False
+        if data.get("truncated"):
+            data = await self._dialog_on_top(seconds) or data
         self.refs = data.get("refs") if isinstance(data.get("refs"), dict) else {}
         return str(data.get("snapshot") or "")
+
+    async def _dialog_on_top(self, seconds: float) -> dict[str, Any] | None:
+        """The page was too long to read in full. If a dialog is open on top of it, read just the dialog: it's
+        the only part that can be used, and the part most likely to have been cut off."""
+        try:
+            selector = await self.evaluate(TOP_DIALOG)
+            if not isinstance(selector, str) or not selector:
+                return None
+            data = await self.call("snapshot", "--selector", selector, "--limit", SNAPSHOT_NODES, timeout=seconds)
+        except RelayError:
+            return None
+        if not data.get("snapshot"):
+            return None
+        self.dialog_only = True
+        return data
 
     async def evaluate(self, js: str) -> Any:
         return (await self.call("evaluate", "--fn", js)).get("result")

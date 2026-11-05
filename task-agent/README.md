@@ -121,6 +121,13 @@ instructions. The Task Agent turns thinking on per request; the Social Engine ke
    action failing 3 times gets a "do something different" warning; 8 failed page actions in a row stop the job
    ("the last 8 page actions all failed"), so a stuck job doesn't use its whole budget. After a restart the job's
    tab is gone: the agent is told to open the page again, and refs from before the restart are checked first.
+7. What the agent sees of a page (`tools/browser.py`):
+   - Anything that reacts to a click has a ref, not only links and buttons (menu rows and calendar days are often
+     plain elements).
+   - An open dialog is shown first. On a page too long for OpenClaw to read in full (Facebook: 40,000 characters),
+     only the dialog on top is read and shown, because sites draw dialogs last and it would be cut off.
+   - A click on something that's covered says what covers it (a dialog, an open menu's full-page layer, or a
+     sticky bar), so the agent deals with that instead of clicking again.
 
 ## Guardrails in place
 - Web pages and search results are wrapped as `<untrusted_data>`; the rules (sent on every request,

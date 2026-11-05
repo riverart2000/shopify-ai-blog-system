@@ -18,6 +18,23 @@ from task_agent.chrome import ChromeHub, Relay, RelayError, make_browser
 from task_agent.tools import browser as tools
 from task_agent.tools.browser import NeedsJoe
 
+# What OpenClaw returns for one part of a page: a different format from the whole-page snapshot.
+DIALOG_SNAPSHOT = """- dialog "Create post"
+  - heading "Create post" [ref=e9] [level=2]
+    - StaticText "Create post"
+      - InlineTextBox "Create post"
+  - button "Close composer dialogue" [ref=e1]
+  - StaticText "Post anonymously"
+    - InlineTextBox "Post anonymously"
+  - textbox "Write something..." [ref=e2] value="\\n"
+    - paragraph
+      - LineBreak "\\n"
+        - InlineTextBox "\\n"
+  - button "Post" [ref=e3] [disabled]
+    - StaticText "Post"
+      - InlineTextBox "Post"
+"""
+
 
 class FakeOpenClaw:
     """Pretends to be `openclaw browser --json`: Joe's own tab t1 is open; agents' tabs are t2, t3, …"""
@@ -28,6 +45,9 @@ class FakeOpenClaw:
         self.calls: list[tuple[list[str], str | None]] = []
         self.connected = True
         self.popup_ref = "e9"
+        self.too_long = False  # the page is too long for OpenClaw to read in full
+        self.dialog = ""  # CSS selector of a dialog open on top of the page
+        self.covered: dict[str, str] = {}  # ref -> what's on top of it ("dialog", "layer", "other")
 
     async def __call__(self, cmd: list[str], stdin: str | None, timeout: float) -> tuple[int, str, str]:
         args = cmd[cmd.index("--json") + 1 :]
@@ -48,10 +68,20 @@ class FakeOpenClaw:
         if name == "navigate":
             self.tabs[tab] = args[1]
             return 0, json.dumps({"ok": True, "url": args[1]}), ""
+        if name == "snapshot" and "--selector" in args:
+            refs = {"e1": {"role": "button"}, "e2": {"role": "textbox"}, "e3": {"role": "button"}}
+            return 0, json.dumps({"ok": True, "url": self.tabs[tab], "snapshot": DIALOG_SNAPSHOT, "refs": refs}), ""
         if name == "snapshot":
             snap = '- button "Go" [ref=e1]\n- link "Popup" [ref=e9]'
             refs = {"e1": {"role": "button"}, "e9": {"role": "link"}}
-            return 0, json.dumps({"ok": True, "url": self.tabs[tab], "snapshot": snap, "refs": refs}), ""
+            data = {"ok": True, "url": self.tabs[tab], "snapshot": snap, "refs": refs}
+            return 0, json.dumps(data | ({"truncated": True} if self.too_long else {})), ""
+        if name == "click" and args[1] in self.covered:
+            message = (
+                f'Element "{args[1]}" is not interactable (covered; another element intercepts pointer events). '
+                "Try scrolling it into view, closing overlays, or re-snapshotting."
+            )
+            return 1, json.dumps({"error": {"type": "cli_error", "message": message}}), ""
         if name == "click":
             if args[1] == self.popup_ref:
                 new = f"t{self.next}"
@@ -67,7 +97,13 @@ class FakeOpenClaw:
             self.tabs.pop(args[1], None)
             return 0, json.dumps({"ok": True}), ""
         if name == "evaluate":
-            return 0, json.dumps({"ok": True, "url": self.tabs[tab], "result": {"tag": "input", "type": "text"}}), ""
+            script = args[args.index("--fn") + 1]
+            result: Any = {"tag": "input", "type": "text"}
+            if "--ref" not in args and "aria-modal" in script:
+                result = self.dialog
+            elif "--ref" in args and "elementFromPoint" in script:
+                result = self.covered.get(args[args.index("--ref") + 1], "")
+            return 0, json.dumps({"ok": True, "url": self.tabs[tab], "result": result}), ""
         return 0, json.dumps({"ok": True, "url": self.tabs.get(tab or "", "")}), ""
 
     def commands(self, name: str) -> list[list[str]]:
@@ -259,3 +295,102 @@ async def test_a_failed_login_fill_never_shows_the_error_text(relay, monkeypatch
     deps.accounts = accounts
     reply = await tools.type_saved_login(SimpleNamespace(deps=deps), "e1", "meetup", "password")  # type: ignore[arg-type]
     assert "didn't work (RelayError)" in reply and "s3cret" not in reply
+
+
+# ── things on top of the page ───────────────────────────────────────────────────
+
+
+async def test_a_dialog_on_a_page_too_long_to_read_is_shown_by_itself(relay, monkeypatch) -> None:
+    """Facebook draws its post box last in a 40,000-character page: OpenClaw cuts the page off before it."""
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    hub = hub_for(relay)
+    ctx = SimpleNamespace(deps=tool_deps(hub))
+    page = await hub.page("job:8")
+    await page.goto("https://www.facebook.com/groups/1/")
+    relay.too_long = True
+    assert "(A dialog" not in await tools.look(ctx)  # a long page with no dialog: shown as before
+    assert not relay.commands("snapshot")[-1].count("--selector")
+
+    relay.dialog = 'div[aria-labelledby="_r_hl_"]'
+    view = await tools.look(ctx)  # type: ignore[arg-type]
+    assert view.startswith("(A dialog is open on top of the page, so only the dialog is shown.")
+    assert relay.commands("snapshot")[-1][1:3] == ["--selector", 'div[aria-labelledby="_r_hl_"]']
+    assert '- textbox "Write something..." [ref=e2]' in view and '- button "Post" [ref=e3] [disabled]' in view
+    assert "InlineTextBox" not in view and "LineBreak" not in view and "StaticText" not in view
+    assert view.count("Create post") == 2 and "- text: Post anonymously" in view  # text a parent shows isn't repeated
+    assert set(page.refs or {}) == {"e1", "e2", "e3"} and "[ref=e9]" not in view  # the page behind can't be used
+
+    found = await tools.find_on_page(ctx, "Popup")  # type: ignore[arg-type]
+    assert "in the dialog that's open on top of the page" in found
+    await tools.click(ctx, "e1")  # type: ignore[arg-type]
+    assert relay.commands("click")[-1][1] == "e1"
+
+
+def test_dialogs_come_first_in_a_page_view() -> None:
+    """A dialog drawn after a long page was past the part the agent is shown."""
+    lines = ["- banner", ' - link "Home" [ref=e1]', "- main", ' - dialog "Cookies"', '  - button "Accept" [ref=e7]']
+    lines += ["- contentinfo"]
+    view, has_dialog = tools.dialogs_first(lines)
+    assert has_dialog and view[:2] == ['- dialog "Cookies"', ' - button "Accept" [ref=e7]']
+    assert view[2:] == ["- banner", ' - link "Home" [ref=e1]', "- main", "- contentinfo"]
+    assert tools.dialogs_first(lines[:3]) == (lines[:3], False)
+
+
+def test_things_that_react_to_a_click_keep_their_ref() -> None:
+    """Ents24's menu rows and a calendar's days are plain elements with a click handler, not buttons."""
+    raw = """- complementary [ref=e54]:
+  - generic [ref=e55]:
+    - generic [aria-hidden] [ref=e57] [cursor=pointer]: close
+    - list [ref=e58]:
+      - listitem [ref=e71] [cursor=pointer]: [new]
+        - generic [aria-hidden] [ref=e73]: account_box [new]
+        - generic [ref=e74]: Account [new]
+      - listitem [ref=e75]:
+        - generic [ref=e78]: Widgets
+  - button "Search" [ref=e12] [cursor=pointer]"""
+    view = tools.compact_snapshot(raw)
+    assert "- generic [aria-hidden] [ref=e57]: close" in view
+    assert "- listitem [ref=e71]:" in view and "- generic: Account" in view  # the row is clickable, its text isn't
+    assert "[ref=e75]" not in view and "[ref=e78]" not in view and '- button "Search" [ref=e12]' in view
+    assert "cursor=pointer" not in view and "[new]" not in view
+
+
+@pytest.mark.parametrize(
+    ("on_top", "says"),
+    [
+        ("dialog", "a dialog is open on top of it"),
+        ("layer", "a menu or pop-up is open"),
+        ("other", "a sticky bar, a banner or a pop-up"),
+        ("", "Close any open menu, dialog or banner first"),
+    ],
+)
+async def test_a_covered_click_says_what_is_in_the_way(relay, monkeypatch, on_top, says) -> None:
+    monkeypatch.setattr(tools, "SETTLE_SECONDS", 0)
+    hub = hub_for(relay)
+    ctx = SimpleNamespace(deps=tool_deps(hub))
+    page = await hub.page("job:8")
+    await page.goto("https://backstage.ents24.com/")
+    await page.aria_snapshot()
+    relay.covered = {"e1": on_top}
+    reply = await tools.click(ctx, "e1")  # type: ignore[arg-type]
+    assert reply.startswith(f"[Click on e1 didn't work: {says}") or says in reply.split("]")[0]
+    assert "cli_error" not in reply and "The page now:" in reply
+
+
+async def test_a_failed_action_shows_openclaws_own_words(relay) -> None:
+    """Typing goes in a batch: its error is inside the results, with Playwright's call log after it."""
+    failed = {
+        "ok": True,
+        "results": [{
+            "ok": False,
+            "error": 'Element "e11" is not editable: this control does not support text input. | locator.fill: '
+            "Error: Element is not an <input>\nCall log:\n  - waiting for locator('aria-ref=e11')\n",
+        }],
+    }  # fmt: skip
+
+    async def runner(cmd: list[str], stdin: str | None, timeout: float) -> tuple[int, str, str]:
+        return 1, json.dumps(failed, indent=2), ""
+
+    with pytest.raises(RelayError) as caught:
+        await Relay(Path("/openclaw"), node="node", runner=runner).call("batch", "--actions-file", "-", stdin="[]")
+    assert str(caught.value) == 'Element "e11" is not editable: this control does not support text input.'

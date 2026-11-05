@@ -34,6 +34,11 @@ _REF = re.compile(r"\s*\[ref=[a-z0-9]+\]")
 _LINE = re.compile(r"^(\s*)- (.*)$")
 _ROLE = re.compile(r"^([a-z]+)\b(.*)$")
 _REF_ARG = re.compile(r"(f\d+e\d+|e\d+)")
+_POINTER = " [cursor=pointer]"  # Playwright's mark for something that reacts to a click, whatever its role
+_NOISE = {"InlineTextBox", "LineBreak"}  # layout detail in a snapshot of one part of a page
+_STATIC = re.compile(r'^StaticText "(.*)"$')
+_DIALOG = re.compile(r"^- (dialog|alertdialog)\b")
+_COVERED = re.compile(r"covered|intercepts pointer events|not interactable", re.I)
 _PAYMENT = re.compile(r"card.?number|cc-|cvc|cvv|security.?code|expir|iban|sort.?code|account.?number", re.I)
 
 
@@ -52,14 +57,26 @@ def compact_snapshot(raw: str) -> str:
     """Shrink Playwright's AI snapshot: keep refs only on things you can use, drop empty wrappers, re-indent."""
     out: list[str] = []
     stack: list[int] = []  # original indents of the kept ancestors
+    skip_below: int | None = None  # indent of a dropped line whose children go too
     for line in raw.splitlines():
-        line = _ICONS.sub("", line).replace(" [cursor=pointer]", "").rstrip()
+        clickable = _POINTER in line  # a menu row or a calendar day is often a plain element with a click handler
+        line = _ICONS.sub("", line).replace(_POINTER, "").rstrip().removesuffix(" [new]")  # OpenClaw's "changed" mark
         match = _LINE.match(line)
         if not match:
             continue
         indent, body = len(match.group(1)), match.group(2).strip()
+        if skip_below is not None:
+            if indent > skip_below:
+                continue
+            skip_below = None
         while stack and stack[-1] >= indent:
             stack.pop()
+        static = _STATIC.match(body)
+        if body.split(" ", 1)[0] in _NOISE or (static and out and static.group(1) in out[-1]):
+            skip_below = indent  # layout detail, or text its parent already shows
+            continue
+        if static:
+            body = "text: " + static.group(1)
         if body.startswith("/url:"):
             url = body[5:].strip()
             out.append(" " * len(stack) + "- url: " + (url[:140] + "…" if len(url) > 140 else url))
@@ -67,7 +84,7 @@ def compact_snapshot(raw: str) -> str:
         role_match = _ROLE.match(body)
         if role_match:
             role, rest = role_match.groups()
-            if role not in INTERACTIVE:
+            if role not in INTERACTIVE and not clickable:
                 rest = _REF.sub("", rest)
             label = rest.strip().rstrip(":").strip()
             if (role in WRAPPERS and not label) or (role == "img" and not label):
@@ -94,7 +111,15 @@ async def snapshot(deps: JobDeps, *, note: str = "", max_chars: int = SNAPSHOT_M
     title = ""
     with _suppress():
         title = await page.title()
-    lines = view.splitlines()
+    lines, has_dialog = dialogs_first(view.splitlines())
+    if getattr(page, "dialog_only", False):
+        note = _join(
+            note,
+            "(A dialog is open on top of the page, so only the dialog is shown. Use it, or close it "
+            "to get back to the page.)",
+        )
+    elif has_dialog:
+        note = _join(note, "(A dialog is open: it's shown first, and it may be covering the rest of the page.)")
     shown, size = [], 0
     for line in lines:
         if size + len(line) > max_chars:
@@ -109,10 +134,32 @@ async def snapshot(deps: JobDeps, *, note: str = "", max_chars: int = SNAPSHOT_M
         )
     head = (f"Page: {title}\n" if title else "") + f"Address: {page.url}\n"
     if deps.browser and deps.browser.take_reopened(deps.owner):
-        note = (
-            note + " " if note else ""
-        ) + "(The browser restarted and this page was reloaded: check what you typed.)"
+        note = _join(note, "(The browser restarted and this page was reloaded: check what you typed.)")
     return (note + "\n" if note else "") + wrap_untrusted(page.url, head + body)
+
+
+def _join(note: str, more: str) -> str:
+    return f"{note} {more}" if note else more
+
+
+def dialogs_first(lines: list[str]) -> tuple[list[str], bool]:
+    """Move open dialogs to the top of the page view. Sites draw them last, which on a long page is past the part
+    the agent is shown: it then keeps clicking things the dialog covers."""
+    dialogs: list[str] = []
+    rest: list[str] = []
+    inside: int | None = None  # indent of the dialog being copied
+    for line in lines:
+        indent = len(line) - len(line.lstrip())
+        if inside is not None and indent > inside:
+            dialogs.append(line[inside:])
+            continue
+        inside = None
+        if _DIALOG.match(line.lstrip()):
+            inside = indent
+            dialogs.append(line[inside:])
+        else:
+            rest.append(line)
+    return dialogs + rest, bool(dialogs)
 
 
 def _domains(text: str) -> set[str]:
@@ -269,27 +316,74 @@ async def find_on_page(ctx: RunContext[JobDeps], text: str) -> str:
     lines = view.splitlines()
     words = text.lower().split()
     hits = [i for i, line in enumerate(lines) if all(w in line.lower() for w in words)]
+    only_dialog = getattr(page, "dialog_only", False)
     if not hits:
-        return f"[No line on this page contains: {text}]"
+        where = "in the dialog that's open on top of the page (close it to search the page)" if only_dialog else ""
+        return f"[No line {where or 'on this page'} contains: {text}]"
     chunks, last = [], -1
     for i in hits[:15]:
         start, end = max(i - 2, last + 1), min(i + 3, len(lines))
         if start < end:
             chunks.append("\n".join(lines[start:end]))
             last = end - 1
-    return wrap_untrusted(page.url, f"Matches for '{text}' ({len(hits)} lines):\n" + "\n…\n".join(chunks))
+    found = wrap_untrusted(page.url, f"Matches for '{text}' ({len(hits)} lines):\n" + "\n…\n".join(chunks))
+    return ("(Only the dialog that's open on top of the page was searched.)\n" if only_dialog else "") + found
 
 
 async def click(ctx: RunContext[JobDeps], ref: str) -> str:
     """Click a link, button, tab, menu item or option by its ref. Returns the page afterwards."""
+    locator = None
     try:
         locator = await _locate(ctx.deps, ref)
         await locator.click(timeout=10_000)
     except _ToolProblem as exc:
         return await _failed(ctx.deps, f"click {ref}", str(exc))
     except Exception as exc:
-        return await _failed(ctx.deps, f"click {ref}", f"Click on {ref} didn't work ({_why(exc)})")
+        return await _failed(ctx.deps, f"click {ref}", await _click_problem(locator, ref, exc))
     return await _after_action(ctx.deps, f"Clicked {ref}.")
+
+
+# What is drawn on top of an element: "dialog", "layer" (a full-page layer, as behind an open menu), "other" or "".
+# Only the kind comes back, never the page's own words: this goes to the model outside the untrusted-data wrapper.
+ON_TOP = """(el) => {
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return '';
+  const inside = (v, max) => Math.min(Math.max(v, 0), max - 1);
+  const x = inside(r.left + r.width / 2, innerWidth), y = inside(r.top + r.height / 2, innerHeight);
+  const top = document.elementFromPoint(x, y);
+  if (!top || top === el || el.contains(top) || top.contains(el)) return '';
+  for (let n = top; n && n !== document.body; n = n.parentElement) {
+    const role = n.getAttribute('role');
+    const dialog = role === 'dialog' || role === 'alertdialog' || n.tagName === 'DIALOG';
+    if (dialog || n.getAttribute('aria-modal') === 'true') return 'dialog';
+  }
+  return top.offsetWidth >= innerWidth * 0.9 && top.offsetHeight >= innerHeight * 0.9 ? 'layer' : 'other';
+}"""
+COVERED_BY = {
+    "dialog": "a dialog is open on top of it. Use the dialog, or close it first.",
+    "layer": (
+        "a full-page layer is on top of it, which means a menu or pop-up is open. Use what's open, or close it "
+        "(its close button, or press_key Escape)."
+    ),
+    "other": (
+        "something else on the page is on top of it (a sticky bar, a banner or a pop-up). Close that, or scroll "
+        "so the thing you want is clear of it."
+    ),
+    "": "something is on top of it. Close any open menu, dialog or banner first (press_key Escape often works).",
+}
+
+
+async def _click_problem(locator: Any, ref: str, exc: Exception) -> str:
+    """Why a click failed. When the element is covered, say by what, so the agent deals with that instead of
+    clicking again."""
+    why = _why(exc)
+    if not _COVERED.search(why):
+        return f"Click on {ref} didn't work ({why})"
+    kind = ""
+    if locator is not None:
+        with _suppress():
+            kind = str(await locator.evaluate(ON_TOP) or "")
+    return f"Click on {ref} didn't work: {COVERED_BY.get(kind, COVERED_BY[''])}"
 
 
 async def type_text(
