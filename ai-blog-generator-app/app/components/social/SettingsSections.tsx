@@ -8,7 +8,7 @@ import { Form, Link } from "react-router";
 
 import type {
   ActionResult, AISettings, CaptionSettings, Collection, ContentSettings, EngineSettings, FallbackModel, GuardSettings,
-  HashtagCloud, PostizSettings, ScheduleSettings, UtmSettings,
+  HashtagCloud, PostizSettings, ScheduleSettings, ShoppableSettings, UtmSettings,
 } from "../../lib/social-engine.types";
 import { timezoneLabel } from "../../lib/social-time";
 import { usePostizTools } from "./PostizParts";
@@ -288,6 +288,32 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
           </div>
         )}
       />
+
+      {settings.shoppable ? (
+        <Section<ShoppableSettings>
+          key={`shoppable-${hash(settings.shoppable)}`}
+          id="shoppable" title="Shoppable page (bio link)" section="shoppable" initial={settings.shoppable} {...common}
+          description="Instagram and TikTok posts can't carry a link, so captions say “link in bio”. This keeps one page in your shop showing the products from your latest posts, newest first, each opening its own product page. Put its address in your Instagram and TikTok bios."
+          render={(draft, update) => (
+            <div className="sa-stack">
+              <div className="sa-grid">
+                <Toggle checked={draft.enabled} onChange={(value) => update({ enabled: value })} label="Keep a shoppable page in the shop" help="Rebuilt every hour from what was posted. Turning this off leaves the page as it is." />
+                <Field label="Page address" help={`Your shop's address + /pages/${draft.page_handle}. Lowercase letters, numbers and hyphens.`}>
+                  <input type="text" value={draft.page_handle} onChange={(event) => update({ page_handle: event.target.value })} />
+                </Field>
+                <Field label="Page title"><input type="text" value={draft.title} onChange={(event) => update({ title: event.target.value })} /></Field>
+              </div>
+              <Field label="Line above the products" help={`${draft.intro.length}/240 characters. Leave blank for none.`}>
+                <input type="text" value={draft.intro} onChange={(event) => update({ intro: event.target.value })} />
+              </Field>
+              <div className="sa-grid">
+                <NumberField label="Products shown" value={draft.max_products} min={4} max={60} onChange={(value) => update({ max_products: value })} />
+                <NumberField label="Posted within (days)" help="Products posted longer ago drop off the page." value={draft.days} min={7} max={365} onChange={(value) => update({ days: value })} />
+              </div>
+            </div>
+          )}
+        />
+      ) : null}
 
       <Section<Omit<PostizSettings, "api_key_configured" | "webhook_token_set" | "api_key_env" | "base_url">>
         key={`postiz-${hash(settings.postiz)}`}

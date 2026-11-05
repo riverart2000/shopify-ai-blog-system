@@ -332,6 +332,16 @@ class ListingsSettings(_Model):
     max_steps_per_run: int = Field(45, ge=5, le=150)
 
 
+class ShoppableSettings(_Model):
+    """A Shopify page for the Instagram and TikTok bio link: the products most recently posted, newest first."""
+    enabled: bool = False
+    page_handle: str = Field("shop-our-feed", min_length=3, max_length=60, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    title: str = Field("Shop our feed", min_length=1, max_length=80)
+    intro: str = Field("The products from our latest posts. Tap one to see it in the shop.", max_length=240)
+    max_products: int = Field(24, ge=4, le=60)
+    days: int = Field(45, ge=7, le=365)  # how far back "recently posted" goes
+
+
 class EngineSettings(_Model):
     enabled: bool = False
     publisher: Literal["postiz", "dry_run"] = "postiz"
@@ -347,6 +357,7 @@ class EngineSettings(_Model):
     auto_promotions: AutoPromotionSettings = Field(default_factory=AutoPromotionSettings)
     founder_videos: FounderVideoSettings = Field(default_factory=FounderVideoSettings)
     listings: ListingsSettings = Field(default_factory=ListingsSettings)
+    shoppable: ShoppableSettings = Field(default_factory=ShoppableSettings)
 
 
 def _deep_merge(base: dict, patch: dict) -> dict:

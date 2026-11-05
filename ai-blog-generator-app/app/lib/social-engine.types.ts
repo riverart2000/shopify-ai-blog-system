@@ -74,6 +74,10 @@ export type AISettings = {
 
 export type GuardSettings = { hold_health_claims: boolean; hold_low_review_score: number; max_caption_retries: number; max_review_rewrites?: number };
 export type UtmSettings = { enabled: boolean; medium: string; source_overrides: Record<string, string> };
+/** The bio-link page that shows the products most recently posted. */
+export type ShoppableSettings = {
+  enabled: boolean; page_handle: string; title: string; intro: string; max_products: number; days: number;
+};
 export type ContentSettings = {
   multi_image: boolean; rotate_images: boolean; allow_reposting: boolean; repost_after_days: number;
   excluded_product_ids: string[]; excluded_tags: string[];
@@ -106,6 +110,7 @@ export type EngineSettings = {
   guards: GuardSettings;
   utm: UtmSettings;
   listings?: ListingsSettings;
+  shoppable?: ShoppableSettings;
 };
 
 /** A pydantic `model_json_schema()` (subset we render). */

@@ -272,7 +272,8 @@ def merge_hashtags(sources: list[list[str]], cap: int) -> list[str]:
     for queue in queues:  # 'Eveningritual' from the model loses to 'EveningRitual' from a tag
         for tag in queue:
             key = tag.casefold()
-            if sum(char.isupper() for char in tag) > sum(char.isupper() for char in best_case.get(key, "")):
+            known = best_case.get(key)  # a tag with no capital at all ("#8cm") must still be kept
+            if known is None or sum(char.isupper() for char in tag) > sum(char.isupper() for char in known):
                 best_case[key] = tag
     seen: set[str] = set()
     merged: list[str] = []

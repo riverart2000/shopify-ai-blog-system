@@ -113,6 +113,20 @@ Discount codes work for every customer anywhere, whatever the market. The occasi
 Day, US Mother's Day, Small Business Saturday) get their own. Lunar festival dates are a table
 (`FESTIVAL_DATES`, to 2030): extend it before 2031. Wellness days now get a sale as well as a greeting.
 
+## Shoppable page (bio link)
+
+Instagram and TikTok posts can't carry a link, so their captions say "link in bio". `services/social_engine/shoppable.py`
+keeps one Shopify page (default `/pages/shop-our-feed`) showing the products most recently posted, newest first, each
+opening its own product page with `utm_source=linkinbio`. Put the page's address in the Instagram and TikTok bios.
+
+- Settings → Shoppable page (`shoppable.*`): on/off (off by default), address, title, intro line, how many products
+  and how many days back.
+- Job `shoppable.refresh` runs hourly; Shopify is written only when the page changed. `POST /api/social-engine/shoppable/refresh`
+  rebuilds it now, `GET /api/social-engine/shoppable` says where it is and what's on it.
+- Products shown: posted within the window, active, in stock, with a picture (`products.list_recently_posted`).
+- Only a page made here is ever updated (its body starts with a marker comment). If another page already has the
+  address the refresh stops with a message; nothing is overwritten.
+
 ## Adding features
 
 * **New occasion:** add an `Occasion` (with its `countries`) and its date in `campaigns/holidays.py`, and a

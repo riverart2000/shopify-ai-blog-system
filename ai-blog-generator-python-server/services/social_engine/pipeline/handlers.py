@@ -118,6 +118,15 @@ async def promotions_auto_occasions(ctx: JobContext) -> dict:
     return await ensure_occasion_promotions(ctx.store_id, force=bool(ctx.payload.get("force")))
 
 
+@job("shoppable.refresh", lane="shopify", max_attempts=2, timeout_seconds=300, backoff_base=300)
+async def shoppable_refresh(ctx: JobContext) -> dict:
+    """Rebuild the bio-link page from the products most recently posted."""
+    from ..context import load_store_context
+    from ..shoppable import refresh
+
+    return await refresh(await load_store_context(ctx.store_id, correlation_id=ctx.correlation_id))
+
+
 # -------------------------------------------------------------- founder videos
 
 @job("founder.scan", lane="postiz", max_attempts=2, timeout_seconds=1800, backoff_base=120)

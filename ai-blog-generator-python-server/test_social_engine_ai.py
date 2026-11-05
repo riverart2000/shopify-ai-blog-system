@@ -528,6 +528,14 @@ async def test_caption_prompt_carries_compliance_language_and_network_rules(sctx
     assert "Evening wind-down ritual" in prompt and "£24.99" in prompt
 
 
+def test_a_tag_without_a_capital_letter_does_not_break_a_post():
+    """'8cm' on the Brass Singing Bowl became '#8cm' (no capital), which crashed every post for that product."""
+    from services.social_engine.ai.captions import merge_hashtags
+
+    merged = merge_hashtags([["Sound healing", "soundHealing"], ["8cm", "singing bowl", "3d"]], cap=6)
+    assert merged == ["#SoundHealing", "#8cm", "#SingingBowl", "#3d"]
+
+
 def test_hashtag_normalisation():
     assert normalise_hashtag("magnesium glycinate") == "#MagnesiumGlycinate"
     assert normalise_hashtag("#sleep-support") == "#SleepSupport"

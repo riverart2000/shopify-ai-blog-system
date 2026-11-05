@@ -178,6 +178,19 @@ async def count_products(store_id: str) -> dict[str, int]:
     return {key: int(row[key] or 0) for key in ("total", "available", "on_sale", "never_posted", "last_synced_at")} if row else {}
 
 
+async def list_recently_posted(store_id: str, *, since: int, limit: int) -> list[dict]:
+    """Products posted since `since` that can be bought and have a picture, most recently posted first."""
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT * FROM social_products WHERE store_id=? AND deleted_at IS NULL AND available=1 "
+            "AND UPPER(status)='ACTIVE' AND COALESCE(featured_image_url,'')<>'' AND last_posted_at>=? "
+            "ORDER BY last_posted_at DESC, product_id LIMIT ?",
+            (store_id, int(since), int(limit)),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [item for item in (_product_row(row) for row in rows) if item]
+
+
 async def mark_posted(store_id: str, product_ids: Iterable[str], posted_at: int | None = None) -> None:
     ids = [str(pid) for pid in product_ids]
     if not ids:
