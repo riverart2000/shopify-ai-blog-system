@@ -40,7 +40,8 @@ Web search uses **Brave Search** when `BRAVE_API_KEY` is in `.env` (or `brave:ap
 DuckDuckGo and Bing as backups.
 
 ## Promote an event (template `promote-event`)
-1. `promote_event` reads the event pages (their schema.org data first), then plans up to 15 places:
+1. `promote_event` reads the event pages (their schema.org data first; code keeps the event's picture from them,
+   since the model often leaves it out of its plan), then plans up to 15 places:
    listing sites (only for our own events), Facebook groups (starting with the ones Joe is in) and
    forums. Every place must have come up in a search or page, or the plan is sent back.
 2. Each place becomes a `promote_post` job (`parent_id` = the promotion; hidden in the task list).
@@ -63,6 +64,7 @@ uv run task-agent run-once                # run ready jobs now
 uv run task-agent worker                  # run forever (one job at a time)
 uv run task-agent jobs                    # list jobs
 uv run task-agent show 1                  # steps + result for job 1
+uv run task-agent picture 5 <address|file> # give promotion 5 its event picture (unfinished posts get it)
 uv run pytest                             # offline tests (fake model, no internet)
 ```
 

@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from task_agent.config import get_settings
 from task_agent.db import JobStore
+from task_agent.promotion import MAX_IMAGE_BYTES, set_picture
 from task_agent.tasks import TASKS
 from task_agent.worker import Worker
 
@@ -121,6 +122,9 @@ def main(argv: list[str] | None = None) -> None:
     j.add_argument("--status")
     s = sub.add_parser("show", help="Show one job")
     s.add_argument("job_id", type=int)
+    pic = sub.add_parser("picture", help="Give a promotion its event picture (its unfinished posts get it)")
+    pic.add_argument("promotion_id", type=int)
+    pic.add_argument("source", help="The picture's web address, or a picture file on this Mac")
 
     args = parser.parse_args(argv)
     setup_logging(args.json_logs)
@@ -150,6 +154,14 @@ def main(argv: list[str] | None = None) -> None:
         cmd_jobs(args.status)
     elif args.cmd == "show":
         cmd_show(args.job_id)
+    elif args.cmd == "picture":
+        folder = settings.path(settings.db_path).parent / "promotions" / str(args.promotion_id)
+        path, posts = asyncio.run(set_picture(store(), folder, args.promotion_id, args.source))
+        if not path:
+            sys.exit(
+                f"That isn't a picture this Mac could fetch or read (an image up to {MAX_IMAGE_BYTES // 10**6} MB)."
+            )
+        print(f"Saved {path}; {posts} post(s) of promotion {args.promotion_id} will use it.")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ class JobDeps:
     seen_domains: set[str] = field(default_factory=set)  # sites that showed up in searches and pages this job
     payload: Any = None  # the job's validated payload, for tools that need it (e.g. the event image)
     failed_actions: list[str] = field(default_factory=list)  # page actions failing in a row (to catch a stuck job)
+    event_images: list[str] = field(default_factory=list)  # pictures on the event's own pages, found by code
 
     @property
     def owner(self) -> str:

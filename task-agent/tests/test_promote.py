@@ -531,3 +531,35 @@ def test_promotion_types_are_registered():
 
 def test_iso_helpers_round_trip():
     assert datetime.fromisoformat(iso(datetime(2026, 11, 2, tzinfo=UTC))).tzinfo is not None
+
+
+def test_the_event_picture_comes_from_the_page_by_code() -> None:
+    """Luma gives its picture as og:image; the model left image_url empty, so a listing site had no picture."""
+    from task_agent.tasks.promote import page_image
+
+    luma = {"og:image": "https://images.lumacdn.com/event-social/x.png", "og:image:width": "800"}
+    assert page_image([], luma) == "https://images.lumacdn.com/event-social/x.png"
+    own = [{"@type": "Event", "image": [{"url": "https://cdn.example.com/a.jpg"}, "https://cdn.example.com/b.jpg"]}]
+    assert page_image(own, luma) == "https://cdn.example.com/a.jpg"  # the event's own data first
+    assert page_image([{"image": "/relative.png"}], {"twitter:image": "https://t.example.com/c.png"}).endswith("c.png")
+    assert page_image([], {}) == ""
+
+
+async def test_a_picture_added_later_reaches_the_posts_that_have_not_finished(tmp_path) -> None:
+    from task_agent.db import JobStore
+    from task_agent.promotion import set_picture
+
+    store = JobStore(tmp_path / "jobs.db")
+    promotion, _ = store.enqueue("promote_event", "Promote", {"event_urls": ["https://luma.com/x"]}, [])
+    done, _ = store.enqueue("promote_post", "A", {"name": "A", "image_path": ""}, [], parent_id=promotion, priority=9)
+    waiting, _ = store.enqueue("promote_post", "B", {"name": "B", "image_path": ""}, [], parent_id=promotion)
+    claimed = store.claim_next()
+    assert claimed is not None and claimed.id == done
+    store.finish(done, {"status": "posted"})
+    picture = tmp_path / "poster.PNG"
+    picture.write_bytes(b"\x89PNG fake")
+
+    path, posts = await set_picture(store, tmp_path / "promotions" / "1", promotion, str(picture))
+    assert path.endswith("promotions/1/event.png") and posts == 1
+    assert store.require(waiting).payload["image_path"] == path and store.require(done).payload["image_path"] == ""
+    assert await set_picture(store, tmp_path / "p", promotion, str(tmp_path / "notes.txt")) == ("", 0)

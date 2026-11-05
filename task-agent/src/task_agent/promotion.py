@@ -406,6 +406,31 @@ async def download_image(url: str, folder: Path) -> str:
     return str(path)
 
 
+async def set_picture(store: JobStore, folder: Path, promotion_id: int, source: str) -> tuple[str, int]:
+    """Give a promotion its event picture after it was planned: a web address, or a picture file on this Mac.
+    Its posts that haven't finished get it. Returns (where it was saved, how many posts got it)."""
+    if source.startswith(("http://", "https://")):
+        path = await download_image(source, folder)
+    else:
+        path = await asyncio.to_thread(_copy_picture, source, folder)
+    if not path:
+        return "", 0
+    posts = [job for job in store.children(promotion_id) if job.status != "done"]
+    for job in posts:
+        store.update_payload(job.id, {"image_path": path})
+    return path, len(posts)
+
+
+def _copy_picture(source: str, folder: Path) -> str:
+    file = Path(source).expanduser()
+    kind = mimetypes.guess_type(file.name)[0] or ""
+    if not (file.is_file() and kind.startswith("image/") and file.stat().st_size <= MAX_IMAGE_BYTES):
+        return ""
+    path = folder / f"event{file.suffix.lower()}"
+    _save(path, file.read_bytes())
+    return str(path)
+
+
 def _save(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)

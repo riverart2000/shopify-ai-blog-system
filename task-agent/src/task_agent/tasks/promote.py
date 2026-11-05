@@ -258,6 +258,23 @@ def events_in_ld(blocks: list[str]) -> list[dict[str, Any]]:
     return found[:3]
 
 
+def page_image(events: list[dict[str, Any]], meta: dict[str, Any]) -> str:
+    """The event's picture as its own page gives it: the structured event data's image, else the share picture."""
+
+    def first(value: Any) -> str:
+        if isinstance(value, list):
+            return next((found for found in map(first, value) if found), "")
+        if isinstance(value, dict):
+            return first(value.get("url") or value.get("contentUrl"))
+        text = value.strip() if isinstance(value, str) else ""
+        return text if text.startswith(("http://", "https://")) else ""
+
+    for event in events:
+        if found := first(event.get("image")):
+            return found
+    return first(meta.get("og:image")) or first(meta.get("twitter:image"))
+
+
 async def read_event_page(deps: JobDeps, url: str) -> str:
     """One event page, as data for the model: structured event data first, then meta tags and the start of the text."""
     data: dict[str, Any] | None = None
@@ -283,6 +300,9 @@ async def read_event_page(deps: JobDeps, url: str) -> str:
     deps.seen_domains.add(host_of(url))
     parts = [f"Page title: {data.get('title', '')}"]
     events = events_in_ld(data.get("ld") or [])
+    picture = page_image(events, data.get("meta") or {})
+    if picture and picture not in deps.event_images:
+        deps.event_images.append(picture)  # kept by code: the model often leaves the picture out of its plan
     if events:
         parts.append("Structured event data on the page:\n" + json.dumps(events, ensure_ascii=False)[:6_000])
     if data.get("meta"):
@@ -352,6 +372,8 @@ def check_plan(ctx: RunContext[JobDeps], plan: PromotionPlan) -> PromotionPlan:
             + ", ".join(unseen)
             + ". Find them with web_search or open them, or leave them out. Never guess an address."
         )
+    if not plan.event.image_url.strip() and ctx.deps.event_images:
+        plan.event.image_url = ctx.deps.event_images[0]
     return plan
 
 

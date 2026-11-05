@@ -498,6 +498,18 @@ class JobStore:
             )
         return self.require(job_id)
 
+    def update_payload(self, job_id: int, changes: dict[str, Any]) -> None:
+        """Change some fields of a job's payload (e.g. give a promotion's waiting posts the event picture)."""
+        with self._connect() as db:
+            row = db.execute("SELECT payload FROM agent_jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                raise JobError(f"There's no task {job_id}.")
+            payload = json.loads(row["payload"] or "{}") | changes
+            db.execute(
+                "UPDATE agent_jobs SET payload = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), iso(now()), job_id),
+            )
+
     def rename(self, job_id: int, title: str) -> None:
         with self._connect() as db:
             db.execute(
