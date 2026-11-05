@@ -20,7 +20,7 @@ DEFAULT_FILE = Path("~/.config/local-ai/model.json")
 FALLBACK = {
     "server_url": "http://127.0.0.1:8000/v1",
     "text_model": "gemma-4-31b-it-8bit",
-    "vision_model": "mlx-community--Qwen3-VL-8B-Instruct-8bit",
+    "vision_model": "gemma-4-31b-it-8bit",  # the 31B reads images too, so nothing else loads
     "context_window": 65536,
     "max_output_tokens": 8192,
 }

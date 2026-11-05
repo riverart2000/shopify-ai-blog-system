@@ -93,7 +93,7 @@ One text model for everything: `gemma-4-31b-it-8bit` with its speed-up drafter
 Engine so oMLX never has to swap models (a swap while one was busy made a campaign run fail on 30 Oct).
 Chosen on 31 Oct after testing: the most careful on research (no invented details), about 3× slower than
 the 26B, which stays installed as a backup. The Task Agent turns thinking on per request; the Social
-Engine keeps it off. Images stay on `Qwen3-VL-8B`.
+Engine keeps it off. Images go to the same 31B (it reads images too), so no second model loads.
 
 **The model is set in one file: `~/.config/local-ai/model.json`** (server, text model, vision model, context window,
 answer cap), read by OpenClaw, the Task Agent and Social Autopilot alike, because two large models can't fit in
