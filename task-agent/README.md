@@ -8,7 +8,7 @@ with thinking turned on for agent work). Spec: `../TASK-AGENT.md`.
 - **Done:** job queue (SQLite), worker, audit log, crash-safe resume, cancel/pause, `research` task,
   task templates, the **Task Agent** page in the Shopify admin app (tasks, templates, approvals,
   settings, email account, site logins), Telegram, and **event promotion** in one shared browser.
-- Next: C email (approval queue), D n8n triggers.
+- Next: C email (approval queue), D triggers from other systems (planned for n8n, which was removed on 5 Nov 2026).
 
 ## Admin page
 Shopify admin → **Task Agent**. The app talks to the worker's private API on `127.0.0.1:4100`
