@@ -197,11 +197,12 @@ Text posts work as set up. Pictures need care on a local-only server:
 - Slack, Nostr, Dev.to, Hashnode and Listmonk pass the picture's address on to
   the platform, so for them the picture must be on the public internet in any
   case.
-- What should work instead (read from Postiz's code, not yet tried with a real
-  post): give Postiz a picture that is already public, such as the shop's own
-  image address (`https://cdn.shopify.com/….jpg`). Through the API that is the
-  `path` of the image; it must end in `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`
-  or `.mp4`.
+- What Social Autopilot does instead: it uploads the picture or video to
+  Postiz Cloud and gives this server that public address
+  (`https://uploads.postiz.com/….jpg`) as the `path` of the image. The path
+  must end in `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` or `.mp4`. Checked on
+  2026-11-06: this server can fetch such an address. The same works for any
+  picture that is already public, such as the shop's own image address.
 - The other way is to keep uploads in a public store (Cloudflare R2, which
   Postiz supports) instead of on this Mac. That needs a Cloudflare account.
 
