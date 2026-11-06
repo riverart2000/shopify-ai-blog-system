@@ -97,6 +97,12 @@ async def _postiz(sctx: StoreContext, live: bool) -> Check:
         message += f"; needs reconnecting: {', '.join(disabled)}"
     if not channels:
         message = "Connected, but no channels are connected in Postiz yet."
+    for name, server in (info.get("servers") or {}).items():  # extra Postiz servers (settings.postiz.servers)
+        if server.get("connected"):
+            message += f"; server '{name}' connected"
+        else:
+            status = "warning"
+            message += f"; server '{name}' is NOT working: {server.get('error') or 'its API key is not connected'}"
     if read_only:
         status = "warning"
         message += f" — READ-ONLY here: set {LIVE_PUBLISHING_ENV}=1 only on the live system to publish."

@@ -67,7 +67,20 @@ To open the settings file: `open -e ~/postiz-local/.env`
    `DISABLE_REGISTRATION=false` to `DISABLE_REGISTRATION=true`, then
    `cd ~/postiz-local && docker compose up -d`.
 3. API key (for Social Autopilot): **Settings → Developers → API Key**. It can
-   be rotated there if it ever leaks.
+   be rotated there if it ever leaks. Social Autopilot reads it from its
+   `.env` as `POSTIZ_LOCAL_API_KEY`; after rotating it, change it there too
+   and restart the backend.
+
+Done on 2026-11-06: the account exists and sign-up is closed.
+
+## How Social Autopilot uses it
+
+This server is listed in Social Autopilot under Settings → Postiz → Extra
+Postiz servers (short name `local`, address
+`http://localhost:4007/api/public/v1`, key variable `POSTIZ_LOCAL_API_KEY`).
+A channel connected here shows up on Social Autopilot's Channels page after
+the next channel sync (its id starts with `local:`) and gets posts like the
+Postiz Cloud channels. See "Extra Postiz servers" in `docs/social-engine.md`.
 
 ## Adding a channel
 

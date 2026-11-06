@@ -8,7 +8,7 @@ import { Form, Link } from "react-router";
 
 import type {
   ActionResult, AISettings, CaptionSettings, Collection, ContentSettings, EngineSettings, FallbackModel, GuardSettings,
-  HashtagCloud, PostizSettings, ScheduleSettings, ShoppableSettings, UtmSettings,
+  HashtagCloud, PostizServer, PostizSettings, ScheduleSettings, ShoppableSettings, UtmSettings,
 } from "../../lib/social-engine.types";
 import { timezoneLabel } from "../../lib/social-time";
 import { usePostizTools } from "./PostizParts";
@@ -326,6 +326,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
           video_voice_id: settings.postiz.video_voice_id, ai_backgrounds_for_promotions: settings.postiz.ai_backgrounds_for_promotions,
           image_fallback_model_id: settings.postiz.image_fallback_model_id || "",
           trending_tiktok_music: settings.postiz.trending_tiktok_music,
+          servers: (settings.postiz.servers || []).map(({ api_key_configured: _set, ...server }) => server),
         }}
         render={(draft, update) => (
           <div className="sa-stack">
@@ -358,10 +359,67 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
               <Toggle checked={draft.tag_posts} onChange={(value) => update({ tag_posts: value })} label="Tag posts in Postiz" help="Makes Social Autopilot posts easy to find in Postiz." />
               <Toggle checked={draft.upload_adjust_video} onChange={(value) => update({ upload_adjust_video: value })} label="Let Postiz adjust videos on upload" />
             </div>
+            <PostizServers
+              servers={draft.servers || []} saved={settings.postiz.servers || []}
+              onChange={(servers) => update({ servers })}
+            />
           </div>
         )}
       />
     </>
+  );
+}
+
+/** Extra Postiz servers (for example one running on this Mac) used beside the main Postiz. */
+function PostizServers({ servers, saved, onChange }: {
+  servers: PostizServer[]; saved: PostizServer[]; onChange: (servers: PostizServer[]) => void;
+}) {
+  const change = (index: number, patch: Partial<PostizServer>) =>
+    onChange(servers.map((server, other) => (other === index ? { ...server, ...patch } : server)));
+  return (
+    <div className="sa-stack-sm">
+      <strong>Extra Postiz servers</strong>
+      <span className="sa-help">
+        A second Postiz, such as one running on this Mac, for channels the main Postiz doesn&apos;t have. Its channels show up on the
+        Channels page after the next channel sync. Pictures and videos are still uploaded to the main Postiz.
+      </span>
+      {servers.map((server, index) => {
+        const keySet = saved.find((other) => other.name === server.name && other.api_key_env === server.api_key_env)?.api_key_configured;
+        return (
+          <fieldset key={index} className="sa-fieldset">
+            <legend>{server.label || server.name || "New server"}</legend>
+            <div className="sa-stack-sm">
+              <div className="sa-grid">
+                <Field label="Short name" help="Lowercase letters, numbers and hyphens. It is part of the ids of this server's channels and posts, so don't change it once it has posted.">
+                  <input type="text" value={server.name} onChange={(event) => change(index, { name: event.target.value })} />
+                </Field>
+                <Field label="Shown as"><input type="text" value={server.label} onChange={(event) => change(index, { label: event.target.value })} /></Field>
+                <Field label="API address" help="The server's public API address. It ends in /public/v1.">
+                  <input type="url" value={server.base_url} onChange={(event) => change(index, { base_url: event.target.value })} />
+                </Field>
+                <Field
+                  label="Name of its key in .env"
+                  help={keySet ? "The key is set on the server." : "For security the key is never entered here. Add this name=<key> to the Python server's .env, then restart the backend."}
+                >
+                  <input type="text" value={server.api_key_env} onChange={(event) => change(index, { api_key_env: event.target.value })} />
+                </Field>
+                <NumberField label="Max new posts sent per hour" value={server.create_post_hourly_budget} min={1} max={100} onChange={(value) => change(index, { create_post_hourly_budget: value })} />
+              </div>
+              <div className="sa-spread">
+                <Toggle checked={server.enabled} onChange={(value) => change(index, { enabled: value })} label="Use this server" help="Off: its channels stop getting posts." />
+                <button type="button" className="sa-btn sa-btn-sm sa-btn-critical" onClick={() => onChange(servers.filter((_, other) => other !== index))}>Remove server</button>
+              </div>
+            </div>
+          </fieldset>
+        );
+      })}
+      <div>
+        <button
+          type="button" className="sa-btn sa-btn-sm" disabled={servers.length >= 5}
+          onClick={() => onChange([...servers, { name: "", label: "", enabled: true, base_url: "", api_key_env: "", create_post_hourly_budget: 25 }])}
+        >Add a Postiz server</button>
+      </div>
+    </div>
   );
 }
 

@@ -159,6 +159,22 @@ class ScheduleSettings(_Model):
         return cleaned
 
 
+class PostizServer(_Model):
+    """A second Postiz used beside the main one, for channels the main one doesn't have (for example a Postiz
+    hosted on this Mac). Nothing about it is built in: the address and the name of the .env variable that holds
+    its API key are saved here."""
+    # Prefix of this server's channel and post ids ("local:cm..."). Don't change it once posts exist.
+    name: str = Field(min_length=2, max_length=24, pattern=r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+    label: str = Field("", max_length=60)
+    enabled: bool = True
+    base_url: str = Field(min_length=8, max_length=300, pattern=r"^https?://\S+$")  # its public API address
+    api_key_env: str = Field(min_length=3, max_length=80, pattern=r"^[A-Z][A-Z0-9_]*$")
+    create_post_hourly_budget: int = Field(25, ge=1, le=100)
+
+    def api_key(self) -> str:
+        return os.environ.get(self.api_key_env, "").strip()
+
+
 class PostizSettings(_Model):
     base_url: str = "https://api.postiz.com/public/v1"
     api_key_env: str = "POSTIZ_API_KEY"
@@ -180,6 +196,16 @@ class PostizSettings(_Model):
     ai_backgrounds_for_promotions: bool = True  # Postiz AI scene behind the real product on promo posts
     trending_tiktok_music: bool = True          # pick music via Postiz's TikTok musicSearch tool for videos
     webhook_token: str = ""
+    # Extra Postiz servers. Pictures and videos still go through the main one (see publishers/combined.py).
+    servers: list[PostizServer] = Field(default_factory=list, max_length=5)
+
+    @field_validator("servers")
+    @classmethod
+    def _server_names(cls, value: list[PostizServer]) -> list[PostizServer]:
+        names = [server.name for server in value]
+        if len(set(names)) != len(names):
+            raise ValueError("Each extra Postiz server needs its own name")
+        return value
 
     def api_key(self) -> str:
         return os.environ.get(self.api_key_env or "POSTIZ_API_KEY", "").strip()
@@ -431,5 +457,7 @@ def public_settings(settings: EngineSettings) -> dict:
     data = settings.model_dump()
     data["postiz"]["webhook_token_set"] = bool(data["postiz"].pop("webhook_token", ""))
     data["postiz"]["api_key_configured"] = bool(settings.postiz.api_key())
+    for shown, server in zip(data["postiz"]["servers"], settings.postiz.servers):
+        shown["api_key_configured"] = bool(server.api_key())
     data["ai"]["api_key_configured"] = bool(settings.ai.api_key())
     return data

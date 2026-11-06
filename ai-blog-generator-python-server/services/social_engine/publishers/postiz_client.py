@@ -268,7 +268,9 @@ class PostizClient:
         timeout: float = 30.0,
         max_attempts: int = 3,
         backoff_base: float = 1.5,
+        service: str = SERVICE,
     ) -> None:
+        self.service = service   # name in the API-call log; each Postiz server has its own (and its own budget)
         key = (api_key or "").strip()
         if key.lower().startswith("bearer "):
             key = key[7:].strip()   # Postiz rejects "Bearer <key>"; accept it pasted that way
@@ -277,7 +279,7 @@ class PostizClient:
         self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
         self.ctx = ctx or CallContext()
         self._http = ServiceClient(
-            SERVICE,
+            self.service,
             self.base_url,
             headers={"Authorization": key, "Accept": "application/json"},
             timeout=timeout,
@@ -548,7 +550,7 @@ class PostizClient:
         body = await self._call("POST", "/clipping", operation="clipping.create", idempotent=False, json=payload)
         clipping_id = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
         if not clipping_id:
-            raise ExternalServiceError(SERVICE, "clipping.create returned no clipping id", retryable=False)
+            raise ExternalServiceError(self.service, "clipping.create returned no clipping id", retryable=False)
         return clipping_id
 
     async def list_clippings(self, *, page: int = 1) -> ClippingPage:

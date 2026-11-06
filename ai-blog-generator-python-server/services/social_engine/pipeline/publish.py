@@ -4,7 +4,7 @@ Steps (each safe to repeat):
 1. Reconcile targets left "uncertain" by an earlier ambiguous create call.
 2. Upload media not yet in Postiz (uploads are reused across retries).
 3. One create request per distinct scheduled time (Postiz takes one date per
-   request), inside the hourly create budget.
+   request) and per Postiz server, inside the hourly create budget.
 4. Record external ids; refresh the post's overall status.
 
 Never re-sends a create call whose outcome is unknown — it reconciles first.
@@ -137,7 +137,7 @@ async def _upload_assets(publisher, store_id: str, asset_ids: set[str], post_id:
 
 
 async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
-    from ..publishers import get_publisher
+    from ..publishers import get_publisher, server_name
     from ..publishers.base import OutboundPost, OutboundTarget
 
     post = await post_store.get_post(store_id, post_id)
@@ -188,14 +188,14 @@ async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
         if campaign:
             tags.insert(0, campaign["name"])
 
-        groups: dict[int, list[dict]] = defaultdict(list)
-        for target in pending:
-            groups[int(target["scheduled_at"])].append(target)
+        groups: dict[tuple[int, str], list[dict]] = defaultdict(list)
+        for target in pending:  # a request carries one time and goes to one Postiz server
+            groups[(int(target["scheduled_at"]), server_name(target["channel_id"]))].append(target)
 
         channel_names = {c["channel_id"]: c["name"] for c in await config_store.list_channels(store_id)}
         ai_made = post["content_type"] in AI_CONTENT_TYPES
         created = 0
-        for when, group in sorted(groups.items()):
+        for (when, _server), group in sorted(groups.items()):
             outbound = []
             for target in group:
                 profile = profile_for(target["provider"])

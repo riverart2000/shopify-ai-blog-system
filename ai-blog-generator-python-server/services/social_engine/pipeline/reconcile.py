@@ -26,7 +26,7 @@ _MAX_WINDOW_DAYS = 45
 
 
 async def reconcile_store(store_id: str, *, post_ids: list[str] | None = None) -> dict[str, Any]:
-    from ..publishers import get_publisher
+    from ..publishers import get_publisher, server_name
 
     targets = await post_store.list_targets(store_id, statuses=_TRACKED, limit=2000)
     if post_ids:
@@ -59,7 +59,12 @@ async def reconcile_store(store_id: str, *, post_ids: list[str] | None = None) -
                 datetime.fromtimestamp(start, tz=timezone.utc), datetime.fromtimestamp(end, tz=timezone.utc),
             )
             by_id = {p.external_id: p for p in remote}
+            # An extra Postiz server that didn't answer: its posts are unknown, not missing. Leave them alone.
+            down = getattr(publisher, "unreachable", None) or {}
             for target in known:
+                if server_name(target["channel_id"]) in down:
+                    counts["unchanged"] += 1
+                    continue
                 external = by_id.get(target["external_id"])
                 changed = await _apply_remote_state(store_id, target, external, window=(start, end))
                 if changed:

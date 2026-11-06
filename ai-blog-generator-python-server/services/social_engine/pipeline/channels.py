@@ -14,15 +14,19 @@ logger = logging.getLogger("ai_blog_server.social_engine.pipeline")
 
 
 async def sync_channels(store_id: str, *, with_rules: bool = True) -> dict[str, Any]:
-    from ..publishers import get_publisher
+    from ..publishers import get_publisher, server_name
 
     sctx = await load_store_context(store_id)
     publisher = get_publisher(sctx, correlation_id=f"channels:{store_id}")
     try:
         remote = await publisher.list_channels()
-        if sctx.settings.postiz.customer_id:
-            remote = [c for c in remote if c.customer_id == sctx.settings.postiz.customer_id]
+        if sctx.settings.postiz.customer_id:  # the customer filter is the main Postiz's; extra servers have none
+            remote = [c for c in remote
+                      if server_name(c.channel_id) or c.customer_id == sctx.settings.postiz.customer_id]
         before = {c["channel_id"]: c for c in await config_store.list_channels(store_id)}
+        # An extra Postiz server that didn't answer: its channels are unknown, not removed.
+        down = dict(getattr(publisher, "unreachable", None) or {})
+        kept = [channel_id for channel_id in before if server_name(channel_id) in down]
         new, disabled, rule_errors = [], [], []
         for channel in remote:
             is_new = await config_store.upsert_channel_from_publisher(store_id, {
@@ -43,7 +47,7 @@ async def sync_channels(store_id: str, *, with_rules: bool = True) -> dict[str, 
                     )
                 except SocialEngineError as exc:
                     rule_errors.append(f"{channel.name}: {exc.message}")
-        missing = await config_store.mark_channels_missing(store_id, [c.channel_id for c in remote])
+        missing = await config_store.mark_channels_missing(store_id, [c.channel_id for c in remote] + kept)
         boards_set = await _default_pinterest_boards(store_id, sctx, publisher)
     finally:
         await publisher.aclose()
@@ -55,6 +59,8 @@ async def sync_channels(store_id: str, *, with_rules: bool = True) -> dict[str, 
                      "Channel(s) need attention in Postiz: "
                      + ", ".join(disabled + ([f"{missing} removed"] if missing else [])),
                      level="warning", stage="sync")
+    for name, reason in down.items():
+        rule_errors.append(f"Postiz server '{name}' did not answer: {reason}")
     await observability.set_state(f"channels:last_sync:{store_id}", {"count": len(remote), "errors": rule_errors})
     return {"channels": len(remote), "new": new, "disabled": disabled, "missing": missing,
             "rule_errors": rule_errors, "pinterest_boards_set": boards_set}

@@ -58,12 +58,19 @@ export type ScheduleSettings = {
   posts_per_channel_per_day: number; always_fill_daily_slots: boolean;
 };
 
+/** A second Postiz used beside the main one, for channels the main one doesn't have. */
+export type PostizServer = {
+  name: string; label: string; enabled: boolean; base_url: string; api_key_env: string;
+  create_post_hourly_budget: number; api_key_configured?: boolean;
+};
+
 export type PostizSettings = {
   base_url: string; api_key_env: string; create_post_hourly_budget: number; short_links: boolean;
   tag_posts: boolean; upload_adjust_video: boolean; customer_id: string; ai_video_monthly_budget: number;
   ai_image_monthly_budget: number; mcp_url: string; video_voice_id: string; ai_backgrounds_for_promotions: boolean;
   image_fallback_model_id?: string;
   trending_tiktok_music: boolean; webhook_token_set: boolean; api_key_configured: boolean;
+  servers?: PostizServer[];
 };
 
 export type AISettings = {

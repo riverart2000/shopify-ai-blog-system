@@ -42,7 +42,7 @@ campaigns (SmartQ, PromoQ, launch, price drop, …) ──plan──▶ social_p
 | `services/social_engine/ai/` | LLM router (Gemma first, optional fallback model), captions, content guard, Gemma review, Gemma decisions (content plans, promo lines, brand content, insights). |
 | `services/social_engine/campaigns/` | Rule framework + rules (`rules/`), product selection, occasion calendar, engine. |
 | `services/social_engine/scheduling/slots.py` | Posting windows, caps, gaps, best times. |
-| `services/social_engine/publishers/` | Publisher contract (`base.py`), Postiz client/publisher, dry-run publisher, webhook parsing. |
+| `services/social_engine/publishers/` | Publisher contract (`base.py`), Postiz client/publisher, extra Postiz servers (`combined.py`), dry-run publisher, webhook parsing. |
 | `services/social_engine/pipeline/` | Job handlers: generate → publish → reconcile, freshness guard, user actions, channel sync. |
 | `services/social_engine/analytics/` | Metrics collection and reports. |
 | `services/social_engine/jobs/` | Durable queue, worker (leases, retries, lanes), recurring tasks. |
@@ -126,6 +126,29 @@ opening its own product page with `utm_source=linkinbio`. Put the page's address
 - Products shown: posted within the window, active, in stock, with a picture (`products.list_recently_posted`).
 - Only a page made here is ever updated (its body starts with a marker comment). If another page already has the
   address the refresh stops with a message; nothing is overwritten.
+
+## Extra Postiz servers
+
+Social Autopilot can post through more than one Postiz: the main one (Postiz Cloud) plus extra servers, for example
+the self-hosted one on this Mac (`docs/postiz-local.md`) that holds channels the main one doesn't have.
+
+- Settings → Postiz → Extra Postiz servers (`postiz.servers`): short name, label, API address (ends in
+  `/public/v1`), the name of the `.env` variable that holds its API key, hourly post budget, on/off. Nothing about a
+  server is in the code; the key itself is only ever in the server `.env`.
+- `publishers/combined.py` puts them behind the one publisher. Every channel and post on an extra server has the
+  server's short name in front of its id (`local:cm…`), in the database too, so each call goes to the right server.
+  Don't rename a server once it has posted.
+- Its channels appear on the Channels page after a channel sync and get posts like any other channel.
+- Pictures and videos are always uploaded to the main Postiz. An extra server on a private address can't hand files
+  to the networks, but it accepts the main Postiz's public file address, so one upload serves both. The main Postiz
+  therefore has to be working for an extra server's posts with media.
+- One create request goes to one server (`pipeline/publish.py` groups targets by time and server). Each server has
+  its own hourly budget and its own name in the API-call log (`postiz:<name>`).
+- If an extra server is down, the main one carries on: the server's channels are kept (not marked removed), its
+  posts are left alone by the reconciler, and the health check says which server is not working. A missing key only
+  stops that server's channels.
+- Postiz webhooks come from the main Postiz only; posts on an extra server are followed by the reconciler.
+- AI images, AI videos, clipping and the media library are the main Postiz's.
 
 ## Adding features
 

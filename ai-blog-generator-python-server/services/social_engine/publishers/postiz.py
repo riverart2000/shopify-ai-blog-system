@@ -236,9 +236,13 @@ class PostizPublisher:
         client: PostizClient | None = None,
         sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
         media_poll_delays: Sequence[float] = MEDIA_POLL_DELAYS,
+        settings: Any = None,
+        service: str = SERVICE,
     ) -> None:
         self.sctx = sctx
-        self.settings = sctx.settings.postiz
+        # An extra Postiz server passes its own settings and service name (see publishers/combined.py).
+        self.settings = settings or sctx.settings.postiz
+        self.service = service
         self.ctx = ctx or sctx.call_context()
         self._sleep = sleep
         self._media_poll_delays = tuple(media_poll_delays)
@@ -252,7 +256,7 @@ class PostizPublisher:
                     "environment and restart, or switch this store to the dry-run publisher.",
                     details={"env": env, "store_id": sctx.store_id},
                 )
-            client = PostizClient(api_key, base_url=self.settings.base_url, ctx=self.ctx)
+            client = PostizClient(api_key, base_url=self.settings.base_url, ctx=self.ctx, service=self.service)
         self.client = client
 
     async def __aenter__(self) -> "PostizPublisher":
@@ -289,7 +293,7 @@ class PostizPublisher:
             me = await self.client.me()
             result["organization"] = me.get("organization") or {}
             result["user"] = me.get("user")
-        used, _ = await window_usage(SERVICE, CREATE_OPERATION, CREATE_WINDOW_SECONDS)
+        used, _ = await window_usage(self.service, CREATE_OPERATION, CREATE_WINDOW_SECONDS)
         result["create_post_budget"] = {"used_last_hour": used, "hourly_budget": self.settings.create_post_hourly_budget}
         return result
 
@@ -355,7 +359,7 @@ class PostizPublisher:
         media_path = str(uploaded.get("path") or "")
         if not media_id or not media_path:
             raise ExternalServiceError(
-                SERVICE, f"media.upload returned no id/path for asset {asset_id}: {str(dict(uploaded))[:300]}",
+                self.service, f"media.upload returned no id/path for asset {asset_id}: {str(dict(uploaded))[:300]}",
                 retryable=True,   # a duplicate upload is harmless
             )
         if str(uploaded.get("status") or "ready").lower() != "processing":
@@ -374,7 +378,7 @@ class PostizPublisher:
         path = str(status.get("path") or fallback_path)
         if state == "failed":
             raise ExternalServiceError(
-                SERVICE,
+                self.service,
                 f"Postiz could not process the media for asset {asset_id}: "
                 f"{status.get('error') or status.get('warning') or 'unknown error'}",
                 retryable=False, details={"media_id": media_id, "asset_id": asset_id},
@@ -465,7 +469,7 @@ class PostizPublisher:
 
     async def _enforce_create_budget(self) -> None:
         budget = self.settings.create_post_hourly_budget
-        used, oldest = await window_usage(SERVICE, CREATE_OPERATION, CREATE_WINDOW_SECONDS)
+        used, oldest = await window_usage(self.service, CREATE_OPERATION, CREATE_WINDOW_SECONDS)
         if used < budget:
             return
         retry_at = (oldest or int(time.time())) + CREATE_WINDOW_SECONDS + 5
