@@ -5,15 +5,36 @@ to connect. It runs next to Postiz Cloud and does not replace it.
 
 | | |
 | - | - |
-| Address | <http://localhost:4007> (this Mac only; nothing listens on the network or Tailscale) |
+| Address | `http://<this Mac's Tailscale address>:4007`, from this Mac and from any device on the tailnet. The exact address is `POSTIZ_URL` in `.env`. Not reachable from the home network or the internet. |
 | Folder | `~/postiz-local/` (outside this repo on purpose: it holds secrets) |
 | Version | Postiz `v2.25.3` (image `ghcr.io/gitroomhq/postiz-app:v2.25.3`), installed 2026-11-05 |
 | Settings and secrets | `~/postiz-local/.env` (hidden file, private; never copy it into this repo or a chat) |
 | Uploaded pictures | `~/postiz-local/uploads/` |
-| Public API | `http://localhost:4007/api/public/v1`, header `Authorization: <API key>` |
+| Public API | `http://localhost:4007/api/public/v1` (programs on this Mac keep using `localhost`), header `Authorization: <API key>` |
 
-Always open it as `http://localhost:4007`, not `127.0.0.1`, and use Chrome or
-Firefox. Safari will not keep you logged in on a plain `http://localhost` site.
+Always open it at the Tailscale address, on this Mac too. `localhost:4007`
+still shows the page, but logging in there does not work: Postiz is told its
+one address in `.env` and only accepts logins from that one.
+
+Since 2026-11-06 it is reachable over Tailscale. Three settings in `.env` do
+that, and the compose file reads them:
+
+- `POSTIZ_URL`: the address Postiz is opened at. Channel sign-in links
+  (redirect addresses) are built from it.
+- `POSTIZ_TAILSCALE_IP`: this Mac's Tailscale address, which Postiz listens on
+  (as well as `127.0.0.1`). Tailscale must be running when Postiz starts.
+- `NOT_SECURED=true`: needed because the address is plain `http` and not
+  `localhost`; without it the browser drops the login cookie. The cost is a
+  login cookie that page scripts can read, acceptable on a tailnet-only
+  server.
+
+To go back to this-Mac-only: set `POSTIZ_URL=http://localhost:4007`, remove
+`NOT_SECURED`, delete the Tailscale line under `ports:` in
+`docker-compose.yaml`, then `docker compose up -d`. Redirect addresses
+registered with platforms would have to be changed back as well. The files as
+they were before the change are in `~/postiz-local/backups/tailscale-*/`.
+
+Below, `<POSTIZ_URL>` stands for that address.
 
 It is six containers: `postiz` (the app), `postiz-postgres`, `postiz-redis`, and
 Temporal (`temporal`, `temporal-postgresql`, `temporal-elasticsearch`), which
@@ -40,7 +61,7 @@ To open the settings file: `open -e ~/postiz-local/.env`
 
 ## First time: account, lock sign-up, API key
 
-1. Open <http://localhost:4007>, fill in the sign-up form. No email is sent;
+1. Open `<POSTIZ_URL>`, fill in the sign-up form. No email is sent;
    the account works straight away.
 2. Close sign-up so nobody else can register: in `.env` change
    `DISABLE_REGISTRATION=false` to `DISABLE_REGISTRATION=true`, then
@@ -78,12 +99,12 @@ For each one: create the app on the platform, put the ID and secret into
 Postiz shows these platforms in the list even with no keys; clicking one
 without keys simply fails.
 
-**Discord** — accepts the plain `http://localhost` address.
+**Discord** — accepts a plain `http` address.
 1. <https://discord.com/developers/applications> → New Application. You need
    "Manage Server" on the Discord server you want to post to.
 2. Give the app an icon (Postiz fails without one).
 3. OAuth2 page: copy Client ID and Client Secret. Add the redirect
-   `http://localhost:4007/integrations/social/discord`
+   `<POSTIZ_URL>/integrations/social/discord`
 4. Bot page: Reset Token and copy it.
 5. `.env`: `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_BOT_TOKEN_ID`.
    Postiz asks Discord for: `bot`, `identify`, `guilds`.
@@ -93,15 +114,15 @@ trip through a public forwarding site, redirectmeto.com. That site sees the
 one-time sign-in code as it passes.
 1. <https://api.slack.com/apps> → Create New App → From scratch.
 2. OAuth & Permissions → Redirect URLs, add exactly
-   `https://redirectmeto.com/http://localhost:4007/integrations/social/slack`
+   `https://redirectmeto.com/<POSTIZ_URL>/integrations/social/slack`
 3. Same page, Bot Token Scopes: `channels:read`, `chat:write`, `users:read`,
    `groups:read`, `channels:join`, `chat:write.customize` (all six).
 4. Basic Information → Display Information: add a square icon, 512 px or more.
 5. `.env`: `SLACK_ID` (Client ID), `SLACK_SECRET` (Client Secret).
 
-**Reddit** — accepts the plain `http://localhost` address.
+**Reddit** — accepts a plain `http` address.
 1. <https://www.reddit.com/prefs/apps> → create app, type **web app**, redirect
-   `http://localhost:4007/integrations/social/reddit`
+   `<POSTIZ_URL>/integrations/social/reddit`
 2. `.env`: `REDDIT_CLIENT_ID` (the string under the app name),
    `REDDIT_CLIENT_SECRET`. Postiz asks for: `read`, `identity`, `submit`,
    `flair`.
@@ -116,24 +137,26 @@ approval.
    Connect" and "Advertising API". The last one is a request form that LinkedIn
    reviews; without it Postiz refuses the connection.
 3. Auth tab: add both redirects
-   `http://localhost:4007/integrations/social/linkedin` and
-   `http://localhost:4007/integrations/social/linkedin-page`.
-   LinkedIn's rules say `https`; its form normally accepts `http://localhost`.
-   If it does not, LinkedIn cannot be used on this local server.
+   `<POSTIZ_URL>/integrations/social/linkedin` and
+   `<POSTIZ_URL>/integrations/social/linkedin-page`.
+   LinkedIn only accepts `https`, with `http://localhost` as the one
+   exception, so with the Tailscale address its form is expected to refuse
+   these. LinkedIn then cannot be used on this server as set up (it would need
+   an `https` address, for example Tailscale Serve).
 4. The Auth tab must list all of: `openid`, `profile`, `w_member_social`,
    `r_basicprofile`, `rw_organization_admin`, `w_organization_social`,
    `r_organization_social`.
 5. `.env`: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET` (one app serves both
    "LinkedIn" and "LinkedIn Page").
 
-**Mastodon** — accepts the plain `http://localhost` address. No website form:
+**Mastodon** — accepts a plain `http` address. No website form:
 the app is registered with one command. Change `mastodon.social` if the account
 lives on another server.
 
 ```bash
 curl -sS -X POST https://mastodon.social/api/v1/apps \
   -F "client_name=Bio Luxe Lab Postiz" \
-  -F "redirect_uris=http://localhost:4007/integrations/social/mastodon" \
+  -F "redirect_uris=<POSTIZ_URL>/integrations/social/mastodon" \
   -F "scopes=write:statuses write:media profile"
 ```
 
@@ -141,10 +164,10 @@ Copy `client_id` and `client_secret` from the answer into `.env` as
 `MASTODON_CLIENT_ID` and `MASTODON_CLIENT_SECRET`, and set `MASTODON_URL` to the
 server (no slash at the end).
 
-**Dribbble** — its form takes an `http://localhost` address (Dribbble's rules
+**Dribbble** — its form takes an `http` address (Dribbble's rules
 do not ask for `https`).
 1. <https://dribbble.com/account/applications/new>, callback URL
-   `http://localhost:4007/integrations/social/dribbble`
+   `<POSTIZ_URL>/integrations/social/dribbble`
 2. `.env`: `DRIBBBLE_CLIENT_ID`, `DRIBBBLE_CLIENT_SECRET`. Postiz asks for:
    `public`, `upload`.
 3. Spelling: three b's everywhere. The Postiz help page for Dribbble writes it
@@ -155,9 +178,9 @@ do not ask for `https`).
 Text posts work as set up. Pictures need care on a local-only server:
 
 - A picture uploaded into this Postiz gets an address starting with
-  `http://localhost:4007/uploads/…`. Only this Mac can open that, and Postiz
-  itself refuses to fetch `localhost` addresses when it sends the post. So
-  posts with an uploaded picture are expected to fail.
+  `<POSTIZ_URL>/uploads/…`. Only devices on the tailnet can open that, not
+  the platforms, and Postiz itself refuses to fetch private addresses when it
+  sends the post. So posts with an uploaded picture are expected to fail.
 - Slack, Nostr, Dev.to, Hashnode and Listmonk pass the picture's address on to
   the platform, so for them the picture must be on the public internet in any
   case.
