@@ -83,6 +83,53 @@ async def test_queue_a_task_from_a_template_then_cancel_and_retry(client):
     assert (await client.get("/api/jobs", params={"status": "bogus"})).status_code == 400
 
 
+async def test_edit_a_task_that_has_not_started(client, store):
+    created = (
+        await client.post(
+            "/api/jobs",
+            json={"template_key": "research", "values": {"question": "Is Meetup free?"}, "priority": 1},
+        )
+    ).json()["job"]
+    job_id = created["id"]
+
+    edited = await client.post(
+        f"/api/jobs/{job_id}/edit",
+        json={"template_key": "research", "values": {"question": "Is Eventbrite free?"}, "title": "Eventbrite fees",
+              "priority": 3},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["job"]["id"] == job_id and edited.json()["message"].startswith(f"Saved task {job_id}")
+    detail = (await client.get(f"/api/jobs/{job_id}")).json()["job"]
+    assert detail["title"] == "Eventbrite fees" and detail["priority"] == 3 and detail["status"] == "queued"
+    assert detail["payload"]["question"] == "Is Eventbrite free?"
+    assert detail["template_values"] == {"question": "Is Eventbrite free?", "_title": "Eventbrite fees"}
+
+    # A failed task can be edited too: it starts over with the new details.
+    store.claim_next()
+    store.fail(job_id, "boom")
+    again = await client.post(
+        f"/api/jobs/{job_id}/edit", json={"template_key": "research", "values": {"question": "Third try?"}}
+    )
+    assert again.status_code == 200 and again.json()["job"]["status"] == "queued"
+    detail = (await client.get(f"/api/jobs/{job_id}")).json()["job"]
+    assert detail["attempts"] == 0 and detail["error"] is None and detail["payload"]["question"] == "Third try?"
+
+    # Not while it's running, not a different kind of task, and the blanks are still checked.
+    store.claim_next()
+    running = await client.post(
+        f"/api/jobs/{job_id}/edit", json={"template_key": "research", "values": {"question": "Nope"}}
+    )
+    assert running.status_code == 400 and "is running" in running.json()["detail"]
+    store.fail(job_id, "boom")
+    other_kind = await client.post(
+        f"/api/jobs/{job_id}/edit", json={"template_key": "promote-event", "values": {}}
+    )
+    assert other_kind.status_code == 400 and "different kind" in other_kind.json()["detail"]
+    empty = await client.post(f"/api/jobs/{job_id}/edit", json={"template_key": "research", "values": {}})
+    assert empty.status_code == 400 and "Fill in" in empty.json()["detail"]
+    assert (await client.post("/api/jobs/999/edit", json={"template_key": "research", "values": {}})).status_code == 404
+
+
 async def test_own_templates(client):
     body = {
         "name": "Venue search",

@@ -68,11 +68,16 @@ class AppContext:
 # ── Request bodies ──────────────────────────────────────────────────────────
 
 
-class JobCreate(BaseModel):
+class JobEdit(BaseModel):
+    """A task's details as the New task form sends them: the template and the blanks filled in."""
+
     template_key: str
     values: dict[str, Any] = Field(default_factory=dict)
     title: str = Field("", max_length=120)
     priority: int = Field(0, ge=-10, le=10)
+
+
+class JobCreate(JobEdit):
     clone_of: int | None = None
 
 
@@ -298,30 +303,38 @@ def create_app(ctx: AppContext) -> FastAPI:
         keys = ("n", "tool", "args", "result_summary", "tokens", "duration_ms", "created_at")
         return {"job": detail, "steps": [{k: s.get(k) for k in keys} for s in steps]}
 
-    @app.post("/api/jobs", dependencies=auth)
-    async def create_job(body: JobCreate) -> dict[str, Any]:
+    def job_fields(body: JobEdit, *, clone_of: int | None = None) -> dict[str, Any]:
+        """Turn the form's template and values into the job's title, payload, tools and saved values."""
         template = ctx.templates.get(body.template_key)
         if not template.enabled:
             raise TemplateError(f"The template '{template.name}' is switched off.")
         spec = TASKS[template.task_type]
         values = dict(body.values)
-        if body.clone_of is not None:
-            ctx.store.require(body.clone_of)
+        if clone_of is not None:
+            ctx.store.require(clone_of)
             if "reuse_from" in spec.value_fields:
-                values["reuse_from"] = body.clone_of
+                values["reuse_from"] = clone_of
         title, payload = ctx.templates.build_job(template, values, body.title)
         saved = {k: v for k, v in body.values.items() if k != "reuse_from"}
         if body.title.strip():
             saved["_title"] = body.title.strip()  # copied by Clone only when Joe typed it
+        return {
+            "type": spec.type, "title": title, "payload": payload, "tools_allowed": spec.tool_names,
+            "priority": body.priority, "template_key": template.key, "template_values": saved,
+        }  # fmt: skip
+
+    @app.post("/api/jobs", dependencies=auth)
+    async def create_job(body: JobCreate) -> dict[str, Any]:
+        fields = job_fields(body, clone_of=body.clone_of)
         job_id, _ = ctx.store.enqueue(
-            spec.type,
-            title,
-            payload,
-            spec.tool_names,
-            priority=body.priority,
+            fields["type"],
+            fields["title"],
+            fields["payload"],
+            fields["tools_allowed"],
+            priority=fields["priority"],
             created_by="admin",
-            template_key=template.key,
-            template_values=saved,
+            template_key=fields["template_key"],
+            template_values=fields["template_values"],
         )
         paused = runtime.current(ctx.settings, ctx.store).paused
         message = (
@@ -330,6 +343,23 @@ def create_app(ctx: AppContext) -> FastAPI:
             else f"Queued task {job_id}. It starts as soon as the worker is free."
         )
         return {"job": summaries(ctx.store, [ctx.store.require(job_id)])[0], "message": message}
+
+    @app.post("/api/jobs/{job_id}/edit", dependencies=auth)
+    async def edit_job(job_id: int, body: JobEdit) -> dict[str, Any]:
+        """Change a task that hasn't started (queued, failed or cancelled). It keeps its number and is queued again."""
+        job = ctx.store.editable(job_id)
+        if job.type != TASKS[ctx.templates.get(body.template_key).task_type].type:
+            raise JobError(f"Task {job_id} is a different kind of task from the template '{body.template_key}'.")
+        fields = job_fields(body)
+        fields.pop("type")
+        saved = ctx.store.replace(job_id, **fields)
+        paused = runtime.current(ctx.settings, ctx.store).paused
+        message = (
+            f"Saved task {job_id}. The worker is paused, so it starts when you resume it."
+            if paused
+            else f"Saved task {job_id}. It starts as soon as the worker is free."
+        )
+        return {"job": summaries(ctx.store, [saved])[0], "message": message}
 
     @app.post("/api/jobs/{job_id}/cancel", dependencies=auth)
     async def cancel_job(job_id: int) -> dict[str, Any]:

@@ -62,6 +62,7 @@ Passwords are write-only: they go to the macOS Keychain and are never returned.
 | GET | `/api/jobs` | `?status=a,b&q=&page=1&page_size=20` | `{"jobs": [JobSummary], "total", "page", "page_size", "counts": {status: n}}` |
 | GET | `/api/jobs/{id}` | | `{"job": JobDetail, "steps": [Step]}` |
 | POST | `/api/jobs` | `{"template_key", "values": {name: value}, "title"?: str, "priority"?: int}` | `{"job": JobSummary, "message"}` |
+| POST | `/api/jobs/{id}/edit` | `{"template_key", "values", "title"?, "priority"?}` (as `/api/jobs`) | `{"job", "message"}`: new details for a queued, failed or cancelled job; it keeps its id and is queued again from the start. 400 while running or once done (clone instead), or for a template of another task type. |
 | POST | `/api/jobs/{id}/cancel` | | `{"job", "message"}` (a running job stops at its next step) |
 | POST | `/api/jobs/{id}/retry` | | `{"job", "message"}` (failed/cancelled → queued, starts over) |
 | GET | `/api/templates` | | `{"templates": [Template], "task_types": [TaskType]}` |

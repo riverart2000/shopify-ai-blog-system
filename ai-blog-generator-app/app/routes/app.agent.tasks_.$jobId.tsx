@@ -362,6 +362,17 @@ export default function AgentTaskDetail() {
             <h2 style={{ margin: 0 }} className="sa-break">{job.title}</h2>
           </div>
           <div className="sa-row">
+            {job.template_key && ["queued", "failed", "cancelled"].includes(job.status) ? (
+              <Link
+                to={`/app/agent/new?edit=${seg(job.id)}`}
+                className="sa-btn"
+                title={job.status === "queued"
+                  ? "Change this task's details before it starts; it keeps its number"
+                  : "Change this task's details and put it back in the queue; it keeps its number"}
+              >
+                Edit
+              </Link>
+            ) : null}
             {job.template_key ? (
               <Link
                 to={`/app/agent/new?template=${encodeURIComponent(job.template_key)}&clone=${seg(job.id)}`}

@@ -54,3 +54,6 @@ postiz-api-access.txt
 
 # mailbox logins Joe keeps locally; never commit
 docs/emails.md
+
+# Event-type notes with mailbox passwords: never in the repo
+docs/bloomsbury-speakers.md

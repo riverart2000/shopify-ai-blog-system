@@ -52,8 +52,9 @@ DuckDuckGo and Bing as backups.
 4. When a site needs Joe (captcha, code, verification email), the job hands its tab to him on the Mac,
    sends a Telegram card (Done / Skip) and waits up to a day; Done restarts it straight away.
 5. A posted result must be an address the browser really opened. Telegram gets the plan and one
-   final report. **Clone** on a task copies its values; cloning a promotion reuses the places that
-   worked and still looks for new ones.
+   final report. **Edit** on a task that hasn't started (queued, failed or cancelled) changes its
+   details and queues it again under the same number. **Clone** on any task copies its values into
+   a new one; cloning a promotion reuses the places that worked and still looks for new ones.
 
 ## Commands
 ```bash

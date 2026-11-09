@@ -498,6 +498,60 @@ class JobStore:
             )
         return self.require(job_id)
 
+    EDITABLE_STATUSES = ("queued", "failed", "cancelled")
+
+    def editable(self, job_id: int) -> Job:
+        """The job, if its details may still be changed (it isn't running and hasn't finished)."""
+        job = self.require(job_id)
+        if job.status not in self.EDITABLE_STATUSES:
+            what = "is running" if job.status in ("running", "waiting_approval") else f"has finished ({job.status})"
+            raise JobError(f"Task {job_id} {what}, so it can't be edited. Clone it to make a changed copy.")
+        return job
+
+    def replace(
+        self,
+        job_id: int,
+        *,
+        title: str,
+        payload: dict[str, Any],
+        tools_allowed: list[str],
+        priority: int,
+        template_key: str | None,
+        template_values: dict[str, Any] | None,
+    ) -> Job:
+        """Give a job new details and put it at the start of the queue, keeping its number.
+
+        Only a job that isn't being worked on can change: queued, failed or cancelled. A failed or cancelled one
+        starts over with the new details (its old steps stay in the log, like a retry). A running or finished
+        job can't be edited: clone it instead.
+        """
+        self.editable(job_id)
+        stamp = iso(now())
+        with self._connect() as db:
+            # The status check is repeated here so a worker that claimed the job in the meantime wins.
+            changed = db.execute(
+                f"""UPDATE agent_jobs SET title = ?, payload = ?, tools_allowed = ?, priority = ?, template_key = ?,
+                       template_values = ?, status = 'queued', attempts = 0, checkpoint = NULL, result = NULL,
+                       error = NULL, cancel_requested = 0, run_at = ?, started_at = NULL, finished_at = NULL,
+                       updated_at = ?
+                   WHERE id = ? AND status IN ({", ".join("?" * len(self.EDITABLE_STATUSES))})""",
+                (
+                    title[:120],
+                    json.dumps(payload),
+                    json.dumps(tools_allowed),
+                    priority,
+                    template_key,
+                    json.dumps(template_values) if template_values is not None else None,
+                    stamp,
+                    stamp,
+                    job_id,
+                    *self.EDITABLE_STATUSES,
+                ),
+            ).rowcount
+        if not changed:
+            raise JobError(f"Task {job_id} started while you were editing it, so your changes weren't saved.")
+        return self.require(job_id)
+
     def update_payload(self, job_id: int, changes: dict[str, Any]) -> None:
         """Change some fields of a job's payload (e.g. give a promotion's waiting posts the event picture)."""
         with self._connect() as db:
