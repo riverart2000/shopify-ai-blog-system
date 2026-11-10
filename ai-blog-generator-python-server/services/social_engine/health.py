@@ -217,6 +217,8 @@ async def _recent_problems(sctx: StoreContext) -> Check:
 
 
 async def _daily_fill(sctx: StoreContext) -> Check:
+    if sctx.settings.catalog.source == "none":
+        return _check("daily_fill", "ok", "Brand content campaigns decide how often this brand posts.")
     from .scheduling.fill import daily_fill_status
 
     smartq = [c for c in await config_store.list_campaigns(sctx.store_id, statuses=("active", "paused"))
