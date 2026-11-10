@@ -1012,6 +1012,49 @@ async def test_signature_is_appended_per_provider_and_dropped_when_it_does_not_f
 
 
 @pytest.mark.asyncio
+async def test_closing_hashtag_ends_every_caption_as_typed(sctx):
+    """#bioluxelab_uk marks Social Autopilot posts: last hashtag on every channel that takes hashtags, spelt
+    exactly as typed, within the hashtag cap, and kept when the other hashtags are cut for length."""
+    providers = ["facebook", "instagram", "x", "pinterest", "reddit"]
+    result = template_captions(caption_request(providers, caption_overrides={
+        "closing_hashtag": "#bioluxelab_uk", "hashtags_count": 3}), sctx)
+    caps = result.channel_captions
+    for key in ("ch_facebook", "ch_instagram", "ch_x"):
+        tags = caps[key].hashtags
+        assert tags[-1] == "#bioluxelab_uk" and len(tags) <= 3, (key, tags)
+        assert caps[key].caption.rstrip().endswith("#bioluxelab_uk"), caps[key].caption
+        assert "#BioluxelabUk" not in caps[key].caption
+    assert caps["ch_pinterest"].hashtags[-1] == "#bioluxelab_uk"  # Pinterest allows 2 hashtags
+    assert "#bioluxelab_uk" not in caps["ch_reddit"].caption and not caps["ch_reddit"].hashtags  # takes none
+    assert result.hashtags[-1] == "#bioluxelab_uk"
+
+    # Typed without '#', and the model's own spelling of it is merged into the one marker.
+    from services.social_engine.ai.captions import with_closing_hashtag
+    assert with_closing_hashtag(["#Sleep", "#BioluxelabUk", "#Calm"], "#bioluxelab_uk", 3) == ["#Sleep", "#Calm", "#bioluxelab_uk"]
+    assert with_closing_hashtag(["#A", "#B", "#C"], "#bioluxelab_uk", 3) == ["#A", "#B", "#bioluxelab_uk"]
+    assert with_closing_hashtag(["#A"], "", 3) == ["#A"]
+    from services.social_engine.settings import CaptionSettings
+    assert CaptionSettings(closing_hashtag="bioluxelab_uk").closing_hashtag == "#bioluxelab_uk"
+    with pytest.raises(ValueError):
+        CaptionSettings(closing_hashtag="bio luxe")
+
+    # Even with hashtags switched off (0 per post) the marker still goes on, alone.
+    none = template_captions(caption_request(["facebook"], caption_overrides={
+        "closing_hashtag": "#bioluxelab_uk", "hashtags_count": 0}), sctx)
+    assert none.channel_captions["ch_facebook"].hashtags == ["#bioluxelab_uk"]
+
+    # When X runs out of room the other hashtags go first, then the signature; the marker outlives both.
+    long_body = "A calmer evening routine starts with the right tools and a little consistency. " * 3
+    long_offer = "Use code WELCOME10 at checkout today for ten percent off your very first order with Bio Luxe Lab, " * 2
+    squeezed = template_captions(caption_request(["x"], caption_overrides={
+        "closing_hashtag": "#bioluxelab_uk", "signature": long_offer.strip(), "source": "template",
+        "templates": {"default": long_body}}), sctx)
+    x = squeezed.channel_captions["ch_x"]
+    assert x.hashtags == ["#bioluxelab_uk"] and x.caption.rstrip().endswith("#bioluxelab_uk")
+    assert "WELCOME10" not in x.caption and PRODUCT_URL in x.caption
+
+
+@pytest.mark.asyncio
 async def test_the_shared_model_file_decides_the_model(se_db, shared_model_file):
     """~/.config/local-ai/model.json sets the server, text and vision model, whatever is saved in the settings."""
     import json

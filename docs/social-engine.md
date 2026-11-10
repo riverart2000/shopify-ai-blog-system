@@ -113,6 +113,22 @@ Discount codes work for every customer anywhere, whatever the market. The occasi
 Day, US Mother's Day, Small Business Saturday) get their own. Lunar festival dates are a table
 (`FESTIVAL_DATES`, to 2030): extend it before 2031. Wellness days now get a sale as well as a greeting.
 
+## Telling Autopilot posts apart
+
+Three markers, all settings (nothing in code):
+
+* **On the network:** Captions → *Closing hashtag* (live: `#bioluxelab_uk`). It ends every
+  caption exactly as typed (never re-cased like the AI hashtags), is always the last hashtag,
+  counts within the per-post hashtag cap, and is the last thing cut when a caption runs out of
+  room (other hashtags go first, then the signature line, then the link's CTA words). Networks
+  whose profile has `hashtags_max=0` (Google Business, Telegram, Reddit) get none.
+  Code: `ai/captions.py` `closing_hashtag_for` / `with_closing_hashtag` / `assemble`.
+* **In Postiz:** every post is tagged with its campaign name and content type
+  (`postiz.tag_posts`); hand-made Postiz posts have no tags.
+* **In Shopify analytics:** links carry `utm_source=<network>`, `utm_medium` (settings → UTM;
+  set it to `autopilot` to separate from Outfy and hand posts), `utm_campaign=<campaign>`,
+  `utm_content=<post id>`.
+
 ## Shoppable page (bio link)
 
 Instagram and TikTok posts can't carry a link, so their captions say "link in bio". `services/social_engine/shoppable.py`

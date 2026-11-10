@@ -50,6 +50,11 @@ export type CaptionSettings = {
   banned_terms: string[];
   hashtag_clouds: HashtagCloud[];
   templates: Record<string, string>;
+  /** A standing line after the link (e.g. a welcome offer); empty providers = every channel. */
+  signature: string;
+  signature_providers: string[];
+  /** Ends every caption so Social Autopilot posts can be told apart; "" = none. */
+  closing_hashtag: string;
 };
 
 export type ScheduleSettings = {

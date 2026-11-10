@@ -35,7 +35,7 @@ from .base import CaptionChannel, CaptionRequest, CaptionResult, ChannelCaption,
 from .guard import CLAIM_CODES, check_captions
 from .llm import get_router
 from .text import (
-    URL_RE, extract_hashtags, limit_emojis, measure_for, normalise_hashtags, remove_link_in_bio,
+    URL_RE, extract_hashtags, limit_emojis, measure_for, normalise_hashtag, normalise_hashtags, remove_link_in_bio,
     remove_terms, remove_urls, strip_emojis, strip_html, tidy, trim_to_limit, truncate_words,
 )
 
@@ -353,23 +353,40 @@ def signature_for(plan: ChannelPlan, captions: CaptionSettings) -> str:
     return text
 
 
+def closing_hashtag_for(plan: ChannelPlan, captions: CaptionSettings) -> str:
+    """The marker hashtag that ends this channel's caption ("" when none, or the network takes no hashtags)."""
+    return captions.closing_hashtag if captions.closing_hashtag and plan.profile.hashtags_max > 0 else ""
+
+
+def with_closing_hashtag(tags: list[str], closing: str, cap: int) -> list[str]:
+    """`tags` with the marker last: any other spelling of it is removed, and one tag makes way when at the cap.
+
+    The marker is kept as typed (normalising would turn #bioluxelab_uk into #BioluxelabUk), and it always
+    counts within the channel's hashtag cap."""
+    if not closing:
+        return list(tags)
+    same = {closing.casefold(), normalise_hashtag(closing).casefold()}
+    kept = [tag for tag in tags if tag.casefold() not in same]
+    return [*kept[: max(cap - 1, 0)], closing]
+
+
 def assemble(plan: ChannelPlan, body: str, link_line: str, tags: list[str], warnings: list[str],
-             signature: str = "") -> tuple[str, list[str], str]:
+             signature: str = "", closing: str = "") -> tuple[str, list[str], str]:
     """Fit body + link + signature + hashtags in the channel limit. Returns (caption, tags, link_line).
 
-    When space is short the hashtags go first, then the signature, then the CTA
-    words on an inline link, and only then the link itself."""
+    When space is short the hashtags go first (the closing marker last of all), then the signature, then the
+    CTA words on an inline link, and only then the link itself."""
     measure = plan.measure
     limit = plan.max_length
-    tags = list(tags)
+    tags = [tag for tag in tags if not closing or tag.casefold() != closing.casefold()]
 
     def _suffix() -> str:
-        return "".join(f"\n\n{part}" for part in (link_line, signature, " ".join(tags)) if part)
+        return "".join(f"\n\n{part}" for part in (link_line, signature, " ".join([*tags, closing] if closing else tags)) if part)
 
     min_body = min(measure(body), max(40, limit // 3))
     while True:
         room = limit - measure(_suffix())
-        if room >= min_body or (not tags and not link_line and not signature):
+        if room >= min_body or (not tags and not link_line and not signature and not closing):
             break
         if tags:
             tags.pop()
@@ -377,17 +394,20 @@ def assemble(plan: ChannelPlan, body: str, link_line: str, tags: list[str], warn
             signature = ""
         elif plan.link_mode == "inline" and link_line != plan.link_url:
             link_line = plan.link_url          # drop the CTA words, keep the bare link
-        else:
+        elif link_line:
             warnings.append(
                 f"{plan.profile.label}: the link did not fit within {limit} characters and was left out."
             )
             link_line = ""
+        else:
+            warnings.append(f"{plan.profile.label}: no room for the closing hashtag {closing}; it was left out.")
+            closing = ""
     suffix = _suffix()
     trimmed = trim_to_limit(body, max(0, limit - measure(suffix)), measure) if body else ""
     caption = (trimmed + suffix).strip()
     if measure(caption) > limit:  # safety net; unreachable with additive measures
         caption = trim_to_limit(caption, limit, measure)
-    return caption, tags, link_line
+    return caption, [*tags, closing] if closing else tags, link_line
 
 
 def make_title(plan: ChannelPlan, candidates: list[str], captions: CaptionSettings) -> str:
@@ -491,10 +511,11 @@ def build_result(
         sources = [model_tags + inline_tags, prod_tags, clouds if plan.allow_cloud else []]
         if plan.key == "youtube":
             sources.insert(0, ["Shorts"])
-        tags = merge_hashtags(sources, plan.hashtag_cap)
+        closing = closing_hashtag_for(plan, captions)
+        tags = with_closing_hashtag(merge_hashtags(sources, plan.hashtag_cap), closing, max(plan.hashtag_cap, 1))
         link_line, first_comment = link_lines(plan, captions, cta)
         caption, tags, link_line = assemble(plan, body, link_line, tags, warnings,
-                                             signature=signature_for(plan, captions))
+                                             signature=signature_for(plan, captions), closing=closing)
         channel_title = make_title(plan, [item.title if item else "", headline, title], captions)
         if captions.include_price and allowed_prices:
             for match in PRICE_RE.finditer(caption):
@@ -510,7 +531,8 @@ def build_result(
         warnings.append(f"Removed banned term '{term}' from the captions.")
     return CaptionResult(
         base_caption=base_caption,
-        hashtags=merge_hashtags([model_tags, prod_tags], captions.hashtags_count),
+        hashtags=with_closing_hashtag(merge_hashtags([model_tags, prod_tags], captions.hashtags_count),
+                                      captions.closing_hashtag, max(captions.hashtags_count, 1)),
         alt_text=alt_text,
         channel_captions=channel_captions,
         headline=headline,

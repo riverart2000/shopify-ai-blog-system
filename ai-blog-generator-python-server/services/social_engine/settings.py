@@ -101,11 +101,25 @@ class CaptionSettings(_Model):
     # adds it. Empty providers = every channel; otherwise e.g. ["instagram", "facebook"].
     signature: str = Field("", max_length=200)
     signature_providers: list[str] = Field(default_factory=list)
+    # Ends every caption, on every network that takes hashtags, so posts made by Social Autopilot can be told
+    # apart from everything else on the feed. Kept exactly as typed (a marker must never change), always the
+    # last hashtag, and it stays when the hashtags have to be cut for length.
+    closing_hashtag: str = Field("", max_length=60)
     product_category_hint: str = ""
     banned_terms: list[str] = Field(default_factory=list)
     hashtag_clouds: list[HashtagCloud] = Field(default_factory=list)
     templates: dict[str, str] = Field(default_factory=dict)
 
+
+    @field_validator("closing_hashtag", mode="before")
+    @classmethod
+    def _closing_hashtag(cls, value: Any) -> str:
+        text = str(value or "").strip().lstrip("#＃")
+        if not text:
+            return ""
+        if not re.fullmatch(r"\w+", text) or not any(char.isalpha() for char in text):
+            raise ValueError("The closing hashtag can only have letters, numbers and underscores (e.g. #bioluxelab_uk).")
+        return f"#{text}"
 
 class ScheduleSettings(_Model):
     timezone: str = "Europe/London"

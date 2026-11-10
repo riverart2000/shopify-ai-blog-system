@@ -500,6 +500,33 @@ function CaptionsSection({ initial, providerOptions, collections, result }: {
             <Field label="Banned words and phrases" help="One per line or comma separated. Posts containing them are held for review.">
               <textarea rows={2} defaultValue={draft.banned_terms.join("\n")} onChange={(event) => update({ banned_terms: splitList(event.target.value) })} />
             </Field>
+            <div className="sa-grid-2">
+              <Field
+                label="Closing hashtag"
+                help="Ends every post, exactly as typed, so you can tell Social Autopilot posts from everything else. Counts as one of the hashtags per post. Left off networks that take no hashtags (Google Business, Telegram, Reddit)."
+                error={draft.closing_hashtag.trim() && !/^#?\w+$/.test(draft.closing_hashtag.trim()) ? "Letters, numbers and underscores only." : undefined}
+              >
+                <input type="text" value={draft.closing_hashtag} onChange={(event) => update({ closing_hashtag: event.target.value })} placeholder="#bioluxelab_uk" maxLength={60} />
+              </Field>
+              <Field label="Signature line" help="A standing line after the link, before the hashtags, e.g. a welcome offer. Dropped on a post only when it would not fit.">
+                <input type="text" value={draft.signature} onChange={(event) => update({ signature: event.target.value })} placeholder="New here? 10% off your first order with code WELCOME10" maxLength={200} />
+              </Field>
+            </div>
+            {draft.signature.trim() ? (
+              <Field label="Signature on these networks" help="None ticked = every network.">
+                <div className="sa-row">
+                  {providerOptions.map(([key, label]) => (
+                    <label key={key} className="sa-check">
+                      <input
+                        type="checkbox" checked={draft.signature_providers.includes(key)}
+                        onChange={(event) => update({ signature_providers: event.target.checked ? [...draft.signature_providers, key] : draft.signature_providers.filter((other) => other !== key) })}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            ) : null}
 
             <fieldset className="sa-fieldset">
               <legend>Hashtag clouds</legend>
