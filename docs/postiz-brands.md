@@ -9,8 +9,12 @@ Decided 2026-11-10 ("option 1 for now"); a multi-brand Social Autopilot is the l
 
 ## 1. Keep the brands apart in Postiz: customers
 
-In Postiz, each channel can belong to a *customer*. Make three: **Bio Luxe Lab**, **RevenueMind
-Pro AI**, **Joe Bains** (channel avatar → Preferences / "Move to customer"). Then:
+In Postiz, each channel can belong to a *customer* (shown as a group in the channel list). The three
+exist since 2026-11-10: **Bio Luxe Lab** (`da02d764-…`, all 11 current channels), **RevenueMind Pro AI**
+(`c8e63859-…`, empty) and **Joe Bains** (`3fc46263-…`, empty). A channel's ⋮ menu → *Move / add to group*
+→ type the group name → Save moves it; typing a new name creates a group (there is no other way to
+create one, and the public API / CLI / MCP can only list them). A stray empty group " Luxe Lab" exists
+from a typo; it has no delete in the API. Then:
 
 * Social Autopilot → Settings → Postiz → *Customer id* = Bio Luxe Lab's id (the channel list
   shows each channel's customer after a sync). From then on it ignores the other brands' channels.
