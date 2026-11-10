@@ -127,14 +127,18 @@ async def record_api_call(
 
 
 async def count_api_calls(
-    *, service: str, operation: str, since: int, reached_server_only: bool = True,
+    *, service: str, operation: str, since: int, reached_server_only: bool = True, store_id: str = "",
 ) -> int:
-    """Count calls in a window (used for client-side rate budgets)."""
+    """Count calls in a window (used for client-side rate budgets). `store_id` counts one brand's calls only."""
     extra = " AND status_code IS NOT NULL" if reached_server_only else ""
+    params: tuple = (service, operation, since)
+    if store_id:
+        extra += " AND store_id=?"
+        params += (store_id,)
     async with connect() as conn:
         async with conn.execute(
             f"SELECT COUNT(*) FROM social_api_calls WHERE service=? AND operation=? AND created_at>=?{extra}",
-            (service, operation, since),
+            params,
         ) as cur:
             row = await cur.fetchone()
             return int(row[0]) if row else 0

@@ -165,6 +165,8 @@ async def _storage() -> Check:
 
 
 async def _shopify(sctx: StoreContext, live: bool) -> Check:
+    if sctx.settings.catalog.source == "none":
+        return _check("shopify", "ok", "No product catalogue: this brand posts brand content only.")
     counts = await product_store.count_products(sctx.store_id)
     cursor, synced_at = await observability.get_state_with_time(f"catalog:cursor:{sctx.store_id}")
     if not counts.get("total"):

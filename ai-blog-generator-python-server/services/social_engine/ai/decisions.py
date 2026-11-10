@@ -27,7 +27,7 @@ logger = logging.getLogger("ai_blog_server.social_engine.ai")
 
 MAX_CANDIDATES = 40
 PROMO_TEXT_MAX = 40
-BrandKind = Literal["quote", "fact", "poll", "quiz", "brand_awareness", "brand_value"]
+BrandKind = str   # a key of prompts.content_kinds(): the built-in kinds plus the brand's own (Settings → voice)
 
 # (minimum, maximum) products per content type; maxima are further capped by
 # `max_products_per_post`.
@@ -398,7 +398,7 @@ async def choose_content_plan(
     try:
         _, meta = await get_router(sctx).structured(
             "decide.content_plan",
-            LLMRequest(system=prompts.DECISION_SYSTEM, prompt=prompt, json_mode=True,
+            LLMRequest(system=prompts.decision_system(sctx.settings.voice), prompt=prompt, json_mode=True,
                        temperature=ai.decision_temperature, max_tokens=min(8192, 500 + 170 * len(slots))),
             _PlanDraft,
             ctx=sctx.call_context(subject_id),
@@ -499,7 +499,7 @@ async def generate_promo_texts(
     _, meta = await get_router(sctx).structured(
         "decide.promo_texts",
         LLMRequest(
-            system=prompts.DECISION_SYSTEM,
+            system=prompts.decision_system(sctx.settings.voice),
             prompt=prompts.promo_texts_prompt(  # over-generate: some lines fail validation
                 theme=theme, products=products, discount_text=discount_text, coupon_code=coupon_code,
                 count=count + 3, brand=sctx.settings.brand,
@@ -525,6 +525,7 @@ class BrandContent(BaseModel):
     body: str = ""
     options: list[str] = Field(default_factory=list)
     answer: str = ""
+    points: list[str] = Field(default_factory=list)   # on-image list items (kinds with `points`)
     caption: str
     alt_text: str = ""
     model: str = ""
@@ -538,6 +539,7 @@ class _BrandDraft(BaseModel):
     body: str = ""
     options: list[str] = Field(default_factory=list)
     answer: str = ""
+    points: list[str] = Field(default_factory=list)
     caption: str = ""
 
     @field_validator("headline", "body", "answer", "caption", mode="before")
@@ -545,7 +547,7 @@ class _BrandDraft(BaseModel):
     def _text(cls, value: Any) -> str:
         return _as_str(value)
 
-    @field_validator("options", mode="before")
+    @field_validator("options", "points", mode="before")
     @classmethod
     def _options(cls, value: Any) -> list[str]:
         return _as_str_list(value)
@@ -566,22 +568,43 @@ async def generate_brand_content(
     kind: BrandKind,
     topic_hint: str = "",
     recent: list[str] | None = None,
+    topic: str = "",
+    offering_name: str = "",
 ) -> BrandContent:
-    if kind not in prompts.BRAND_CONTENT_GUIDANCE:
-        raise ValidationError(f"Unknown brand content kind '{kind}'.")
-    recent = list(recent or [])
     settings = sctx.settings
+    definition = prompts.content_kinds(settings.voice).get(kind)
+    if definition is None:
+        raise ValidationError(f"Unknown brand content kind '{kind}'.")
+    offering = None
+    if definition.about_offering:
+        offerings = settings.voice.offerings
+        offering = next((o for o in offerings if o.name == offering_name), None) or (offerings[0] if offerings else None)
+        if offering is None:
+            raise ValidationError(f"'{definition.label}' posts are about a service, and none is listed in Settings → voice → offerings.")
+    recent = list(recent or [])
     captions = settings.captions
+    health = settings.guards.health_claim_checks
 
     def _postprocess(draft: _BrandDraft) -> BrandContent:
         headline = clean_promo_text(draft.headline)
         body = clean_promo_text(draft.body)
         if not headline:
             raise ValueError("headline is empty")
-        if len(headline) > 60:
-            raise ValueError(f"headline is {len(headline)} characters; the maximum is 60")
-        if len(body) > 220:
-            raise ValueError(f"body is {len(body)} characters; the maximum is 220")
+        if len(headline) > prompts.HEADLINE_MAX_CHARS:
+            raise ValueError(f"headline is {len(headline)} characters; the maximum is {prompts.HEADLINE_MAX_CHARS}")
+        if len(body) > prompts.BODY_MAX_CHARS:
+            raise ValueError(f"body is {len(body)} characters; the maximum is {prompts.BODY_MAX_CHARS}")
+        points: list[str] = []
+        if definition.points:
+            points = list(dict.fromkeys(
+                clean_promo_text(point).rstrip(".") for point in draft.points if clean_promo_text(point)))
+            if not 3 <= len(points) <= definition.points:
+                raise ValueError(f"points must be a list of 3 to {definition.points} items; got {len(points)}")
+            too_long = [point for point in points if len(point) > prompts.POINT_MAX_CHARS]
+            if too_long:
+                raise ValueError(f"each point may be at most {prompts.POINT_MAX_CHARS} characters; too long: "
+                                 + " | ".join(f"{point!r} ({len(point)})" for point in too_long[:3]))
+            body = ""
         options: list[str] = []
         answer = ""
         if kind in ("poll", "quiz"):
@@ -600,8 +623,9 @@ async def generate_brand_content(
         caption_text = trim_to_limit(caption_text, 600)
         if not caption_text:
             raise ValueError("caption is empty")
-        combined = "\n".join([headline, body, caption_text, *options])
-        problems = [issue.message for issue in claim_issues(combined, "", "the content")]
+        combined = "\n".join([headline, body, caption_text, *options, *points])
+        problems = [issue.message for issue in claim_issues(combined, "", "the content", health=health)
+                    if issue.severity == "block" or health]
         if problems:
             raise ValueError("contains claim wording: " + "; ".join(problems[:3]))
         banned_found = find_terms(combined, captions.banned_terms)
@@ -615,20 +639,23 @@ async def generate_brand_content(
         alt_parts = [f'{settings.brand.business_name or "Brand"} graphic: "{headline}"', body]
         if options:
             alt_parts.append("Options: " + ", ".join(options))
+        if points:
+            alt_parts.append("Points: " + "; ".join(points))
         alt_text = trim_to_limit(" ".join(part for part in alt_parts if part), 250)
         return BrandContent(
-            kind=kind, headline=headline, body=body, options=options, answer=answer, caption=caption_text,
-            alt_text=alt_text,
+            kind=kind, headline=headline, body=body, options=options, answer=answer, points=points,
+            caption=caption_text, alt_text=alt_text,
         )
 
     _, meta = await get_router(sctx).structured(
         "decide.brand_content",
         LLMRequest(
-            system=prompts.caption_system_prompt(settings.brand, captions),
+            system=prompts.caption_system_prompt(settings.brand, captions, settings.voice),
             prompt=prompts.brand_content_prompt(
                 kind=kind, topic_hint=topic_hint, recent=recent, brand=settings.brand, language=captions.language,
+                definition=definition, offering=offering, topic=topic,
             ),
-            json_mode=True, temperature=settings.ai.temperature, max_tokens=700,
+            json_mode=True, temperature=settings.ai.temperature, max_tokens=900,
         ),
         _BrandDraft,
         ctx=sctx.call_context(),
@@ -818,7 +845,7 @@ async def performance_insights(sctx: StoreContext, *, rollups: dict) -> Insights
     _, meta = await get_router(sctx).structured(
         "decide.insights",
         LLMRequest(
-            system=prompts.DECISION_SYSTEM,
+            system=prompts.decision_system(sctx.settings.voice),
             prompt=prompts.insights_prompt(rollups=rollups, content_types=types, hours=hours),
             json_mode=True, temperature=sctx.settings.ai.decision_temperature, max_tokens=900,
         ),

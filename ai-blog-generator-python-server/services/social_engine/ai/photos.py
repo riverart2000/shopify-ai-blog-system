@@ -52,7 +52,7 @@ async def _look(sctx: StoreContext, url: str, *, subject_id: str, title: str = "
         ai.base_url, ai.vision_model, api_key=ai.api_key(), timeout=min(float(ai.timeout_seconds), 180.0),
         name="vision", max_attempts=1, strict_json=ai.strict_json,
     )
-    request = LLMRequest(system=prompts.VISION_SYSTEM, prompt=prompts.photo_audit_prompt(), images=[str(path)],
+    request = LLMRequest(system=prompts.vision_system(sctx.settings.voice), prompt=prompts.photo_audit_prompt(), images=[str(path)],
                          json_mode=True, temperature=0, max_tokens=300)
     try:
         from .review import VisionDraft, _vision_payload, not_product_name

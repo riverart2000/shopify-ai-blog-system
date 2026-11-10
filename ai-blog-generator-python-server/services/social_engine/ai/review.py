@@ -155,7 +155,7 @@ async def _vision_check(
         name="vision", max_attempts=1, strict_json=ai.strict_json,
     )
     request = LLMRequest(
-        system=prompts.VISION_SYSTEM,
+        system=prompts.vision_system(sctx.settings.voice),
         prompt=prompts.vision_prompt(
             product_titles=[str(product.get("title") or "") for product in products],
             headline=headline, expects_product=expects_product,
@@ -249,7 +249,7 @@ async def review_post(
     router = get_router(sctx)
     draft, meta = await router.structured(
         "review",
-        LLMRequest(system=prompts.REVIEW_SYSTEM, prompt=prompt, json_mode=True,
+        LLMRequest(system=prompts.review_system(settings.voice), prompt=prompt, json_mode=True,
                    temperature=settings.ai.decision_temperature, max_tokens=900),
         ReviewDraft,
         ctx=sctx.call_context(subject_id),
@@ -311,7 +311,7 @@ async def _second_opinion(sctx: StoreContext, *, prompt: str, subject_id: str, t
     try:
         draft, meta = await router.structured(
             "review.verify",
-            LLMRequest(system=prompts.REVIEW_SYSTEM, prompt=prompt, json_mode=True,
+            LLMRequest(system=prompts.review_system(sctx.settings.voice), prompt=prompt, json_mode=True,
                        temperature=ai.decision_temperature, max_tokens=900),
             ReviewDraft, ctx=sctx.call_context(subject_id), decision_type="review.verify", subject_id=subject_id,
         )

@@ -20,6 +20,12 @@ export * from "./social-engine.types";
 export const BACKEND_URL = (process.env.AI_BLOG_BACKEND_URL || "http://127.0.0.1:4000").replace(/\/+$/, "");
 export const BACKEND_KEY = process.env.AI_BLOG_BACKEND_API_KEY || process.env.BLOG_GENERATOR_API_KEY || "";
 const API_PREFIX = "/api/social-engine";
+/**
+ * Marks a request as coming from the Social Autopilot pages. The backend answers such a request for the brand
+ * chosen in the brand switch (Bio Luxe Lab, RevenueMind Pro AI, ...) when it names no store. Webhook relays
+ * don't send it: they always belong to the store they name.
+ */
+const APP_HEADERS = { "x-social-app": "1" } as const;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export class SocialEngineError extends Error {
@@ -106,11 +112,11 @@ export function backendConfigured(): boolean {
 }
 
 /** Raw backend request (used by the media proxies and webhook relays). */
-export async function seRequest(path: string, init: RequestInit & { query?: SeFetchOptions["query"]; timeoutMs?: number } = {}): Promise<Response> {
-  const { query, timeoutMs, headers, ...rest } = init;
+export async function seRequest(path: string, init: RequestInit & { query?: SeFetchOptions["query"]; timeoutMs?: number; forActiveBrand?: boolean } = {}): Promise<Response> {
+  const { query, timeoutMs, headers, forActiveBrand, ...rest } = init;
   return fetch(buildUrl(path, query), {
     ...rest,
-    headers: { "x-api-key": BACKEND_KEY, ...(headers as Record<string, string> | undefined) },
+    headers: { "x-api-key": BACKEND_KEY, ...(forActiveBrand ? APP_HEADERS : {}), ...(headers as Record<string, string> | undefined) },
     signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_MS),
   });
 }
@@ -129,6 +135,7 @@ export async function seFetch<T = Record<string, unknown>>(path: string, options
       method,
       headers: {
         "x-api-key": BACKEND_KEY,
+        ...APP_HEADERS,
         accept: "application/json",
         ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
       },
@@ -286,7 +293,7 @@ export async function proxyMedia(path: string, request: Request, query?: SeFetch
   const range = request.headers.get("range");
   let upstream: Response;
   try {
-    upstream = await seRequest(path, { query, headers: range ? { range } : {}, timeoutMs: 120_000 });
+    upstream = await seRequest(path, { query, headers: range ? { range } : {}, timeoutMs: 120_000, forActiveBrand: true });
   } catch (error) {
     return new Response(`Media backend unreachable: ${errorMessage(error)}`, { status: 502 });
   }

@@ -202,6 +202,12 @@ async def cmd_seed(args) -> None:
     print(f"{await seed_builtin_templates(await _store_id(args.store))} template(s) seeded")
 
 
+async def cmd_brand_apply(args) -> None:
+    from .brands import apply_brand, read_brand_file
+
+    _print(await apply_brand(read_brand_file(args.file)))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="social_engine", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -270,6 +276,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("template")
     p.add_argument("format", nargs="?", default="square")
     p.set_defaults(func=cmd_preview)
+
+    p = sub.add_parser("brand-apply", help="create or update a brand from a brand file (brands/*.json)")
+    p.add_argument("file")
+    p.set_defaults(func=cmd_brand_apply)
 
     p = sub.add_parser("seed-templates", help="install built-in templates for the store")
     p.set_defaults(func=cmd_seed)

@@ -68,7 +68,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         upstream.set("file", file, file.name);
         upstream.set("note", formString(form, "note"));
         upstream.set("product_ids", formString(form, "product_id"));
-        const response = await seRequest("/api/social-engine/founder-videos/upload", { method: "POST", body: upstream, timeoutMs: 600_000 });
+        const response = await seRequest("/api/social-engine/founder-videos/upload", { forActiveBrand: true, method: "POST", body: upstream, timeoutMs: 600_000 });
         if (!response.ok) {
           const body = await response.json().catch(() => ({})) as { detail?: string; error?: { message?: string } };
           throw new SocialEngineError(body.error?.message || body.detail || `Upload failed (HTTP ${response.status}).`);

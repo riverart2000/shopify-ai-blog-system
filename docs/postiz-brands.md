@@ -3,9 +3,10 @@
 Postiz Pro (from 2026-11-10): 30 channels, 300 AI images and 30 AI videos a month, shared by every
 brand on the account. Bio Luxe Lab uses 12 channels; the other two brands get about 6 each.
 
-Social Autopilot writes posts from the Shopify catalogue only, so it is **Bio Luxe Lab's** engine.
-The other brands are posted by Postiz itself (RSS auto-post) and the Task Agent for one-offs.
-Decided 2026-11-10 ("option 1 for now"); a multi-brand Social Autopilot is the later option.
+Update 2026-11-10 (evening): Social Autopilot is now multi-brand. RevenueMindProAI is a brand of its own
+(`ai-blog-generator-python-server/brands/revenuemind.json`, how-to in `docs/social-engine/brands.md`): one
+value post a day on all its channels, written by Postiz AI, each asking for a booked call. The RSS auto-post
+below is still available for blog articles; joebains.com is the next brand to add the same way.
 
 ## 1. Keep the brands apart in Postiz: customers
 

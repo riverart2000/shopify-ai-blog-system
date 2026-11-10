@@ -315,8 +315,48 @@ async def _invoke(provider: LLMProvider, request: LLMRequest, ctx: CallContext, 
     return await complete(request, ctx)
 
 
+# What the writer writes. Everything else (reviews, plans, insights) stays with the local model, so a post is
+# never written and checked by the same model.
+WRITER_TASKS = frozenset({"captions", "decide.brand_content", "decide.promo_texts"})
+
+_AGENT_PREAMBLE = (
+    "You are being used as a copywriter only. Do NOT create, schedule, save, list or change any post, and do not "
+    "call any tool. Reply with text only, exactly in the format the brief asks for.\n\n"
+)
+
+
+class PostizAgentProvider:
+    """Postiz's own AI agent as the writer (Settings → AI → writer = "postiz").
+
+    One message carries the engine's whole brief (brand voice, compliance rules, facts, format), so the copy is
+    held to the same rules whoever writes it. Every call is in the API call ledger (service "postiz")."""
+
+    def __init__(self, api_key: str, *, url: str, timeout: float) -> None:
+        self.api_key = api_key
+        self.url = url
+        self.timeout = timeout
+        self.name = "postiz_agent"
+        self.model = "postiz-agent"
+
+    async def complete(self, request: LLMRequest, ctx: CallContext, *, operation: str = "llm.complete") -> LLMResponse:
+        from ..publishers.postiz_tools import PostizMCP
+
+        if request.images:
+            raise ConfigurationError("The Postiz agent cannot look at images.")
+        message = _AGENT_PREAMBLE + (f"{request.system}\n\n" if request.system else "") + request.prompt \
+            + (_JSON_ONLY_SUFFIX if request.json_mode else "")
+        started = time.monotonic()
+        mcp = PostizMCP(self.api_key, url=self.url, ctx=ctx, timeout=self.timeout)
+        try:
+            text, usage = await mcp.ask_agent(message, timeout=self.timeout)
+        finally:
+            await mcp.aclose()
+        return LLMResponse(text=strip_reasoning(text), model=self.model, provider=self.name,
+                           duration_ms=int((time.monotonic() - started) * 1000), usage=usage)
+
+
 class LLMRouter:
-    """Gemma first, then the configured fallback. See module docstring."""
+    """The writer (if one is set) for writing tasks, then Gemma, then the configured fallback."""
 
     def __init__(
         self,
@@ -325,9 +365,11 @@ class LLMRouter:
         *,
         store_id: str = "",
         settings: AISettings | None = None,
+        writer: LLMProvider | None = None,
     ) -> None:
         self.primary = primary
         self.fallback = fallback
+        self.writer = writer
         self.store_id = store_id
         self.settings = settings or AISettings()
 
@@ -339,8 +381,11 @@ class LLMRouter:
             updates["max_tokens"] = self.settings.max_tokens
         return request.model_copy(update=updates) if updates else request
 
-    def _providers(self) -> list[tuple[LLMProvider, bool]]:
-        chain: list[tuple[LLMProvider, bool]] = [(self.primary, False)]
+    def _providers(self, task: str = "") -> list[tuple[LLMProvider, bool]]:
+        chain: list[tuple[LLMProvider, bool]] = []
+        if self.writer is not None and task in WRITER_TASKS:
+            chain.append((self.writer, False))
+        chain.append((self.primary, bool(chain)))   # Gemma standing in for the writer counts as a fallback
         if self.fallback is not None:
             chain.append((self.fallback, True))
         return chain
@@ -349,7 +394,7 @@ class LLMRouter:
         """Like `complete`, also returning whether the fallback answered."""
         request = self._prepared(request)
         failures: list[tuple[LLMProvider, BaseException]] = []
-        for provider, is_fallback in self._providers():
+        for provider, is_fallback in self._providers(task):
             try:
                 return await _invoke(provider, request, ctx, f"llm.{task}"), is_fallback
             except Exception as exc:
@@ -404,7 +449,7 @@ class LLMRouter:
         fallback_error: BaseException | None = None
         last_problem = ""
         last_text = ""
-        for provider, is_fallback in self._providers():
+        for provider, is_fallback in self._providers(task):
             current = request
             for round_number in (1, 2):
                 operation = f"llm.{task}" if round_number == 1 else f"llm.{task}.repair"
@@ -548,7 +593,14 @@ def primary_provider(settings: AISettings) -> OpenAICompatibleProvider:
 def get_router(sctx: StoreContext) -> LLMRouter:
     ai = sctx.settings.ai
     fallback = RegistryModelProvider(sctx.store_id, ai.fallback_model_id.strip()) if ai.fallback_model_id.strip() else None
-    return LLMRouter(primary_provider(ai), fallback, store_id=sctx.store_id, settings=ai)
+    writer = None
+    postiz = sctx.settings.postiz
+    if ai.writer == "postiz" and sctx.settings.publisher == "postiz" and postiz.api_key():
+        from ..publishers.guard import live_publishing_enabled
+
+        if live_publishing_enabled():   # only the live system talks to the Postiz account
+            writer = PostizAgentProvider(postiz.api_key(), url=postiz.mcp_url, timeout=float(ai.writer_timeout_seconds))
+    return LLMRouter(primary_provider(ai), fallback, store_id=sctx.store_id, settings=ai, writer=writer)
 
 
 async def check_llm(settings: AISettings) -> dict:

@@ -1,0 +1,257 @@
+{
+  "store": {
+    "id": "revenuemind",
+    "name": "RevenueMindProAI",
+    "domain": "revenuemindproai.com",
+    "sort_order": 50
+  },
+  "logo_file": "~/revenuemindproai/public/revenuemindproai/RevenueMindProAI_logo.png",
+  "postiz_group": "RevenueMind Pro AI",
+  "settings": {
+    "enabled": true,
+    "publisher": "postiz",
+    "default_approval_mode": "ai_review",
+    "catalog": {
+      "source": "none"
+    },
+    "brand": {
+      "business_name": "RevenueMindProAI",
+      "website": "https://revenuemindproai.com",
+      "what_you_sell": "AI, automation, cloud infrastructure and technical consulting for UK small and medium businesses: audits first, then hands-on implementation",
+      "description": "RevenueMindProAI is a London-based consultancy led by Joe Bains, a technical solutions specialist with more than 25 years of delivery experience across telecommunications, broadcast, cloud infrastructure and healthcare technology (work for organisations including Vodafone, O2, BSkyB and Swisscom). It helps UK businesses turn operational problems into practical, working systems: audits that find revenue leaks, manual bottlenecks and technical risks, then AI automation, AI agents, chatbots, cloud and infrastructure work to fix them. Budget-first: existing tools before bespoke software. Plain English, clear priorities, no long-term contracts. On-site in Central London, remote across the UK. Every engagement starts with a free discovery call booked on the website.",
+      "slogan": "Turn operational problems into practical, working systems.",
+      "cta_text": "Book a call",
+      "colors": {
+        "primary": "#304fff",
+        "text": "#171717",
+        "background": "#f3f3f5",
+        "cta": "#fed835",
+        "accent": "#e5c230",
+        "secondary": "#171717"
+      },
+      "heading_font": "InstrumentSans-Variable.ttf",
+      "heading_weight": "Bold",
+      "body_font": "InstrumentSans-Variable.ttf",
+      "decoration": "dots",
+      "use_store_logo": true,
+      "logo_position": "top_left",
+      "show_price": false
+    },
+    "captions": {
+      "source": "ai",
+      "language": "en-GB",
+      "tone": "professional",
+      "include_price": false,
+      "hashtags_count": 4,
+      "use_product_tags": false,
+      "emoji_level": "light",
+      "include_cta": true,
+      "link_policy": "all",
+      "link_in_first_comment": true,
+      "closing_hashtag": "#RevenueMindProAI",
+      "custom_instructions": "Write for the owner or operations lead of a UK small or medium business who is busy, practical and a little sceptical of AI hype. Open with a hook about a problem they recognise from their own week (chasing invoices, re-typing data, leads going cold, a system nobody dares touch). Give something they can use today even if they never call. Then, in one sentence, invite them to book a free discovery call. Never invent client names, results, numbers or statistics.",
+      "hashtag_clouds": [
+        {
+          "name": "RevenueMind default",
+          "is_default": true,
+          "tags": [
+            "AIAutomation",
+            "BusinessAutomation",
+            "SmallBusinessUK",
+            "AIConsulting",
+            "Productivity",
+            "DigitalTransformation",
+            "WorkflowAutomation",
+            "UKBusiness"
+          ]
+        }
+      ]
+    },
+    "schedule": {
+      "timezone": "Europe/London",
+      "days": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "window_start": "08:00",
+      "window_end": "18:00",
+      "plan_days_ahead": 1,
+      "posts_per_channel_per_day": 1,
+      "always_fill_daily_slots": false
+    },
+    "postiz": {
+      "ai_video_monthly_budget": 0,
+      "ai_image_monthly_budget": 40,
+      "ai_backgrounds_for_promotions": false,
+      "trending_tiktok_music": false,
+      "servers": []
+    },
+    "guards": {
+      "health_claim_checks": false,
+      "hold_health_claims": false,
+      "hold_low_review_score": 6,
+      "max_review_rewrites": 2
+    },
+    "utm": {
+      "enabled": true,
+      "medium": "autopilot"
+    },
+    "auto_promotions": {
+      "enabled": false
+    },
+    "founder_videos": {
+      "enabled": false
+    },
+    "listings": {
+      "enabled": false,
+      "autopilot": false
+    },
+    "shoppable": {
+      "enabled": false
+    },
+    "voice": {
+      "sector": "a UK AI, automation and technical consultancy for small and medium businesses",
+      "image_check": "a business technology consultancy",
+      "compliance_rules": "1. Never invent facts: no statistics, percentages, survey or study results, client names, case studies, testimonials, reviews, awards or rankings unless they appear word for word in the facts you are given.\n2. Never promise or guarantee a result (revenue, savings, hours saved, return on investment, a timeframe). Say what the work looks at and what the client receives, exactly as the facts describe it.\n3. Describe a service only with the facts given for it. Do not add deliverables, prices, durations or guarantees. Do not state how long the discovery call lasts; call it a free discovery call.\n4. No fake urgency or scarcity (limited places, last chance, only this week).\n5. Do not name or criticise competitors, tools or vendors. Naming a widely known tool as a neutral example (a spreadsheet, a CRM, an inbox) is fine.\n6. General business advice only: no legal, tax, financial, employment or regulatory advice, and no claim that a tool makes a business compliant with any law.\n7. No fear-mongering about jobs. AI and automation are presented as taking repetitive work off people, never as replacing them.\n8. Experience claims are limited to those in the brand description.",
+      "voice_rules": "- A senior consultant who explains things plainly: practical, specific, commercially minded, quietly confident. Dry wit is welcome; hype is not.\n- Lead with a concrete, recognisable situation or a useful point, never with a superlative or a claim about AI changing everything.\n- Make every post worth reading on its own: one idea the reader can act on today.\n- Plain English. If a technical term is needed, explain it in a few words. No buzzword strings.\n- Banned clichés: game-changer, revolutionary, unlock, unleash, supercharge, leverage, synergy, cutting-edge, next-level, 10x, disrupt, in today's fast-paced world, the future is here, harness the power.\n- Humour punches at processes and hype, never at people, job roles or the reader's business.\n- No ALL-CAPS words for emphasis; at most one exclamation mark per caption.\n- Short sentences and short paragraphs; blank lines between ideas on long-form networks.",
+      "content_kinds": {
+        "tip": {
+          "label": "Practical tip",
+          "eyebrow": "Quick tip",
+          "template_key": "info_points",
+          "points": 5,
+          "guidance": "A practical how-to a business owner can act on today, on the topic given. The headline names the outcome or the problem in plain words (for example 'Five signs a process is ready to automate'). The points are the substance: concrete steps, checks or signs, each one specific enough to do or notice this week, in a sensible order. No point may be a sales line. The caption adds the 'why it matters' in two or three sentences and one short example of what it looks like in a real small business, without inventing a client."
+        },
+        "checklist": {
+          "label": "Checklist",
+          "eyebrow": "Checklist",
+          "template_key": "info_points_dark",
+          "points": 5,
+          "guidance": "A short self-check on the topic given: questions or yes/no checks a business owner can run through in two minutes to see whether they have the problem. The headline says what the checklist tells them (for example 'Is your sales follow-up leaking leads?'). Each point is one check, phrased so the answer is obvious. The caption says what to do if they ticked most of them, in plain words."
+        },
+        "myth": {
+          "label": "Myth vs reality",
+          "eyebrow": "Myth",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "Myth-busting on the topic given. The headline is a common belief about AI, automation or business technology, written in quotation marks the way a business owner would actually say it (for example \"We're too small for AI\"). The body is the reality: one or two plain sentences that correct it with a reason, not a slogan. The caption explains the reality with one concrete, everyday example and stays friendly towards people who believed the myth."
+        },
+        "straight_talk": {
+          "label": "Straight talk",
+          "eyebrow": "Straight talk",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "A witty, opinionated take on the topic given that a business owner would nod at or share. The headline is one sharp, slightly funny observation about how technology really goes wrong in businesses (for example 'Your spreadsheet is not a database. It just plays one at work.'). The body lands the useful point behind the joke in one or two sentences. The caption keeps the same dry humour, then turns practical: what to do about it. The joke is on processes and hype, never on people."
+        },
+        "service_spotlight": {
+          "label": "Service spotlight",
+          "eyebrow": "How we help",
+          "template_key": "info_points_dark",
+          "points": 4,
+          "about_offering": true,
+          "guidance": "Show what one service does for the client, using only the facts given for that service. The headline names the problem the service solves or the service itself, in at most 60 characters. The points say what it looks at and what the client walks away with, each starting with a verb, in the client's terms, not in consultancy jargon. The caption opens with the situation that makes someone need this service, says who it suits, and ends by inviting them to book a free discovery call. No prices, no durations and no promised results."
+        }
+      },
+      "offerings": [
+        {
+          "name": "Revenue-Leak & Funnel Integrity Audit",
+          "summary": "For businesses where revenue is slipping through the cracks. Finds where prospects drop out of the sales funnel, where pricing underperforms and where the current funnel leaves money on the table. Includes a detailed sales funnel assessment and AI-powered analysis of pricing. The client receives a data-backed growth plan that highlights the leaks, explains their commercial impact and shows what to change first."
+        },
+        {
+          "name": "Workflow & Process Automation Audit",
+          "summary": "For teams spending too much time on repetitive work. Looks at manual processes, repetitive admin, bottlenecks between teams and tasks that consume time without adding enough value. Identifies which processes to streamline, automate or redesign first. The client receives a clear automation strategy showing which improvements can be made quickly with existing tools and where bespoke AI workflows will deliver the strongest return."
+        },
+        {
+          "name": "Technical Readiness & Infrastructure Audit",
+          "summary": "For businesses that want to introduce AI without creating instability. Reviews the cloud setup, hosting, databases, backups, performance constraints, security and access controls, and any legacy systems that could block AI or automation. The client receives a practical roadmap showing what is sound, what is risky and what to fix first so their systems can support automation with confidence."
+        },
+        {
+          "name": "AI Automation & Adoption",
+          "summary": "Turns repetitive work and disconnected tools into maintainable workflows the team can realistically adopt. Covers workflow mapping, AI assistants, purpose-built AI agents, custom chatbots, integrations and internal knowledge tools, delivered in phases led by return rather than tool sprawl, with documentation, team training and operational handover. The outcome is automation that solves a defined business problem, fits the existing operation and can be supported after launch."
+        },
+        {
+          "name": "Cloud, Infrastructure & Systems",
+          "summary": "Modernises, migrates and strengthens the systems a business depends on without losing sight of uptime, security or day-to-day operations. Covers cloud and hosting assessments, migration planning and implementation, Linux, database, container and deployment support, performance, resilience, backup and monitoring improvements, and practical modernisation of legacy or fragile systems. The outcome is a more dependable technical foundation with clear priorities and hands-on support."
+        },
+        {
+          "name": "Digital Transformation & Roadmaps",
+          "summary": "Creates a practical route from today's systems and bottlenecks to a more connected, efficient and scalable operation. Covers current-state reviews, technical dependency mapping, legacy integration and modernisation planning, prioritised roadmaps shaped around risk, budget and capacity, and plain-English decision support for leaders. The outcome is a sequenced plan showing what to change, what to keep and how to move forward without unnecessary disruption."
+        },
+        {
+          "name": "Technical Project Rescue & Advisory",
+          "summary": "Brings senior technical judgement to stalled delivery, recurring incidents or a high-impact decision that needs an independent view. Covers root-cause investigation for delayed or unstable projects, performance, reliability and implementation reviews, independent technical options and risk assessment, and interim support through critical migrations and releases. The outcome is a clear recovery path and experienced support focused on getting the work moving again."
+        },
+        {
+          "name": "AI Discovery Workshop & Leadership Training",
+          "summary": "For businesses and leadership teams that do not know where to start with AI. A workshop that demystifies the technology and identifies and maps the most valuable opportunities in the business, so leaders can focus on what really matters before committing to implementation or a larger programme of work."
+        }
+      ],
+      "image_style": "Clean modern editorial illustration for a business technology consultancy: a tidy desk, office or abstract workflow scene in deep charcoal with electric blue and warm yellow accents, soft depth of field, minimal and professional, no people's faces"
+    },
+    "ai": {
+      "writer": "postiz"
+    }
+  },
+  "campaigns": [
+    {
+      "name": "Daily value post",
+      "rule_type": "brand_content",
+      "status": "active",
+      "approval_mode": "ai_review",
+      "providers": [],
+      "config": {
+        "kinds": [
+          "tip",
+          "myth",
+          "service_spotlight",
+          "checklist",
+          "straight_talk",
+          "tip",
+          "service_spotlight"
+        ],
+        "posts_per_day": 1,
+        "every_n_days": 1,
+        "link_url": "https://revenuemindproai.com/book-call",
+        "topic_hint": "Audience: owners and operations leads of UK small and medium businesses. Useful first, promotional second.",
+        "topics": [
+          "leads that go cold because nobody replies quickly enough",
+          "re-typing the same data into two systems",
+          "chasing unpaid invoices by hand",
+          "what to automate first when you have no budget",
+          "quotes and proposals that take days to send",
+          "a sales funnel with no follow-up after the first enquiry",
+          "pricing that has not been reviewed in years",
+          "knowledge that lives in one person's head",
+          "onboarding a new customer with fifteen emails",
+          "reports built by hand every Monday morning",
+          "choosing an AI tool before defining the problem",
+          "backups nobody has ever tested",
+          "a customer inbox shared by the whole team",
+          "booking and scheduling done by phone and memory",
+          "an old system everyone is afraid to touch",
+          "using the tools you already pay for before buying new ones",
+          "AI chatbots that answer the same ten customer questions",
+          "what an AI agent actually is, in plain English",
+          "keeping customer data safe when staff use AI tools",
+          "measuring whether an automation is worth keeping",
+          "spreadsheets doing a database's job",
+          "missed calls and enquiries outside office hours",
+          "handing over a process when someone leaves",
+          "why AI projects stall after the demo",
+          "writing a simple AI policy for a small team",
+          "stock, orders and accounts that do not talk to each other",
+          "meeting notes and actions that vanish after the call",
+          "moving to the cloud without breaking day-to-day work",
+          "finding the bottleneck between sales and delivery",
+          "how to tell if a process is too messy to automate"
+        ],
+        "ai_background": true
+      }
+    }
+  ]
+}

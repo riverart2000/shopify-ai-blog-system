@@ -82,7 +82,15 @@ export type AISettings = {
   base_url: string; model: string; api_key_env: string; timeout_seconds: number; temperature: number;
   decision_temperature: number; max_tokens: number; fallback_model_id: string; verify_model_id: string; ai_decisions: boolean;
   ai_review: boolean; vision_model: string; api_key_configured: boolean; strict_json?: boolean;
+  /** Who writes posts: Postiz's own AI agent, or the local model. Reviews are always the local model. */
+  writer?: "local" | "postiz";
 };
+
+/** One business on this Social Autopilot (a Shopify store, or a brand with no catalogue). */
+export type Brand = {
+  store_id: string; name: string; website: string; enabled: boolean; catalog_source: "shopify" | "none"; active: boolean;
+};
+export type BrandsResponse = { active: string; brands: Brand[] };
 
 export type GuardSettings = { hold_health_claims: boolean; hold_low_review_score: number; max_caption_retries: number; max_review_rewrites?: number };
 export type UtmSettings = { enabled: boolean; medium: string; source_overrides: Record<string, string> };
@@ -117,6 +125,7 @@ export type EngineSettings = {
   captions: CaptionSettings;
   schedule: ScheduleSettings;
   content: ContentSettings;
+  catalog?: { source: "shopify" | "none" };
   postiz: PostizSettings;
   ai: AISettings;
   guards: GuardSettings;

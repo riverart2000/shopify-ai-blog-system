@@ -66,6 +66,8 @@ class BrandKit(_Model):
     colors: BrandColors = Field(default_factory=BrandColors)
     heading_font: str = "InstrumentSerif-Regular.ttf"
     body_font: str = "InstrumentSans-Variable.ttf"
+    # Weight of the heading when its font is a variable one (e.g. "Bold" for InstrumentSans-Variable.ttf).
+    heading_weight: str = Field("", max_length=20)
     use_store_logo: bool = True
     logo_position: Literal["top_left", "top_right", "bottom_left", "bottom_right", "none"] = "top_left"
     logo_opacity: float = Field(1.0, ge=0.1, le=1.0)
@@ -73,6 +75,8 @@ class BrandKit(_Model):
     include_taxes_pct: float = Field(0.0, ge=0, le=100)
     show_price: bool = True
     music_path: str = ""
+    # What decorates text-only cards: botanical sprigs and a leaf pattern, a plain dot grid, or nothing.
+    decoration: Literal["botanical", "dots", "none"] = "botanical"
 
 
 class HashtagCloud(_Model):
@@ -237,6 +241,11 @@ class AISettings(_Model):
     decision_temperature: float = Field(0.2, ge=0, le=2)
     max_tokens: int = Field(2048, ge=128, le=16384)
     fallback_model_id: str = ""
+    # Who writes the posts (captions, brand content, promotion lines). "postiz": Postiz's own AI agent, the one
+    # behind "Generate with AI" in its composer; the local model then only reviews, and writes when Postiz
+    # doesn't answer. "local": the local model writes too. Reviews and planning are always the local model.
+    writer: Literal["local", "postiz"] = "local"
+    writer_timeout_seconds: int = Field(180, ge=20, le=900)
     ai_decisions: bool = True
     ai_review: bool = True
     # Force JSON with the server's grammar. Off: the prompt asks for JSON and replies are checked and repaired here,
@@ -263,6 +272,9 @@ class AISettings(_Model):
 
 
 class GuardSettings(_Model):
+    # Food-supplement claim checks (health and medicinal claims). Off for a brand that sells no health product,
+    # where words like "cure" or "treat" are ordinary figures of speech.
+    health_claim_checks: bool = True
     hold_health_claims: bool = True
     hold_low_review_score: int = Field(6, ge=0, le=10)
     max_caption_retries: int = Field(1, ge=0, le=3)
@@ -276,6 +288,50 @@ class UtmSettings(_Model):
     enabled: bool = True
     medium: str = "social"
     source_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class CatalogSettings(_Model):
+    """Where the things a brand posts about come from. "shopify": the store's products. "none": the brand has
+    no product catalogue (a consultancy, a performer); it posts brand content only, and every job that needs
+    Shopify is skipped for it."""
+    source: Literal["shopify", "none"] = "shopify"
+
+
+class BrandContentKind(_Model):
+    """One kind of brand-content post (Campaigns → Brand content), written by the AI without a product."""
+    label: str = Field(min_length=2, max_length=60)
+    guidance: str = Field(min_length=10, max_length=1200)   # what to write, in the brand's own terms
+    template_key: str = Field("", max_length=60)            # the image template; empty = the default card
+    eyebrow: str = Field("", max_length=40)                 # small tag printed above the headline
+    points: int = Field(0, ge=0, le=5)                      # on-image list items to ask for (0 = none)
+    about_offering: bool = False                            # each post is about one of the brand's offerings
+
+
+class Offering(_Model):
+    """A service the brand sells, for posts that are not about a Shopify product."""
+    name: str = Field(min_length=2, max_length=120)
+    summary: str = Field(min_length=10, max_length=900)     # the only facts the writer may use about it
+    url: str = Field("", max_length=300)                    # where its posts link; empty = the campaign's link
+
+
+class VoiceSettings(_Model):
+    """Who the AI writes as. Every field left empty keeps the built-in UK wellness and food-supplement voice."""
+    sector: str = Field("", max_length=200)                 # e.g. "a UK AI and automation consultancy"
+    compliance_rules: str = Field("", max_length=4000)      # rules that override everything else
+    voice_rules: str = Field("", max_length=3000)
+    image_check: str = Field("", max_length=200)            # what kind of brand the image reviewer checks for
+    # The look of Postiz AI scenes behind this brand's cards (Campaigns → brand content → AI background).
+    image_style: str = Field("", max_length=600)
+    content_kinds: dict[str, BrandContentKind] = Field(default_factory=dict)
+    offerings: list[Offering] = Field(default_factory=list, max_length=30)
+
+    @field_validator("content_kinds")
+    @classmethod
+    def _kind_keys(cls, value: dict[str, BrandContentKind]) -> dict[str, BrandContentKind]:
+        for key in value:
+            if not re.fullmatch(r"[a-z][a-z0-9_]{1,39}", key):
+                raise ValueError(f"Content kind key {key!r} must be lower-case letters, digits and underscores")
+        return value
 
 
 class ContentSettings(_Model):
@@ -390,6 +446,8 @@ class EngineSettings(_Model):
     captions: CaptionSettings = Field(default_factory=CaptionSettings)
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     content: ContentSettings = Field(default_factory=ContentSettings)
+    catalog: CatalogSettings = Field(default_factory=CatalogSettings)
+    voice: VoiceSettings = Field(default_factory=VoiceSettings)
     postiz: PostizSettings = Field(default_factory=PostizSettings)
     ai: AISettings = Field(default_factory=AISettings)
     guards: GuardSettings = Field(default_factory=GuardSettings)
@@ -403,7 +461,7 @@ class EngineSettings(_Model):
 def _deep_merge(base: dict, patch: dict) -> dict:
     merged = dict(base)
     for key, value in (patch or {}).items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict) and key not in {"daily_caps", "templates", "source_overrides", "social_links"}:
+        if isinstance(value, dict) and isinstance(merged.get(key), dict) and key not in {"daily_caps", "templates", "source_overrides", "social_links", "content_kinds"}:
             merged[key] = _deep_merge(merged[key], value)
         else:
             merged[key] = value

@@ -211,7 +211,7 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
           temperature: settings.ai.temperature, decision_temperature: settings.ai.decision_temperature, max_tokens: settings.ai.max_tokens,
           fallback_model_id: settings.ai.fallback_model_id, verify_model_id: settings.ai.verify_model_id || "",
           ai_decisions: settings.ai.ai_decisions, ai_review: settings.ai.ai_review, strict_json: settings.ai.strict_json ?? false,
-          vision_model: settings.ai.vision_model,
+          vision_model: settings.ai.vision_model, writer: settings.ai.writer ?? "local",
         }}
         description="Gemma runs locally (oMLX) and writes captions, plans campaigns and reviews posts."
         render={(draft, update) => (
@@ -228,6 +228,12 @@ export function SettingsSections({ settings, providers, fallbackModels, collecti
                 <select value={draft.vision_model ? "on" : "off"} onChange={(event) => update({ vision_model: event.target.value === "on" ? (settings.ai.vision_model || "on") : "" })}>
                   <option value="on">On{settings.ai.vision_model ? ` (${settings.ai.vision_model})` : ""}</option>
                   <option value="off">Off</option>
+                </select>
+              </Field>
+              <Field label="Who writes the posts" help="Postiz's own AI agent (the one behind 'Generate with AI' in Postiz) writes captions, brand content and promotion lines to this brand's rules; Gemma then reviews them, and writes if Postiz doesn't answer. Or Gemma writes everything.">
+                <select value={draft.writer ?? "local"} onChange={(event) => update({ writer: event.target.value as "local" | "postiz" })}>
+                  <option value="postiz">Postiz AI writes, Gemma reviews</option>
+                  <option value="local">Gemma writes and reviews</option>
                 </select>
               </Field>
               <Field label="Fallback model" help="Used only if Gemma fails. Comes from the app's Models page.">

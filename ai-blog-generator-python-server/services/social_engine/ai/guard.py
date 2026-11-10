@@ -91,8 +91,18 @@ def _medicinal_claims(text: str, already: set[str]) -> list[tuple[str, str]]:
     return found
 
 
-def claim_issues(text: str, channel_id: str, where: str) -> list[GuardIssue]:
+def claim_issues(text: str, channel_id: str, where: str, *, health: bool = True) -> list[GuardIssue]:
+    """Wording that must not go out. `health=False` (a brand with no health product, Settings → guards) keeps
+    only the checks that apply to any advertiser: invented urgency."""
     issues: list[GuardIssue] = []
+    if not health:
+        match = _URGENCY.search(text)
+        if match:
+            issues.append(GuardIssue(
+                code="urgency_wording", message=f'Urgency wording ("{match.group(0)}") in {where} — make sure it is true',
+                severity="warning", channel_id=channel_id,
+            ))
+        return issues
     reported: set[str] = set()
     for finding in find_claims(text):
         blocking = finding.risk == "high" and not finding.cited
@@ -128,6 +138,7 @@ def check_captions(result: CaptionResult, *, settings: EngineSettings) -> GuardR
     issues: list[GuardIssue] = []
     banned = settings.captions.banned_terms
     link_policy = settings.captions.link_policy
+    health = settings.guards.health_claim_checks
 
     on_image = {
         "headline": result.headline, "subheadline": result.subheadline, "cta": result.cta,
@@ -136,7 +147,7 @@ def check_captions(result: CaptionResult, *, settings: EngineSettings) -> GuardR
     for label, text in on_image.items():
         if not text:
             continue
-        issues.extend(claim_issues(text, "", f"the {label}"))
+        issues.extend(claim_issues(text, "", f"the {label}", health=health))
         for term in find_terms(text, banned):
             issues.append(GuardIssue("banned_term", f"Banned term '{term}' in the {label}", "block"))
         if _PLACEHOLDER.search(text):
@@ -156,7 +167,7 @@ def check_captions(result: CaptionResult, *, settings: EngineSettings) -> GuardR
         combined = "\n".join(part for part in (caption, item.title, item.first_comment) if part)
         # A product handle such as ".../cards-stress-relief" is not a claim the caption makes.
         wording = URL_RE.sub(" ", combined)
-        issues.extend(claim_issues(wording, channel_id, where))
+        issues.extend(claim_issues(wording, channel_id, where, health=health))
         for term in find_terms(wording, banned):
             issues.append(GuardIssue("banned_term", f"Banned term '{term}' in {where}", "block", channel_id))
         if _PLACEHOLDER.search(combined):

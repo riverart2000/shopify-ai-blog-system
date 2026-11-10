@@ -124,7 +124,9 @@ class DryRunPublisher:
         return result
 
     async def list_channels(self) -> list[PublisherChannel]:
-        channels = [replace(channel) for channel in DRY_RUN_CHANNELS]
+        # One channel group, as on a Postiz account where every channel belongs to a customer.
+        channels = [replace(channel, customer_id="dry-customer", customer_name="Dry Run Customer")
+                    for channel in DRY_RUN_CHANNELS]
         await self._record("integrations.list", "GET", response=[c.channel_id for c in channels])
         return channels
 

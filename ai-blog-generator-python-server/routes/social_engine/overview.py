@@ -22,7 +22,7 @@ from services.social_engine.settings import (
     ensure_webhook_token, load_settings, public_settings, save_settings,
 )
 
-from .common import require_api_key, resolve_store_id
+from .common import ACTIVE_BRAND_KEY, require_api_key, resolve_store_id
 
 router = APIRouter(prefix="/api/social-engine", dependencies=[Depends(require_api_key)])
 
@@ -39,6 +39,56 @@ def _channel_view(channel: dict) -> dict:
         },
         "needs_setup": channel["provider"] == "pinterest" and not (channel.get("default_settings") or {}).get("board"),
     }
+
+
+class ActiveBrand(BaseModel):
+    store_id: str = Field(min_length=1, max_length=80)
+
+
+async def _brands(active: str) -> list[dict[str, Any]]:
+    """Every store that has Social Autopilot settings saved: the brands the app can switch between."""
+    from services.social_engine.settings import SETTINGS_KEY
+
+    brands = []
+    for store in await db.get_stores():
+        sid = str(store["id"])
+        if not await db.get_store_setting(sid, SETTINGS_KEY, ""):
+            continue
+        settings = await load_settings(sid)
+        brands.append({
+            "store_id": sid, "name": settings.brand.business_name or store.get("name") or sid,
+            "website": settings.brand.website, "enabled": settings.enabled,
+            "catalog_source": settings.catalog.source, "active": sid == active,
+        })
+    return brands
+
+
+@router.get("/brands")
+async def brands() -> dict[str, Any]:
+    active = await resolve_store_id("")
+    return {"active": active, "brands": await _brands(active)}
+
+
+@router.post("/brands/active")
+async def set_active_brand(payload: ActiveBrand) -> dict[str, Any]:
+    """Choose the brand the app's Social Autopilot pages show (the app's requests that name no store)."""
+    known = {brand["store_id"] for brand in await _brands("")}
+    if payload.store_id not in known:
+        raise ValidationError(f"'{payload.store_id}' is not a Social Autopilot brand.")
+    await observability.set_state(ACTIVE_BRAND_KEY, payload.store_id)
+    return {"ok": True, "active": payload.store_id, "brands": await _brands(payload.store_id)}
+
+
+class BrandApply(BaseModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,39}$")   # brands/<name>.json on the server
+
+
+@router.post("/brands/apply")
+async def apply_brand_file(payload: BrandApply) -> dict[str, Any]:
+    """Create or update a brand from its file in the server's brands/ folder (docs/social-engine/brands.md)."""
+    from services.social_engine.brands import BRANDS_DIR, apply_brand, read_brand_file
+
+    return {"ok": True, **await apply_brand(read_brand_file(BRANDS_DIR / f"{payload.name}.json"))}
 
 
 @router.get("/overview")

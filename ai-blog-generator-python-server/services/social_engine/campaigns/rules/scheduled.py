@@ -163,25 +163,44 @@ class HolidayRule(CampaignRule):
 
 class BrandContentConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    kinds: list[Literal["quote", "fact", "poll", "quiz", "brand_awareness", "brand_value"]] = Field(
-        default_factory=lambda: ["quote", "fact", "poll", "quiz"])
+    # Built-in kinds (quote, fact, poll, quiz, brand_awareness, brand_value) or the brand's own (Settings → voice).
+    kinds: list[str] = Field(default_factory=lambda: ["quote", "fact", "poll", "quiz"], min_length=1, max_length=20)
     posts_per_day: int = Field(1, ge=1, le=3)
     every_n_days: int = Field(1, ge=1, le=7)
     topic_hint: str = Field("", max_length=300)
+    # Subjects to rotate through, one per post, so a daily post doesn't circle the same idea.
+    topics: list[str] = Field(default_factory=list, max_length=200)
+    # Where every post of this campaign links (e.g. a booking page); empty = the brand's website.
+    link_url: str = Field("", max_length=300, pattern=r"^(|https?://\S+)$")
+    # A Postiz AI scene behind the card (one image credit per post, from the brand's monthly image budget).
+    ai_background: bool = False
     template_key: str = ""
 
 
 @register_rule
 class BrandContentRule(CampaignRule):
     rule_type = "brand_content"
-    label = "Brand content (quotes, facts, polls, quizzes)"
-    description = "Engagement posts written by Gemma: wellness quotes, facts, polls and quizzes."
+    label = "Brand content (quotes, facts, tips, polls, quizzes)"
+    description = "Posts written by the AI without a product: quotes, facts, polls, quizzes and the brand's own kinds."
     config_model = BrandContentConfig
     default_interval_seconds = 3 * 3600
 
     async def plan(self, rctx: RuleContext) -> list[PlanItem]:
+        from ...ai.prompts import content_kinds
+
         config: BrandContentConfig = rctx.config  # type: ignore[assignment]
+        voice = rctx.sctx.settings.voice
+        known = content_kinds(voice)
+        kinds = [kind for kind in config.kinds if kind in known]
+        unknown = [kind for kind in config.kinds if kind not in known]
+        if unknown:
+            rctx.state["last_note"] = f"Unknown content kind(s) skipped: {', '.join(unknown)}."
+        if not kinds:
+            return []
         items: list[PlanItem] = []
+        # Counters, not dates: every kind, topic and service gets its turn however days are skipped.
+        turn = int(rctx.state.get("turn", 0))
+        offering_turn = int(rctx.state.get("offering_turn", 0))
         for day in rctx.planning_days():
             if day.toordinal() % config.every_n_days:
                 continue
@@ -189,14 +208,36 @@ class BrandContentRule(CampaignRule):
                 key = f"brand:{rctx.campaign_id}:{day_key(day)}:{index}"
                 if await already_planned(rctx, key):
                     continue
-                kind = config.kinds[(day.toordinal() + index) % len(config.kinds)]
+                kind = kinds[turn % len(kinds)]
+                definition = known[kind]
+                texts = {"brand_kind": kind, "topic_hint": config.topic_hint}
+                options: dict = {}
+                title = f"Brand {definition.label.lower()}"
+                link = config.link_url
+                if definition.about_offering and voice.offerings:
+                    offering = voice.offerings[offering_turn % len(voice.offerings)]
+                    texts["offering"] = offering.name
+                    title = f"{definition.label}: {offering.name}"
+                    link = offering.url or link
+                elif config.topics:
+                    texts["topic"] = config.topics[turn % len(config.topics)]
+                    title = f"{definition.label}: {texts['topic']}"
+                if link:
+                    options["link_override"] = link
+                if config.ai_background:
+                    options["ai_background"] = True
                 item = make_item(
                     rctx, dedupe_key=key, content_type=ContentType.QUOTE, products=[],
-                    template_key=config.template_key, title=f"Brand {kind.replace('_', ' ')}",
-                    texts={"brand_kind": kind, "topic_hint": config.topic_hint},
+                    template_key=config.template_key or definition.template_key, title=title[:120],
+                    texts=texts, options=options,
                 )
                 if rctx.schedule_item(item, day=day):
                     items.append(item)
+                    turn += 1
+                    if "offering" in texts:
+                        offering_turn += 1
+        rctx.state["turn"] = turn
+        rctx.state["offering_turn"] = offering_turn
         return items
 
 

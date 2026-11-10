@@ -83,6 +83,9 @@ def _tool_payload(result: dict) -> Any:
     return None
 
 
+AGENT_TOOL = "ask_postiz"
+
+
 class PostizMCP:
     """Minimal stateless MCP client (JSON-RPC 2.0 over streamable HTTP).
 
@@ -139,15 +142,37 @@ class PostizMCP:
             raise ExternalServiceError("postiz", f"{tool} failed: {payload['error']}", retryable=False)
         return payload
 
+    async def ask_agent(self, message: str, *, timeout: float) -> tuple[str, dict]:
+        """Ask Postiz's own AI agent (the one behind "Generate with AI" in its composer) for text.
+
+        The agent can also schedule posts. It is told not to, and a reply in which it used any tool is refused,
+        so nothing it writes can reach a channel except through the engine. Returns (text, token usage)."""
+        result = await self.call(AGENT_TOOL, {"message": message}, idempotent=False, timeout=timeout)
+        if not isinstance(result, dict):
+            raise ExternalServiceError("postiz", f"The Postiz agent returned no text: {str(result)[:200]}", retryable=True)
+        used = [str(call.get("toolName") or call.get("payload", {}).get("toolName") or "a tool")
+                for step in result.get("steps") or [] if isinstance(step, dict)
+                for call in step.get("toolCalls") or [] if isinstance(call, dict)]
+        if used:
+            raise ExternalServiceError(
+                "postiz", f"The Postiz agent used {', '.join(used)} instead of only writing; its reply was discarded. "
+                "Check the Postiz calendar for a post it may have made.", retryable=False)
+        text = str(result.get("text") or "").strip()
+        if not text:
+            raise ExternalServiceError("postiz", "The Postiz agent returned an empty reply.", retryable=True)
+        return text, dict(result.get("usage") or {})
+
     async def list_tools(self) -> list[dict]:
         await self._ensure_initialised()
         result = await self._rpc("tools/list", {}, operation="mcp.tools_list", idempotent=True)
         return list(result.get("tools") or [])
 
 
-async def _used_this_month(operation: str) -> int:
-    """Credit-spending calls in the last 30 days, including ones that timed out (Postiz may still have charged)."""
-    return await observability.count_api_calls(service=SERVICE, operation=operation,
+async def _used_this_month(operation: str, store_id: str = "") -> int:
+    """Credit-spending calls in the last 30 days, including ones that timed out (Postiz may still have charged).
+
+    Counted per brand: each brand's monthly budget is its own share of the Postiz account's allowance."""
+    return await observability.count_api_calls(service=SERVICE, operation=operation, store_id=store_id,
                                                since=int(time.time()) - _MONTH, reached_server_only=False)
 
 
@@ -183,9 +208,9 @@ class PostizCreativeTools:
 
     async def budget_status(self) -> dict[str, Any]:
         return {
-            "images_used": await _used_this_month("mcp.generateImageTool"),
+            "images_used": await _used_this_month("mcp.generateImageTool", self.sctx.store_id),
             "images_budget": self.settings.ai_image_monthly_budget,
-            "videos_used": await _used_this_month("mcp.generateVideoTool"),
+            "videos_used": await _used_this_month("mcp.generateVideoTool", self.sctx.store_id),
             "videos_budget": self.settings.ai_video_monthly_budget,
         }
 
@@ -197,7 +222,7 @@ class PostizCreativeTools:
         budget = self.settings.ai_image_monthly_budget
         if budget <= 0:
             raise ConfigurationError("Postiz AI images are disabled (monthly budget is 0).")
-        if await _used_this_month("mcp.generateImageTool") >= budget:
+        if await _used_this_month("mcp.generateImageTool", self.sctx.store_id) >= budget:
             raise RateLimited(f"Postiz AI image budget used ({budget} this month).",
                               retry_at=int(time.time()) + 86400)
         started = time.time()
@@ -260,7 +285,7 @@ class PostizCreativeTools:
         budget = self.settings.ai_video_monthly_budget
         if budget <= 0:
             raise ConfigurationError("Postiz AI videos are disabled (monthly budget is 0).")
-        if await _used_this_month("mcp.generateVideoTool") >= budget:
+        if await _used_this_month("mcp.generateVideoTool", self.sctx.store_id) >= budget:
             raise RateLimited(f"Postiz AI video budget used ({budget} this month).",
                               retry_at=int(time.time()) + 86400)
         generators = {g.get("type"): g for g in await self.video_generators()}

@@ -240,6 +240,8 @@ class ResolvedBrand:
     logo_opacity: float = 1.0
     currency_symbol: str = "£"
     extra: dict[str, RGB] = field(default_factory=dict)
+    decoration: str = "botanical"     # botanical | dots | none (BrandKit.decoration)
+    heading_weight: str = ""
 
     def color(self, token: str | None, *, default: str = "text") -> RGB:
         return resolve_color(token or default, self)
@@ -250,7 +252,7 @@ class ResolvedBrand:
 
     def font_spec(self, role: str, weight: str = "") -> tuple[str, str]:
         if role == "heading":
-            return self.heading_font, ""
+            return self.heading_font, self.heading_weight
         if role == "italic":
             return self.italic_font, ""
         variation = weight or ("SemiBold" if role in {"label", "button", "price"} else "Regular")
@@ -290,6 +292,8 @@ def resolve_brand(brand: BrandKit | None) -> ResolvedBrand:
         logo_position=brand.logo_position,
         logo_opacity=float(brand.logo_opacity),
         currency_symbol=brand.currency_symbol or "",
+        decoration=brand.decoration,
+        heading_weight=brand.heading_weight.strip(),
     )
 
 

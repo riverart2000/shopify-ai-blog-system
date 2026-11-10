@@ -235,6 +235,11 @@ _PROFILES: tuple[ProviderProfile, ...] = (
         caption_style="Newsletter-style update with the link.",
     ),
     ProviderProfile(
+        "tumblr", "Tumblr", 4096, image_formats=(MediaFormat.SQUARE, MediaFormat.PORTRAIT), max_images=10,
+        hashtags_max=5, hashtags_recommended=4, default_times=("10:00", "19:00"),
+        caption_style="Conversational with a little personality, short paragraphs, one useful takeaway, link included.",
+    ),
+    ProviderProfile(
         "reddit", "Reddit", 40000, image_formats=(MediaFormat.SQUARE,), max_images=1,
         hashtags_max=0, hashtags_recommended=0, title_max=300, default_times=("14:00",),
         caption_style="Genuinely helpful, non-promotional, no hashtags.",

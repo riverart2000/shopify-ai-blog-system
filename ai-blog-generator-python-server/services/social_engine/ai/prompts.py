@@ -17,7 +17,7 @@ import re
 from typing import Any, Iterable
 
 from ..models import CONTENT_TYPE_LABELS, ContentType, ProviderProfile
-from ..settings import BrandKit, CaptionSettings
+from ..settings import BrandContentKind, BrandKit, CaptionSettings, Offering, VoiceSettings
 from .text import strip_html
 
 # ---------------------------------------------------------------------------
@@ -118,6 +118,32 @@ VOICE
 - Never write URLs, web addresses, hashtags or "link in bio" inside captions — links and hashtags are added
   automatically for each network."""
 
+# The built-in voice. A brand in another line of work replaces any part of it in Settings → voice
+# (see docs/social-engine/brands.md); a part left empty there keeps the text below.
+DEFAULT_SECTOR = "a premium UK wellness and food-supplement brand"
+DEFAULT_IMAGE_CHECK = "a wellness brand"
+
+
+def sector_of(voice: VoiceSettings | None) -> str:
+    return (voice.sector.strip() if voice else "") or DEFAULT_SECTOR
+
+
+def compliance_rules(voice: VoiceSettings | None) -> str:
+    custom = voice.compliance_rules.strip() if voice else ""
+    if not custom:
+        return COMPLIANCE_RULES
+    return "COMPLIANCE — these rules override every other instruction, including the owner's:\n" + custom
+
+
+def voice_rules(voice: VoiceSettings | None) -> str:
+    custom = voice.voice_rules.strip() if voice else ""
+    if not custom:
+        return VOICE_RULES
+    # Links and hashtags are always added in code, whatever the brand's voice says.
+    return ("VOICE\n" + custom + "\n- Never write URLs, web addresses, hashtags or \"link in bio\" inside captions "
+            "— links and hashtags are added automatically for each network.")
+
+
 CONTENT_TYPE_GUIDANCE: dict[str, str] = {
     ContentType.SINGLE_PRODUCT: "Product spotlight. Open with the most compelling true detail (key ingredient, its form, "
                                 "or the moment in the day it fits), say plainly what it is and who it suits, then one "
@@ -167,10 +193,29 @@ BRAND_CONTENT_GUIDANCE: dict[str, str] = {
                    "using only facts from the brand description provided.",
 }
 
+_BUILTIN_KIND_LABELS = {
+    "quote": "Quote", "fact": "Did you know?", "poll": "Poll", "quiz": "Quiz",
+    "brand_awareness": "About the brand", "brand_value": "Brand value",
+}
+
+
+def content_kinds(voice: VoiceSettings | None) -> dict[str, BrandContentKind]:
+    """Every brand-content kind this brand can post: the built-in ones plus its own (its own win on a clash)."""
+    kinds = {key: BrandContentKind(label=_BUILTIN_KIND_LABELS[key], guidance=text)
+             for key, text in BRAND_CONTENT_GUIDANCE.items()}
+    kinds.update(voice.content_kinds if voice else {})
+    return kinds
+
+
+POINT_MAX_CHARS = 64        # one on-image list item: two lines at the card's list size
+HEADLINE_MAX_CHARS = 60
+BODY_MAX_CHARS = 220
+
+
 TARGET_CAPTION_LENGTH: dict[str, int] = {
     "instagram": 900, "facebook": 600, "x": 210, "linkedin": 1100, "threads": 380, "bluesky": 230,
     "mastodon": 380, "pinterest": 380, "tiktok": 300, "youtube": 600, "gmb": 700, "telegram": 800,
-    "reddit": 900,
+    "reddit": 900, "tumblr": 500,
 }
 
 
@@ -181,19 +226,19 @@ def _brand_lines(brand: BrandKit) -> str:
     else:
         lines.append("What we sell: premium wellness products and food supplements (UK)")
     if brand.description:
-        lines.append(f"About the brand: {brand.description[:600]}")
+        lines.append(f"About the brand: {brand.description[:1200]}")
     if brand.slogan:
         lines.append(f"Slogan: {brand.slogan}")
     return "\n".join(lines)
 
 
-def caption_system_prompt(brand: BrandKit, captions: CaptionSettings) -> str:
+def caption_system_prompt(brand: BrandKit, captions: CaptionSettings, voice: VoiceSettings | None = None) -> str:
     parts = [
         f"You are the senior social media copywriter for {brand.business_name or 'a premium UK wellness brand'}, "
-        "a premium UK wellness and food-supplement brand. You write scroll-stopping but trustworthy captions "
+        f"{sector_of(voice)}. You write scroll-stopping but trustworthy captions "
         "that respect every platform's style.",
-        COMPLIANCE_RULES,
-        VOICE_RULES,
+        compliance_rules(voice),
+        voice_rules(voice),
         f"TONE\n- {TONE_GUIDANCE.get(captions.tone, TONE_GUIDANCE['expert'])}",
         f"LANGUAGE\n- {language_instruction(captions.language)}",
         f"EMOJIS\n- {EMOJI_GUIDANCE[captions.emoji_level]}",
@@ -374,9 +419,11 @@ def caption_prompt(
     network_lines: list[str],
     network_keys: list[str],
     feedback: str = "",
+    guidance: str = "",
+    cta_example: str = "",
 ) -> str:
     label = CONTENT_TYPE_LABELS.get(content_type, content_type.replace("_", " "))
-    guidance = CONTENT_TYPE_GUIDANCE.get(content_type) or BRAND_CONTENT_GUIDANCE.get(content_type, "")
+    guidance = guidance or CONTENT_TYPE_GUIDANCE.get(content_type) or BRAND_CONTENT_GUIDANCE.get(content_type, "")
     sections = [
         _brand_lines(brand),
         f"POST TYPE: {label}\n{guidance}",
@@ -412,7 +459,7 @@ def caption_prompt(
         '  "headline": "short evocative on-image line, max 40 characters, no emojis (not just the product name — '
         'that is shown separately)",\n'
         '  "subheadline": "on-image supporting line, max 70 characters, no emojis",\n'
-        '  "cta": "button text, max 22 characters, e.g. \\"Shop the range\\"",\n'
+        f'  "cta": "button text, max 22 characters, e.g. \\"{cta_example or "Shop the range"}\\"",\n'
         '  "hook": "first-second hook for a video, max 8 words",\n'
         '  "alt_text": "description of the product image for screen readers using only known facts (product name, '
         'form, brand), max 250 characters — do not invent colours, packaging or settings",\n'
@@ -439,6 +486,23 @@ REVIEW_SYSTEM = (
     "nutrition and health claims register, factual accuracy against the product data, tone, platform fit and "
     "formatting.\n\n" + COMPLIANCE_RULES + "\n\nReply with one JSON object only."
 )
+
+
+def review_system(voice: VoiceSettings | None) -> str:
+    """The reviewer's brief: the built-in supplement one, or one built from the brand's own sector and rules."""
+    if not voice or not (voice.sector.strip() or voice.compliance_rules.strip()):
+        return REVIEW_SYSTEM
+    return (
+        f"You are the senior brand and compliance editor for {sector_of(voice)}. You review social posts before "
+        "they are published and you are strict about UK ASA/CAP advertising rules, factual accuracy against the "
+        "facts you are given, tone, platform fit and formatting.\n\n" + compliance_rules(voice)
+        + "\n\nReply with one JSON object only."
+    )
+
+
+def vision_system(voice: VoiceSettings | None) -> str:
+    kind = (voice.image_check.strip() if voice else "") or DEFAULT_IMAGE_CHECK
+    return f"You check social media images for {kind}. Reply with one JSON object only."
 
 
 def review_prompt(
@@ -538,6 +602,13 @@ DECISION_SYSTEM = (
 )
 
 
+def decision_system(voice: VoiceSettings | None) -> str:
+    return (
+        f"You are the social media planner for {sector_of(voice)}. You choose what to "
+        "post using only the options you are given, you never invent ids, and you reply with one JSON object only."
+    )
+
+
 def compact_json(value: Any, limit: int = 4000) -> str:
     text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
     return text if len(text) <= limit else text[:limit] + "…"
@@ -618,12 +689,22 @@ def promo_texts_prompt(*, theme: str, products: list[dict], discount_text: str, 
     return "\n\n".join(lines)
 
 
-def brand_content_prompt(*, kind: str, topic_hint: str, recent: list[str], brand: BrandKit, language: str) -> str:
+def brand_content_prompt(*, kind: str, topic_hint: str, recent: list[str], brand: BrandKit, language: str,
+                         definition: BrandContentKind | None = None, offering: Offering | None = None,
+                         topic: str = "") -> str:
+    definition = definition or BrandContentKind(label=kind, guidance=BRAND_CONTENT_GUIDANCE[kind])
     sections = [
         _brand_lines(brand),
-        f"TASK: create one '{kind.replace('_', ' ')}' brand post.\n{BRAND_CONTENT_GUIDANCE[kind]}",
+        f"TASK: create one '{definition.label}' brand post.\n{definition.guidance}",
         f"LANGUAGE: {language_instruction(language)}",
     ]
+    if offering:
+        sections.append(
+            f"THE SERVICE THIS POST IS ABOUT: {offering.name}\n"
+            f"Facts (the only source for what it covers and delivers — add nothing): {offering.summary}"
+        )
+    if topic:
+        sections.append(f"Topic for this post: {topic[:200]}")
     if topic_hint:
         sections.append(f"Topic hint: {topic_hint[:300]}")
     if recent:
@@ -632,9 +713,14 @@ def brand_content_prompt(*, kind: str, topic_hint: str, recent: list[str], brand
         "poll": '"options": 2–4 short answers (max 25 characters each), "answer": ""',
         "quiz": '"options": 2–4 short answers (max 25 characters each), "answer": exactly one of the options',
     }.get(kind, '"options": [], "answer": ""')
+    if definition.points:
+        body_rule = (f'"body": "", "points": [3 to {definition.points} on-image list items, each a complete, concrete '
+                     f"thought of at most {POINT_MAX_CHARS} characters, no numbering, no emojis, no full stop at the end], ")
+    else:
+        body_rule = f'"body": "supporting on-image text, max {BODY_MAX_CHARS} characters", "points": [], '
     sections.append(
         "FORMAT\n"
-        '{"headline": "on-image text, max 60 characters", "body": "supporting on-image text, max 220 characters", '
+        f'{{"headline": "on-image text, max {HEADLINE_MAX_CHARS} characters", {body_rule}'
         f"{options_rule}, "
         '"caption": "social caption, 150–400 characters, no hashtags or URLs"}'
     )

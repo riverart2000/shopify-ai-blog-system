@@ -123,7 +123,10 @@ async def _brand_content_texts(sctx: StoreContext, post: dict, texts: dict) -> d
 
     recent_rows = await post_store.list_posts(sctx.store_id, content_type=ContentType.QUOTE, order="newest", limit=15)
     recent = [r.get("base_caption", "")[:160] for r in recent_rows if r.get("base_caption")]
-    content = await generate_brand_content(sctx, kind=kind, topic_hint=texts.get("topic_hint", ""), recent=recent)
+    content = await generate_brand_content(
+        sctx, kind=kind, topic_hint=texts.get("topic_hint", ""), recent=recent,
+        topic=texts.get("topic", ""), offering_name=texts.get("offering", ""),
+    )
     data = content.model_dump() if hasattr(content, "model_dump") else dict(content)
     merged = dict(texts)
     merged.update({
@@ -134,6 +137,15 @@ async def _brand_content_texts(sctx: StoreContext, post: dict, texts: dict) -> d
         "answer": data.get("answer", "") or "",
         "brand_caption": data.get("caption", ""),
     })
+    for index, point in enumerate(data.get("points") or [], start=1):
+        merged[f"point_{index}"] = point
+    own_kind = sctx.settings.voice.content_kinds.get(kind)
+    if own_kind:
+        # One of the brand's own kinds: the card carries its tag and the brand's button, not one the caption
+        # writer makes up.
+        if own_kind.eyebrow:
+            merged.setdefault("eyebrow", own_kind.eyebrow)
+        merged.setdefault("cta", sctx.settings.brand.cta_text)
     return merged
 
 
@@ -330,7 +342,7 @@ async def generate_post(store_id: str, post_id: str, *, force: bool = False) -> 
         **texts,
         "headline": texts.get("headline") or captions.headline,
         "subheadline": texts.get("subheadline") or captions.subheadline,
-        "cta": captions.cta or settings.brand.cta_text,
+        "cta": texts.get("cta") or captions.cta or settings.brand.cta_text,
         "store_name": settings.brand.business_name,
         "website": sctx.storefront_url.replace("https://", "").replace("http://", ""),
     }

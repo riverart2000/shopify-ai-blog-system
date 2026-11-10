@@ -54,9 +54,15 @@ async def _download(sctx: StoreContext, url: str, *, post_id: str, fmt: str, pos
     return stored.path, stored.bytes, stored.sha256, mime or f"image/{ext}"
 
 
-def background_prompt(theme_key: str, products: list[dict], angle: str = "") -> str:
+def background_prompt(theme_key: str, products: list[dict], angle: str = "", *, style: str = "",
+                      subject: str = "") -> str:
     from ..campaigns.themes import get_theme
 
+    if style.strip():
+        # The brand's own look (Settings → voice → image_style), about the subject of this post.
+        about = f" The scene suggests: {subject.strip()[:160]}." if subject.strip() else ""
+        return (f"{style.strip().rstrip('.')}.{about} Calm, uncluttered centre so text can sit over it. "
+                "No text, no lettering, no logos, no screens with readable words.")
     theme = get_theme(theme_key or "custom")
     category = ""
     if products:
@@ -77,7 +83,11 @@ async def ai_background(sctx: StoreContext, *, post: dict, products: list[dict],
     cached = options.get("ai_background_path")
     if cached:
         return str(cached)
-    prompt = background_prompt(options.get("theme_key", ""), products, post.get("angle", ""))
+    texts = options.get("texts") or {}
+    prompt = background_prompt(
+        options.get("theme_key", ""), products, post.get("angle", ""), style=sctx.settings.voice.image_style,
+        subject=str(texts.get("topic") or texts.get("offering") or post.get("title") or ""),
+    )
     tools = get_creative_tools(sctx, correlation_id=post["id"])
     used = "postiz_ai_image"
     try:

@@ -499,7 +499,7 @@ def text_card(f: Frame, *, kicker: str, kicker_fallback: tuple[str, ...] = (), m
               italic: bool = False, quote_mark: bool = False, sub: str = "", sub_fallback: tuple[str, ...] = (),
               choices: list[str] | None = None, footnote: str = "", panel: str = "background",
               bg_style: str = "pattern", badge_kicker: bool = False, stars: bool = False,
-              thumb: bool = False, cta: str = "", sub_style: str = "label") -> list[dict]:
+              thumb: bool = False, cta: str = "", sub_style: str = "label", numbered: bool = False) -> list[dict]:
     """Brand content: quote, fact, poll, quiz, review and greeting cards."""
     dark = panel in {"secondary", "primary"}
     text = f"on:{panel}"
@@ -528,7 +528,8 @@ def text_card(f: Frame, *, kicker: str, kicker_fallback: tuple[str, ...] = (), m
         children.append({"type": "choices", "options": choices, "size": f.s(31 * boost), "gap": f.s(18),
                          "fill": "surface" if not dark else "secondary", "border": "line" if not dark else "accent",
                          "letter_fill": "primary" if not dark else "cta", "color": text,
-                         "direction": "column", "gap_before": f.s(40)})
+                         "direction": "column", "gap_before": f.s(40),
+                         **({"marker": "number"} if numbered else {})})
     if sub:
         keys = "|".join(p.strip("{}") for p in (sub, *sub_fallback) if p.startswith("{"))
         children.append({"type": "divider", "length": f.s(64), "thickness": f.s(2), "color": "cta",
@@ -881,6 +882,42 @@ register(TemplateDef(
         bg_style="solid"),
     defaults={"eyebrow": "Quiz time", "footnote": "Answer in the comments"}, min_products=0, needs_images=False,
     required_texts=("question|headline", "option_a", "option_b"), style="quiz",
+))
+_POINT_KEYS = ["point_1", "point_2", "point_3", "point_4", "point_5"]
+_INFO_SAMPLE = {
+    "eyebrow": "Quick tip", "headline": "Three checks before you automate a process",
+    "point_1": "Write down every step as it happens today", "point_2": "Count how often it runs each week",
+    "point_3": "Find the step where work waits for a person", "cta": "Book a call",
+}
+register(TemplateDef(
+    "info_points", "Info · Points list",
+    "A tag, a headline, three to five numbered points and a button: a how-to, checklist or service card.",
+    (CT.QUOTE,), builder=lambda f: text_card(
+        f, kicker="{eyebrow}", main="{headline}", main_size=56, main_lines=3, choices=_POINT_KEYS, numbered=True,
+        cta="{cta}", badge_kicker=True),
+    min_products=0, needs_images=False, required_texts=("headline", "point_1", "point_2", "point_3"),
+    sample_texts=_INFO_SAMPLE, style="info",
+))
+register(TemplateDef(
+    "info_points_dark", "Info · Points list (dark)",
+    "The points list on the brand's dark colour.",
+    (CT.QUOTE,), builder=lambda f: text_card(
+        f, kicker="{eyebrow}", main="{headline}", main_size=56, main_lines=3, choices=_POINT_KEYS, numbered=True,
+        cta="{cta}", badge_kicker=True, panel="secondary"),
+    min_products=0, needs_images=False, required_texts=("headline", "point_1", "point_2", "point_3"),
+    sample_texts=_INFO_SAMPLE, style="info",
+))
+register(TemplateDef(
+    "info_statement", "Info · Statement",
+    "A tag, one bold statement, a line that answers it and a button: a myth, an opinion or a question.",
+    (CT.QUOTE,), builder=lambda f: text_card(
+        f, kicker="{eyebrow}", main="{headline}", main_size=66, main_lines=4, sub="{body}", sub_fallback=("{quote}",),
+        sub_style="body", cta="{cta}", badge_kicker=True, panel="secondary"),
+    min_products=0, needs_images=False, required_texts=("headline", "body|quote"),
+    sample_texts={"eyebrow": "Myth", "headline": "“AI will fix a broken process”",
+                  "body": "It makes a broken process fail faster. Fix the steps first, then automate them.",
+                  "cta": "Book a call"},
+    style="info",
 ))
 register(TemplateDef(
     "review_spotlight", "Review spotlight",

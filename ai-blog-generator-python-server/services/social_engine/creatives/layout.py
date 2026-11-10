@@ -843,8 +843,13 @@ def draw_stars(ctx: LayoutContext, canvas: Image.Image, layer: dict, box: Box, m
 def measure_choices(ctx: LayoutContext, layer: dict, max_w: int, max_h: int, pidx: int) -> Measured:
     keys = layer.get("options", ["option_a", "option_b", "option_c", "option_d"])
     values = values_for(ctx, pidx)
-    items = [(chr(ord("A") + i), values.get(key, "")) for i, key in enumerate(keys)]
-    items = [(letter, text) for letter, text in items if text]
+    numbered = layer.get("marker") == "number"   # a list of points (1, 2, 3) rather than answers (A, B, C)
+    if numbered:
+        texts = [text for text in (values.get(key, "") for key in keys) if text]
+        items = [(str(i + 1), text) for i, text in enumerate(texts)]
+    else:
+        items = [(chr(ord("A") + i), values.get(key, "")) for i, key in enumerate(keys)]
+        items = [(letter, text) for letter, text in items if text]
     if not items:
         return Measured(0, 0, None)
     size = ctx.sx(layer.get("size", 0.034))
@@ -1502,12 +1507,13 @@ def draw_background(ctx: LayoutContext, canvas: Image.Image, layer: dict, box: B
         composite(canvas, Image.composite(bottom, top, gradient), x0, y0)
     else:
         composite(canvas, Image.new("RGBA", (w, h), (*color, 255)), x0, y0)
-    if style == "pattern":
+    if style == "pattern" and ctx.brand.decoration != "none":
         pattern_token = layer.get("pattern_color", "primary")
         pcolor = ctx.color(pattern_token)
         tile = max(48, ctx.sx(layer.get("tile", 0.16)))
         opacity = float(layer.get("pattern_opacity", 0.07 if sum(color) > 380 else 0.12))
-        sprite = _leaf_tile(tile, pcolor, opacity, layer.get("pattern", "leaves"))
+        sprite = _leaf_tile(tile, pcolor, opacity,
+                            "dots" if ctx.brand.decoration == "dots" else layer.get("pattern", "leaves"))
         overlay = Image.new("RGBA", (w, h), (*pcolor, 0))
         for ty in range(0, h, tile):
             for tx in range(0, w, tile):
@@ -1560,6 +1566,8 @@ def draw_shape(ctx: LayoutContext, canvas: Image.Image, layer: dict, box: Box) -
 
 def draw_botanical(ctx: LayoutContext, canvas: Image.Image, layer: dict, box: Box) -> None:
     """A stylised sprig: curved stem with alternating leaves (line or filled)."""
+    if ctx.brand.decoration != "botanical":
+        return   # a brand that isn't botanical gets its cards without sprigs
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     if w <= 4 or h <= 4:

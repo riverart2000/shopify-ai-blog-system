@@ -50,6 +50,10 @@ FULL_TEXTS = {
     "quote_author": "BioluxeLab", "countdown_label": "2 days left", "sticker": "Big Sale",
     "review_text": "Best magnesium I have tried.", "review_author": "Sam, verified buyer", "fact": "Magnesium matters.",
     "question": "Tea or coffee?", "option_a": "Tea", "option_b": "Coffee", "option_c": "Both",
+    "eyebrow": "Quick tip", "body": "It makes a broken process fail faster. Fix the steps first, then automate.",
+    "point_1": "Write down every step exactly as it happens today, exceptions too",
+    "point_2": "Count how often it runs each week", "point_3": "Find the step where work waits for a person",
+    "point_4": "Check which tools you already pay for can do it", "point_5": "Automate one step, then measure it",
 }
 LONG_TITLE = (
     "Ultra Premium Organic Triple-Action Magnesium Glycinate, Bisglycinate & Malate Complex with "

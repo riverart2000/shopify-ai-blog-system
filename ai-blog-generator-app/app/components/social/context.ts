@@ -1,12 +1,13 @@
 import { useRouteLoaderData } from "react-router";
 
-import type { EngineSettings, FallbackModel, RuleInfo, SettingsResponse } from "../../lib/social-engine.types";
+import type { Brand, EngineSettings, FallbackModel, RuleInfo, SettingsResponse } from "../../lib/social-engine.types";
 import { DEFAULT_TIMEZONE, safeTimezone } from "../../lib/social-time";
 import { CONTENT_TYPE_FALLBACK } from "./vocab";
 
 /** Data returned by the app/routes/app.social.tsx layout loader. */
 export type SocialLayoutData = {
   settingsResponse: SettingsResponse | null;
+  brands: Brand[];
   error: string;
 };
 

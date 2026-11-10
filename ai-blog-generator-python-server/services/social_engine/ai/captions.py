@@ -583,6 +583,15 @@ def _network_specs(plans: list[ChannelPlan], captions: CaptionSettings, cta: str
     return lines, list(by_key)
 
 
+def _kind_guidance(request: CaptionRequest, settings: EngineSettings) -> str:
+    """Brand-content posts of one of the brand's own kinds are captioned to that kind's brief."""
+    kind = settings.voice.content_kinds.get(str((request.texts or {}).get("brand_kind") or ""))
+    if not kind:
+        return ""
+    return (f"Brand content: {kind.label}. The on-image text is already written (see the post details); the "
+            f"captions expand on it and never contradict it. {kind.guidance}")
+
+
 def caption_llm_request(request: CaptionRequest, settings: EngineSettings, captions: CaptionSettings, plans: list[ChannelPlan], feedback: str = "") -> LLMRequest:
     cta = truncate_words(settings.brand.cta_text, FIELD_LIMITS["cta"])
     network_lines, keys = _network_specs(plans, captions, cta)
@@ -597,9 +606,11 @@ def caption_llm_request(request: CaptionRequest, settings: EngineSettings, capti
         network_lines=network_lines,
         network_keys=keys,
         feedback=feedback,
+        guidance=_kind_guidance(request, settings),
+        cta_example=cta if settings.voice.sector.strip() else "",
     )
     return LLMRequest(
-        system=prompts.caption_system_prompt(settings.brand, captions),
+        system=prompts.caption_system_prompt(settings.brand, captions, settings.voice),
         prompt=prompt,
         json_mode=True,
         temperature=settings.ai.temperature,
