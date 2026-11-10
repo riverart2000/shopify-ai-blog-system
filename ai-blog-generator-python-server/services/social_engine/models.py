@@ -236,7 +236,7 @@ _PROFILES: tuple[ProviderProfile, ...] = (
     ),
     ProviderProfile(
         "tumblr", "Tumblr", 4096, image_formats=(MediaFormat.SQUARE, MediaFormat.PORTRAIT), max_images=10,
-        hashtags_max=5, hashtags_recommended=4, default_times=("10:00", "19:00"),
+        hashtags_max=5, hashtags_recommended=4, title_max=100, default_times=("10:00", "19:00"),
         caption_style="Conversational with a little personality, short paragraphs, one useful takeaway, link included.",
     ),
     ProviderProfile(

@@ -155,7 +155,7 @@ async def test_brand_without_a_catalogue_posts_brand_content_end_to_end(se_db, t
     first = next(p for p in posts if p["options"]["texts"]["brand_kind"] == kinds[0])
     post = await post_store.get_post(store_id, first["id"])
     assert post["content_type"] == "quote" and not post["product_ids"]
-    assert post["template_key"] == "info_points" and post["options"]["texts"]["topic"] == campaign["config"]["topics"][0]
+    assert post["template_key"] == "info_points_dark" and post["options"]["texts"]["topic"] == campaign["config"]["topics"][0]
     assert post["options"]["link_override"] == "https://revenuemindproai.com/book-call"
     assert post["targets"] and post["media"]
     captions = [t["caption"] for t in post["targets"] if t["provider"] in ("facebook", "x", "linkedin")]

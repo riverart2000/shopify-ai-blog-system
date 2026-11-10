@@ -123,7 +123,7 @@
         "tip": {
           "label": "Practical tip",
           "eyebrow": "Quick tip",
-          "template_key": "info_points",
+          "template_key": "info_points_dark",
           "points": 5,
           "guidance": "A practical how-to a business owner can act on today, on the topic given. The headline names the outcome or the problem in plain words (for example 'Five signs a process is ready to automate'). The points are the substance: concrete steps, checks or signs, each one specific enough to do or notice this week, in a sensible order. No point may be a sales line. The caption adds the 'why it matters' in two or three sentences and one short example of what it looks like in a real small business, without inventing a client."
         },

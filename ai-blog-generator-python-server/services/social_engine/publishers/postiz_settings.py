@@ -29,7 +29,7 @@ from ..models import PROVIDER_PROFILES
 EMPTY_SETTINGS_PROVIDERS = frozenset({"threads", "mastodon", "bluesky", "telegram", "nostr", "vk", "kick"})
 INTERNAL_KEYS = frozenset({"__type", "channel_name"})
 
-TITLE_LIMITS: dict[str, int] = {"tiktok": 90, "youtube": 100, "pinterest": 100, "reddit": 300}
+TITLE_LIMITS: dict[str, int] = {"tiktok": 90, "youtube": 100, "pinterest": 100, "reddit": 300, "tumblr": 100}
 YOUTUBE_TAGS_MAX_CHARS = 500
 
 X_REPLY_OPTIONS = ("everyone", "following", "mentionedUsers", "subscribers", "verified")
@@ -374,6 +374,21 @@ def _empty(inp: _Input) -> dict[str, Any]:
     return {"__type": inp.provider}
 
 
+def _tumblr(inp: _Input) -> dict[str, Any]:
+    """A Tumblr post: an optional title above the text, and the link it points to."""
+    out: dict[str, Any] = {"__type": "tumblr"}
+    title = truncate(inp.get("title") or inp.title, TITLE_LIMITS["tumblr"])
+    if title:
+        out["title"] = title
+    link = clean_text(inp.get("link")) or inp.link_url
+    if link:
+        out["link"] = inp.url("link", link)
+    tags = clean_text(inp.get("tags"))
+    if tags:
+        out["tags"] = tags
+    return out
+
+
 def _reddit(inp: _Input) -> dict[str, Any]:
     items = _community_items(inp.get("subreddit") or inp.get("subreddits"))
     if not items:
@@ -622,6 +637,7 @@ _BUILDERS: dict[str, Callable[[_Input], dict[str, Any]]] = {
     "youtube": _youtube,
     "pinterest": _pinterest,
     "reddit": _reddit,
+    "tumblr": _tumblr,
     "lemmy": _lemmy,
     "discord": _chat_channel,
     "slack": _chat_channel,
