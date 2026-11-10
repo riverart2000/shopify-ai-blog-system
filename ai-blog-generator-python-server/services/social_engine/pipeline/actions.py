@@ -100,9 +100,12 @@ async def edit(
     scheduled_at: int | None = None,
     remove_channel_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Edit captions/settings/time before publishing (Outfy: "edit before it goes out")."""
+    """Edit captions/settings/time before publishing (Outfy: "edit before it goes out").
+
+    Only channel versions that are still pending or failed change. A partially published post can be edited too:
+    its live channels stay as they are, and the failed ones get the correction before a retry."""
     post = await _require_post(store_id, post_id)
-    if post["status"] not in ("pending_approval", "approved", "failed"):
+    if post["status"] not in ("pending_approval", "approved", "failed", "partially_published"):
         raise ValidationError(f"Posts that are '{post['status']}' can't be edited here.")
     if scheduled_at is not None and scheduled_at < int(time.time()) + 120:
         raise ValidationError("Pick a time at least two minutes from now.")

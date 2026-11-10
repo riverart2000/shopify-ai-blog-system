@@ -67,8 +67,11 @@ export const canRegenerate = (post: PostSummary) => ["planned", "pending_approva
 export const canCancel = (post: PostSummary) => !["published", "cancelled"].includes(post.status);
 export const canRetry = (post: PostSummary) =>
   post.status === "failed" || post.targets.some((target) => target.status === "failed");
+/** Captions can still be changed on the channel versions that are pending or failed — including on a post whose
+ * other channels are already live (only the failed versions change, then Retry sends them). */
 export const isEditable = (post: PostSummary) =>
-  EDITABLE_POST.has(post.status) && post.targets.some((target) => EDITABLE_TARGET.has(target.status));
+  (EDITABLE_POST.has(post.status) || post.status === "partially_published")
+  && post.targets.some((target) => EDITABLE_TARGET.has(target.status));
 
 function ActionButton({ post, intent, label, busyLabel, className = "sa-btn" }: {
   post: PostSummary; intent: string; label: string; busyLabel: string; className?: string;

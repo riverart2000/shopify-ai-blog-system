@@ -74,6 +74,19 @@ async def test_edit_changes_caption_and_time_but_rejects_empty_caption(se_db):
     with pytest.raises(ValidationError):
         await actions.edit(se_db, post_id, target_captions={"ig": "   "})
 
+    # A post whose other channels are live: only the failed version changes, then it can be retried.
+    await post_store.transition_target(ig["id"], from_statuses=("pending",), to_status="published")
+    fb = next(t for t in post["targets"] if t["channel_id"] == "fb")
+    await post_store.transition_target(fb["id"], from_statuses=("pending",), to_status="failed", error_message="too long")
+    await post_store.update_post(se_db, post_id, status="partially_published")
+    await actions.edit(se_db, post_id, target_captions={"ig": "Not this one", "fb": "Shorter"})
+    post = await post_store.get_post(se_db, post_id)
+    by_channel = {t["channel_id"]: t for t in post["targets"]}
+    assert by_channel["ig"]["caption"] == "New caption" and by_channel["fb"]["caption"] == "Shorter"
+    await post_store.update_post(se_db, post_id, status="published")
+    with pytest.raises(ValidationError):
+        await actions.edit(se_db, post_id, target_captions={"fb": "Too late"})
+
 
 @pytest.mark.asyncio
 async def test_daily_fill_counts_slots_per_channel(se_db):
