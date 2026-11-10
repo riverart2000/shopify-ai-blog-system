@@ -11,7 +11,7 @@ Decided 2026-11-10 ("option 1 for now"); a multi-brand Social Autopilot is the l
 
 In Postiz, each channel can belong to a *customer* (shown as a group in the channel list). The three
 exist since 2026-11-10: **Bio Luxe Lab** (`da02d764-…`, all 11 current channels), **RevenueMind Pro AI**
-(`c8e63859-…`, empty) and **Joe Bains** (`3fc46263-…`, empty). A channel's ⋮ menu → *Move / add to group*
+(`c8e63859-…`; 6 channels connected 2026-11-10: Facebook page, Instagram, Instagram standalone "Joe Bains", LinkedIn page, Pinterest, Tumblr) and **Joe Bains** (`3fc46263-…`, empty). A channel's ⋮ menu → *Move / add to group*
 → type the group name → Save moves it; typing a new name creates a group (there is no other way to
 create one, and the public API / CLI / MCP can only list them). A stray empty group " Luxe Lab" exists
 from a typo; it has no delete in the API. Then:
