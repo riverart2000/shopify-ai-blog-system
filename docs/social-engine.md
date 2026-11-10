@@ -130,6 +130,10 @@ Three markers, all settings (nothing in code):
   counts within the per-post hashtag cap, and is the last thing cut when a caption runs out of
   room (other hashtags go first, then the signature line, then the link's CTA words). Networks
   whose profile has `hashtags_max=0` (Google Business, Telegram, Reddit) get none.
+* **Reddit** needs a subreddit: Channels page → the Reddit channel → *Subreddit* (saved in the
+  channel's default settings as `subreddit`; the health check warns while it is empty). Postiz posts
+  it as `media` when the post has an image or video, `link` when it only has a link, else `self`
+  (text). Bio Luxe Lab posts to r/BioLuxeLab (set 2026-11-10).
   Code: `ai/captions.py` `closing_hashtag_for` / `with_closing_hashtag` / `assemble`.
 * **In Postiz:** every post is tagged with its campaign name and content type
   (`postiz.tag_posts`); hand-made Postiz posts have no tags.

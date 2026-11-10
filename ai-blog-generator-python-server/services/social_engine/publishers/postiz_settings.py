@@ -36,7 +36,8 @@ X_REPLY_OPTIONS = ("everyone", "following", "mentionedUsers", "subscribers", "ve
 TIKTOK_PRIVACY = ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY")
 TIKTOK_METHODS = ("DIRECT_POST", "UPLOAD")
 YOUTUBE_VISIBILITY = ("public", "private", "unlisted")
-REDDIT_TYPES = ("self", "link", "image", "video")
+REDDIT_TYPES = ("self", "link", "media")  # Postiz: media = the post's first attached image or mp4 video
+REDDIT_LEGACY_TYPES = {"image": "media", "video": "media"}
 GMB_TOPICS = ("STANDARD", "EVENT", "OFFER")
 GMB_CTAS = ("NONE", "BOOK", "ORDER", "SHOP", "LEARN_MORE", "SIGN_UP", "GET_OFFER", "CALL")
 TWITCH_MESSAGE_TYPES = ("message", "announcement")
@@ -377,12 +378,7 @@ def _reddit(inp: _Input) -> dict[str, Any]:
     items = _community_items(inp.get("subreddit") or inp.get("subreddits"))
     if not items:
         raise inp.missing("subreddit", "subreddit")
-    if inp.video_count:
-        default_type = "video"
-    elif inp.image_count:
-        default_type = "image"
-    else:
-        default_type = "link" if inp.link_url else "self"
+    default_type = "media" if inp.has_media else ("link" if inp.link_url else "self")
     entries: list[dict[str, Any]] = []
     for item in items:
         name = clean_text(item.get("subreddit")).removeprefix("/").removeprefix("r/")
@@ -391,7 +387,8 @@ def _reddit(inp: _Input) -> dict[str, Any]:
         title = truncate(item.get("title") or inp.get("title") or inp.title, TITLE_LIMITS["reddit"])
         if len(title) < 2:
             raise inp.bad_content(f"a post title is required for r/{name}", "title")
-        post_type = inp.choice("type", REDDIT_TYPES, value=item.get("type") or inp.get("type") or default_type)
+        wanted = clean_text(item.get("type") or inp.get("type")) or default_type
+        post_type = inp.choice("type", REDDIT_TYPES, value=REDDIT_LEGACY_TYPES.get(wanted.lower(), wanted))
         url = clean_text(item.get("url")) or (inp.link_url if post_type == "link" else "")
         if post_type == "link":
             if not url:

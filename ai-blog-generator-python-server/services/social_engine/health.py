@@ -190,8 +190,11 @@ async def _channels(sctx: StoreContext) -> Check:
     usable = [c for c in channels if c["enabled"] and not c["disabled"] and not c.get("missing_at")]
     problems = []
     for channel in usable:
-        if channel["provider"] == "pinterest" and not (channel.get("default_settings") or {}).get("board"):
+        defaults = channel.get("default_settings") or {}
+        if channel["provider"] == "pinterest" and not defaults.get("board"):
             problems.append(f"{channel['name']}: choose a Pinterest board")
+        if channel["provider"] == "reddit" and not (defaults.get("subreddit") or defaults.get("subreddits")):
+            problems.append(f"{channel['name']}: enter the subreddit to post in (Channels page)")
     if not channels:
         return _check("channels", "warning", "No channels synced yet — connect channels in Postiz, then 'Sync channels'.")
     if problems:

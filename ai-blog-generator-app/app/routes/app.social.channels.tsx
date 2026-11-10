@@ -16,7 +16,8 @@ import { authenticate } from "../shopify.server";
 export const handle = { title: "Channels" };
 
 type SettingField = {
-  key: string; label: string; type: "select" | "checkbox"; options?: Array<[string, string]>; help?: string; fallback: string | boolean;
+  key: string; label: string; type: "select" | "checkbox" | "text"; options?: Array<[string, string]>; help?: string; fallback: string | boolean;
+  placeholder?: string;
 };
 
 const INSTAGRAM_FIELDS: SettingField[] = [
@@ -37,6 +38,9 @@ const PROVIDER_FIELDS: Record<string, SettingField[]> = {
   ],
   youtube: [
     { key: "type", label: "Visibility", type: "select", fallback: "public", options: [["public", "Public"], ["unlisted", "Unlisted"], ["private", "Private"]] },
+  ],
+  reddit: [
+    { key: "subreddit", label: "Subreddit", type: "text", fallback: "", placeholder: "r/BioLuxeLab", help: "Every Reddit post goes to this subreddit. Posts with an image or video are media posts, posts with a link are link posts, the rest are text posts. If the subreddit demands a flair, pick one in Postiz." },
   ],
   x: [
     { key: "who_can_reply_post", label: "Who can reply", type: "select", fallback: "everyone", options: [["everyone", "Everyone"], ["following", "People you follow"], ["mentionedUsers", "Only people you mention"], ["subscribers", "Subscribers"], ["verified", "Verified accounts"]] },
@@ -202,6 +206,10 @@ function ProviderSettings({ channel }: { channel: Channel }) {
                   <input type="checkbox" name={`setting:${field.key}`} value="1" defaultChecked={value === true || value === "true"} />
                   <span>{field.label}</span>
                 </label>
+              ) : field.type === "text" ? (
+                <Field label={field.label} help={field.help}>
+                  <input type="text" name={`setting:${field.key}`} defaultValue={String(value)} placeholder={field.placeholder} />
+                </Field>
               ) : (
                 <Field label={field.label} help={field.help}>
                   <select name={`setting:${field.key}`} defaultValue={String(value)}>
