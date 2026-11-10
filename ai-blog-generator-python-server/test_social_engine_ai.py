@@ -536,6 +536,21 @@ def test_a_tag_without_a_capital_letter_does_not_break_a_post():
     assert merged == ["#SoundHealing", "#8cm", "#SingingBowl", "#3d"]
 
 
+def test_length_is_measured_the_way_postiz_counts_it():
+    """Postiz serialises the caption as HTML before counting, so '&' is 5 characters and emoji are 2 (JS length);
+    Threads is counted in UTF-8 bytes; X keeps its weighted count. A 298-character Bluesky caption with three '&'
+    in its tracking link was refused as 'too long' before this."""
+    from services.social_engine.ai.text import postiz_length, postiz_text, threads_length
+
+    assert postiz_text("a & b < c") == "a &amp; b &lt; c"
+    assert postiz_length("a & b") == 9 and postiz_length("🌙") == 2 and postiz_length("plain") == 5
+    assert threads_length("🌙 & é") == 4 + 1 + 5 + 1 + 2
+    link = "https://bioluxelab.com/p?utm_source=bluesky&utm_medium=social&utm_campaign=c&utm_content=post_1"
+    assert measure_for("bluesky")(link) == len(link) + 12
+    assert measure_for("facebook")("x & y") == 9 and measure_for("x")(link) == 23
+    assert measure_for("x")("a & b") == 9
+
+
 def test_hashtag_normalisation():
     assert normalise_hashtag("magnesium glycinate") == "#MagnesiumGlycinate"
     assert normalise_hashtag("#sleep-support") == "#SleepSupport"

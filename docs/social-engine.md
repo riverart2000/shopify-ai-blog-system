@@ -113,6 +113,14 @@ Discount codes work for every customer anywhere, whatever the market. The occasi
 Day, US Mother's Day, Small Business Saturday) get their own. Lunar festival dates are a table
 (`FESTIVAL_DATES`, to 2030): extend it before 2031. Wellness days now get a sale as well as a greeting.
 
+## Caption length: count like Postiz
+
+Postiz parses every caption as HTML and serialises it back before checking the network limit, so
+`&` counts as `&amp;` (5), `<`/`>` as 4, and emoji as 2 (JavaScript length); Threads is counted in
+UTF-8 bytes; X with the weighted count. `ai/text.py` `measure_for(provider)` applies the same rules,
+so a caption that fits here fits there. Before this (2026-11-10) 13 Bluesky posts of 292–298
+characters were refused as "post is too long": the three `&` in the tracking link pushed them to 304–311.
+
 ## Telling Autopilot posts apart
 
 Three markers, all settings (nothing in code):

@@ -330,8 +330,36 @@ def x_length(text: str) -> int:
     return total
 
 
+def postiz_text(text: str) -> str:
+    """The caption as Postiz measures it: it parses the text as HTML and serialises it back before counting, so
+    `&` becomes `&amp;` (5 characters), `<` and `>` become `&lt;`/`&gt;` and a non-breaking space `&nbsp;`.
+    A tracking link with three `&` is 12 characters longer to Postiz than to us; this keeps the two in step."""
+    return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\u00a0", "&nbsp;")
+
+
+def utf16_length(text: str) -> int:
+    """JavaScript's `.length`: characters outside the Basic Multilingual Plane (most emoji) count 2."""
+    return sum(2 if ord(char) > 0xFFFF else 1 for char in text or "")
+
+
+def postiz_length(text: str) -> int:
+    """How Postiz counts a caption for every network but X and Threads (`text.length` of the serialised HTML)."""
+    return utf16_length(postiz_text(text))
+
+
+def threads_length(text: str) -> int:
+    """Postiz counts Threads captions in UTF-8 bytes."""
+    return len(postiz_text(text).encode("utf-8"))
+
+
 def measure_for(provider: str) -> Callable[[str], int]:
-    return x_length if (provider or "").strip().lower() == "x" else len
+    """The length measure Postiz applies to this network's captions (it refuses a post over the limit)."""
+    key = (provider or "").strip().lower()
+    if key == "x":
+        return lambda text: x_length(postiz_text(text))
+    if key == "threads":
+        return threads_length
+    return postiz_length
 
 
 _SENTENCE_END = re.compile(r"[.!?…][\"'”’)\]]*(?=\s|$)|\n")
