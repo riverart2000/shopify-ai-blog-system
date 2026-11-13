@@ -146,17 +146,20 @@ async def _policy_health(store: StoreConfig) -> dict:
 
 async def _collect_shopify(store: StoreConfig, period_days: int) -> dict:
     since = f"SINCE -{period_days}d"
+    # Shopify labels every session human or bot. Bots are most of a small store's visits and "reach checkout"
+    # without buying, so every visit figure in the report counts people only.
+    people = "WHERE human_or_bot_session = 'human' "
     funnel_q = (
         "FROM sessions SHOW sessions, sessions_with_cart_additions, "
-        "sessions_that_reached_checkout, sessions_that_completed_checkout, conversion_rate " + since
+        "sessions_that_reached_checkout, sessions_that_completed_checkout, conversion_rate " + people + since
     )
     sources_q = (
         "FROM sessions SHOW sessions, sessions_that_completed_checkout "
-        "GROUP BY referrer_source " + since + " ORDER BY sessions DESC LIMIT 25"
+        + people + "GROUP BY referrer_source " + since + " ORDER BY sessions DESC LIMIT 25"
     )
     landing_q = (
         "FROM sessions SHOW sessions, sessions_with_cart_additions, sessions_that_completed_checkout "
-        "GROUP BY landing_page_path " + since + " ORDER BY sessions DESC LIMIT 25"
+        + people + "GROUP BY landing_page_path " + since + " ORDER BY sessions DESC LIMIT 25"
     )
     sales_q = "FROM sales SHOW total_sales, orders, average_order_value " + since
     product_sales_q = (
