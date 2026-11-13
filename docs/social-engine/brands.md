@@ -2,7 +2,10 @@
 
 Social Autopilot runs any number of brands. Each brand has its own settings, voice, channels, campaigns,
 posts and image look. Bio Luxe Lab is a Shopify brand (posts come from the catalogue). RevenueMindProAI is
-a brand with no catalogue (posts are brand content: tips, checklists, myths, service spotlights).
+a brand with no catalogue (posts are brand content: tips, checklists, myths, service spotlights). Joe Bains
+(`brands/joebains.json`) is the entertainer brand: one post a day in Joe's own voice (a funny thought, a
+"try this", a quiz question, a myth, a lesson from his story, a "Book Joe" service post), each service post
+linking to that service's own page.
 
 ## A brand is one file
 
@@ -24,9 +27,15 @@ curl -X POST -H "x-api-key: $SOCIAL_API_KEY" -H 'content-type: application/json'
   127.0.0.1:4000/api/social-engine/brands/apply -d '{"name": "revenuemind"}'
 ```
 
-To add a brand (for example joebains.com): copy `brands/revenuemind.json`, change the store, logo, Postiz
-group, voice, kinds, topics and campaign, connect its channels in Postiz inside its own group, apply the file.
-No code changes.
+To add a brand: copy `brands/revenuemind.json` or `brands/joebains.json`, change the store, logo, Postiz
+group, voice, kinds, topics and campaign, and apply the file. No code changes. `logo_file` may be empty: the
+brand's name is then printed where the logo would be.
+
+The brand's Postiz group must exist, but it may still be empty. A brand applied before its channels are
+connected is switched on and waits: nothing is written, no AI image is spent and nothing is posted. The
+hourly channel sync finds channels as soon as they are connected in (or moved into) the brand's group, and
+the campaign plans its first post at its next check, a few hours at most. To start at once: Social
+Autopilot, choose the brand, Channels, *Sync channels*, then run the campaign.
 
 ## What makes a brand different (all in `settings`)
 
@@ -66,8 +75,8 @@ is its share of the account's monthly allowance. Keep the sum within the plan (P
 ## Keeping brands apart
 
 * In Postiz every channel belongs to a group (customer). A brand only syncs the channels of its own group.
-  `brand-apply` refuses to switch a brand on until that group exists and has channels; without the group
-  filter a brand would see every other brand's channels.
+  `brand-apply` refuses to switch a brand on until that group exists; without the group filter a brand
+  would see every other brand's channels. A brand posts to its own group's channels and no others.
 * In the app, the **Brand** switch at the top of Social Autopilot chooses which brand every page shows.
   The choice is one setting for the whole app, not per browser tab.
 * Everything else that calls the engine (Task Agent, Telegram, scripts) keeps talking to the default store,

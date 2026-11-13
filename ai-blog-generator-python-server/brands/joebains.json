@@ -1,0 +1,262 @@
+{
+  "store": {
+    "id": "joebains",
+    "name": "Joe Bains",
+    "domain": "joebains.com",
+    "sort_order": 60
+  },
+  "logo_file": "",
+  "postiz_group": "Joe Bains",
+  "settings": {
+    "enabled": true,
+    "publisher": "postiz",
+    "default_approval_mode": "ai_review",
+    "catalog": {
+      "source": "none"
+    },
+    "brand": {
+      "business_name": "Joe Bains",
+      "website": "https://joebains.com",
+      "what_you_sell": "Live entertainment and interactive experiences in London and online: stand-up comedy and compere work, quiz hosting, juggling lessons, confidence-building and team workshops, and biohacking health coaching",
+      "description": "Joe Bains is a London-based entertainer, quizmaster, juggling teacher and confidence coach. He started out as an IT geek, a self-described nerd and a massive introvert who needed to get away and recharge after 15 minutes around people, and for whom even thinking about stepping onto a stage felt like a mini heart attack. He decided to change that, and years of practice and countless exercises took him from avoiding the spotlight to becoming a Toastmaster, stand-up comedian, juggler and confidence coach. He now performs and comperes comedy, hosts quizzes, teaches juggling to complete beginners, and runs confidence-building and interactive workshops for company teams and groups, using the same low-pressure exercises that worked for him. He also offers biohacking health and performance coaching built on his own experience of rebuilding his everyday habits around food, movement, sleep and recovery. Based in London, open to enquiries for in-person and online work. Every booking starts with an enquiry through the website.",
+      "slogan": "Make it memorable.",
+      "cta_text": "Book Joe",
+      "colors": {
+        "primary": "#a855f7",
+        "text": "#1a1a2e",
+        "background": "#f5f3ff",
+        "cta": "#f97316",
+        "accent": "#6366f1",
+        "secondary": "#1a1a2e"
+      },
+      "heading_font": "InstrumentSans-Variable.ttf",
+      "heading_weight": "Bold",
+      "body_font": "InstrumentSans-Variable.ttf",
+      "decoration": "dots",
+      "use_store_logo": true,
+      "logo_position": "top_left",
+      "show_price": false
+    },
+    "captions": {
+      "source": "ai",
+      "language": "en-GB",
+      "tone": "funny",
+      "include_price": false,
+      "hashtags_count": 4,
+      "use_product_tags": false,
+      "emoji_level": "light",
+      "include_cta": true,
+      "link_policy": "all",
+      "link_in_first_comment": true,
+      "closing_hashtag": "#JoeBains",
+      "custom_instructions": "Write as Joe, in the first person ('I', never 'we' or 'Joe Bains'). The reader is someone planning an event, a team day, a party or a quiz night, or someone who wants to feel more confident or try something new. Open with a line that makes them smile or nod. Give them something worth having even if they never get in touch: a laugh, a tip they can try tonight, a thought that sticks. Then, in one sentence, invite them to get in touch through the website. Never invent gigs, venues, dates, audiences, clients, reviews or numbers.",
+      "hashtag_clouds": [
+        {
+          "name": "Joe Bains default",
+          "is_default": true,
+          "tags": [
+            "LondonComedy",
+            "StandUpComedy",
+            "QuizNight",
+            "Juggling",
+            "TeamBuilding",
+            "ConfidenceCoach",
+            "LondonEvents",
+            "Workshops"
+          ]
+        }
+      ]
+    },
+    "schedule": {
+      "timezone": "Europe/London",
+      "days": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "window_start": "08:00",
+      "window_end": "18:00",
+      "plan_days_ahead": 1,
+      "posts_per_channel_per_day": 1,
+      "always_fill_daily_slots": false
+    },
+    "postiz": {
+      "ai_video_monthly_budget": 0,
+      "ai_image_monthly_budget": 35,
+      "ai_backgrounds_for_promotions": false,
+      "trending_tiktok_music": false,
+      "servers": []
+    },
+    "guards": {
+      "health_claim_checks": true,
+      "hold_health_claims": true,
+      "hold_low_review_score": 6,
+      "max_review_rewrites": 2
+    },
+    "utm": {
+      "enabled": true,
+      "medium": "autopilot"
+    },
+    "auto_promotions": {
+      "enabled": false
+    },
+    "founder_videos": {
+      "enabled": false
+    },
+    "listings": {
+      "enabled": false,
+      "autopilot": false
+    },
+    "shoppable": {
+      "enabled": false
+    },
+    "voice": {
+      "sector": "a London entertainer: stand-up comedian, quizmaster, juggling teacher, workshop host and confidence coach",
+      "image_check": "a live entertainer, quiz host and workshop leader",
+      "compliance_rules": "1. Never invent facts: no gigs, venues, dates, tours, audiences, clients, testimonials, reviews, awards, press, statistics or study results unless they appear word for word in the facts you are given.\n2. Joe's own story is limited to the brand description. Do not add events, ages, years, places, employers, illnesses or achievements to it.\n3. Describe a service only with the facts given for it. No prices, durations, group sizes, availability or guarantees.\n4. Never promise a result: not a guaranteed laugh, not confidence by a date, not a health outcome. Say what happens in a session and what people take away, exactly as the facts describe it.\n5. Health and wellbeing: no medical claims of any kind. Never say or imply that coaching, food, a habit, juggling or laughter treats, cures, prevents, reverses or reduces any disease, condition or symptom, and do not name medical conditions. No advice about medication, diagnosis or treatment. Coaching is educational and complements professional medical care.\n6. Confidence content talks about nerves, shyness and comfort zones in everyday words, never about anxiety or any other diagnosis, and never as therapy.\n7. Jokes are clean and kind: nothing about religion, politics, race, sex, disability, body size or tragedy, and never at the expense of an audience member, a client or a group of people. Joe may joke about himself, juggling, quizzes, technology and everyday life.\n8. No fake urgency or scarcity (limited dates, last chance, nearly booked up).\n9. Do not name or criticise other performers, venues, agencies or competitors.\n10. A quiz question is used only when its answer is well established, has one correct answer and is not about a living person, current events or anything that changes over time.",
+      "voice_rules": "- Joe speaking, first person: warm, self-deprecating, quick, a little nerdy. A former introverted IT geek who now stands on stages on purpose and still finds that funny.\n- Funny first, useful second, selling last. A post can be only a good laugh and a kind thought.\n- Concrete and visual: a dropped juggling ball, the silence after a quiz question, the walk to the microphone. Real moments beat abstract advice.\n- Encouraging, never preachy. Speak to the nervous person at the back as an equal who has been there.\n- Plain British English, short sentences, the rhythm of someone talking. One idea per post.\n- Banned clichés: unleash, unlock your potential, game-changer, next level, life-changing, journey (as a metaphor), hustle, crush it, laughter is the best medicine, step outside your comfort zone (say what the step is instead).\n- No ALL-CAPS words for emphasis; at most one exclamation mark per caption.\n- Short paragraphs with blank lines between ideas on long-form networks.",
+      "content_kinds": {
+        "try_this": {
+          "label": "Try this",
+          "eyebrow": "Try this",
+          "template_key": "info_points_dark",
+          "points": 4,
+          "guidance": "A small skill the reader can try today, on the topic given, taught the way Joe teaches beginners: broken into easy steps with no pressure. The headline names what they will be able to do (for example 'Your first juggling throw, in four steps'). The points are the steps, in order, each one a single clear action in plain words. No point may be a sales line. The caption says why it is worth trying and what usually goes wrong the first time, with a light joke at Joe's own expense."
+        },
+        "myth": {
+          "label": "Myth vs reality",
+          "eyebrow": "Myth",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "Myth-busting on the topic given. The headline is a common belief about confidence, comedy, juggling, quizzes or team days, written in quotation marks the way someone would actually say it (for example \"I'm just not a confident person\"). The body is the reality in one or two plain sentences with a reason, not a slogan. The caption explains it with one everyday example, where it fits drawn from Joe's own start as an introvert, and stays friendly towards anyone who believed the myth."
+        },
+        "funny_thought": {
+          "label": "Funny thought",
+          "eyebrow": "Thought for today",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "One original, clean observation on the topic given that makes people smile and want to share it. The headline is the joke: a single sharp line of at most 60 characters. The body is the turn or the kind truth behind it in one or two sentences. The caption keeps the same voice for a few lines and ends warmly. The joke is on Joe himself, juggling, quizzes, technology or everyday life, never on other people. Do not reuse a well-known joke."
+        },
+        "joes_story": {
+          "label": "From my own story",
+          "eyebrow": "I've been there",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "A short lesson from Joe's own change from stage-terrified introvert to performer, on the topic given, using only the facts in the brand description. The headline is the lesson in Joe's words (for example 'I wasn't born confident. I built it.'). The body says what he would tell his younger self in one or two sentences. The caption tells the moment plainly and with humour, then hands the reader one small thing to try this week. Do not add details to the story that are not in the brand description."
+        },
+        "quiz_question": {
+          "label": "Quiz question",
+          "eyebrow": "Quiz time",
+          "template_key": "info_statement",
+          "points": 0,
+          "guidance": "One general-knowledge quiz question a quizmaster would be happy to read out, connected as closely as it sensibly can be to the topic given (any well-known subject will do when the topic does not suggest one). The headline is the question, at most 60 characters. The body gives a playful hint without giving the answer away. The caption repeats the question in a lively host's voice and asks people to put their answer in the comments. Never state the answer and never promise that it will be posted. Only use a question whose answer is well established, unambiguous and will not change over time."
+        },
+        "book_joe": {
+          "label": "Book Joe",
+          "eyebrow": "Book Joe",
+          "template_key": "info_points_dark",
+          "points": 4,
+          "about_offering": true,
+          "guidance": "Show what one of Joe's services is like for the people in the room, using only the facts given for that service. The headline names the occasion it suits or the service itself, in at most 60 characters. The points say who it suits and what happens, each starting with a verb, in the organiser's terms. The caption opens with the situation that makes someone need this (the team day nobody wants to plan, the quiz night that needs a host), says what Joe does in the first person, and ends by inviting them to get in touch through the website. No prices, no durations and no promised results."
+        }
+      },
+      "offerings": [
+        {
+          "name": "Comedy & Compere Work",
+          "url": "https://comedy.joebains.com",
+          "summary": "Warm, confident live comedy and compere work shaped around the room, the occasion and the audience. Suits comedy nights and showcases, private celebrations, community and charity events, and corporate socials and team events. Formats: stand-up comedy sets, compere and MC support, guest spots and collaborative shows, and material shaped to an agreed event brief. It starts with a conversation about the audience and tone before the event, then a clear running-time and technical brief, and professional, well-prepared delivery on the day."
+        },
+        {
+          "name": "Quizmaster & Event Host",
+          "url": "https://quiz.joebains.com",
+          "summary": "Friendly, well-paced quiz hosting for teams, venues, fundraisers, private parties and community events. Joe keeps the energy up, explains the rules clearly and makes sure both confident competitors and casual players feel part of the night. Suits pubs, clubs and community venues, corporate team socials, charity fundraisers, birthdays and private celebrations. Formats: ready-to-run general knowledge quizzes, bespoke themed rounds, team-building quiz events, and hosting for questions supplied by the client. The format is matched to the venue, audience and timings, with clear, lively hosting and fair scoring."
+        },
+        {
+          "name": "Juggling Coaching & Workshops",
+          "url": "https://juggling.joebains.com",
+          "summary": "Encouraging juggling sessions that break the skill into achievable steps and make practice enjoyable. Joe helps beginners move from the first throw to a repeatable pattern without making learning intimidating. Suits complete beginners, schools and youth groups, community organisations and corporate team-building events. Formats: one-to-one coaching, small-group lessons, event and community workshops, and team-building sessions. Simple demonstrations and step-by-step practice at a supportive pace adapted to the group, with equipment and space requirements agreed in advance."
+        },
+        {
+          "name": "Confidence-Building Workshops for Teams & Groups",
+          "url": "https://confidence.joebains.com",
+          "summary": "Fun, practical workshops that help people connect and gently stretch their comfort zones, using the same exercises that took Joe from a stage-terrified introvert to a Toastmaster and stand-up comedian. Each workshop takes a team or group through carefully sequenced, low-pressure exercises: participants laugh, connect and try manageable challenges together without being thrown in at the deep end. Suits company team-building and away days, workplace teams wanting stronger connection and communication, and community, social and interest groups. One-off or multi-session programmes, in person, tailored to the group and its goals. A welcoming, practical and non-judgemental atmosphere, and techniques participants can keep using."
+        },
+        {
+          "name": "Interactive Workshops & Team Experiences",
+          "url": "https://workshops.joebains.com",
+          "summary": "Inclusive, energetic sessions combining juggling, games, communication and shared challenges for teams and groups. Joe shapes the pace and activities around the group so the experience feels welcoming, purposeful and enjoyable. Suits corporate away days and team socials, schools, youth groups and community organisations, conferences and wellbeing programmes, and private groups looking for something different. Formats: beginner juggling workshops, confidence and communication sessions, quiz-led team experiences, and bespoke combinations for an event. The format is agreed around the goals, space and timings, with facilitation that includes different confidence levels and practical setup guidance before the day."
+        },
+        {
+          "name": "Biohacking Health & Performance Coaching",
+          "url": "https://biohacking.joebains.com",
+          "summary": "Practical, personalised coaching for individuals, entrepreneurs and teams who want to feel and perform better without turning life upside down. Joe combines lived experience with simple strategies around nutrition, meal timing, movement, sleep, breathwork and mindset, finding changes that are realistic for the person's goals and schedule. Suits individuals who want more consistent energy and focus, busy entrepreneurs and professionals, and companies planning a practical wellbeing workshop. One-to-one coaching online or in person, workshops for companies and groups, one-off sessions or ongoing support. It starts with a conversation about goals, routine and constraints, and gives clear next steps without judgement or extreme rules. Educational coaching that complements professional medical care."
+        }
+      ],
+      "image_style": "Playful theatrical editorial illustration for a live entertainer: a warm spotlight on a small stage, a microphone on a stand, juggling balls in mid-air or a quiz night table, in deep midnight blue with purple and warm orange light, soft depth of field, joyful and inviting, no people's faces"
+    },
+    "ai": {
+      "writer": "postiz"
+    }
+  },
+  "campaigns": [
+    {
+      "name": "Daily post",
+      "rule_type": "brand_content",
+      "status": "active",
+      "approval_mode": "ai_review",
+      "providers": [],
+      "config": {
+        "kinds": [
+          "funny_thought",
+          "try_this",
+          "book_joe",
+          "quiz_question",
+          "myth",
+          "joes_story",
+          "book_joe"
+        ],
+        "posts_per_day": 1,
+        "every_n_days": 1,
+        "link_url": "https://joebains.com/contact",
+        "topic_hint": "Audience: people in and around London planning an event, a team day, a party or a quiz night, and anyone who wants to feel more confident or learn something playful. Entertaining first, promotional second.",
+        "topics": [
+          "the first time holding three juggling balls",
+          "the silence just before a quiz answer is read out",
+          "walking up to a microphone for the first time",
+          "being an introvert at a party",
+          "team-building days people secretly dread",
+          "dropping the ball, literally, and carrying on",
+          "what IT support and stand-up comedy have in common",
+          "speaking up in a meeting when you would rather not",
+          "the one person on every quiz team who knows everything",
+          "learning something new as an adult",
+          "making small talk when you hate small talk",
+          "why practising badly still counts as practising",
+          "the quiz round everybody thinks they are good at",
+          "what a compere actually does at an event",
+          "being bad at something in front of other people",
+          "maps, capitals and getting lost",
+          "recharging after a long day around people",
+          "how to throw one ball well before trying three",
+          "what makes a quiz night feel fair to everyone",
+          "nerves before giving a speech or a toast",
+          "tea, biscuits and other British essentials",
+          "getting a quiet group to join in without forcing anyone",
+          "a joke that falls flat, and what to do next",
+          "words people use without knowing what they mean",
+          "small daily habits for steadier energy at work",
+          "planning a birthday or celebration people will remember",
+          "the difference between being loud and being confident",
+          "inventions that started as accidents",
+          "why laughing together makes a team easier to work in",
+          "saying yes to something that scares you a little"
+        ],
+        "ai_background": true
+      }
+    }
+  ]
+}

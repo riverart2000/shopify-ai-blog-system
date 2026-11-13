@@ -97,6 +97,9 @@ class CombinedPublisher:
         result["servers"] = servers
         return result
 
+    async def list_groups(self) -> list[dict[str, Any]]:
+        return await self.main.list_groups()   # groups are the main Postiz's; extra servers have none
+
     async def list_channels(self) -> list[PublisherChannel]:
         channels = list(await self.main.list_channels())
         for name, publisher in self.extras.items():

@@ -126,7 +126,7 @@ async def test_brand_without_a_catalogue_posts_brand_content_end_to_end(se_db, t
 
     # Bio Luxe Lab (the Shopify store of the fixture) is on, with a catalogue.
     await save_settings(se_db, {"enabled": True, "publisher": "dry_run"})
-    with pytest.raises(ValidationError, match="No channel in Postiz is in a group"):
+    with pytest.raises(ValidationError, match="Postiz has no channel group called"):
         await apply_brand(_brand(tmp_path, postiz_group="Nobody"))
     assert (await load_settings("revenuemind")).enabled is False, "a brand without its Postiz group never runs"
 
@@ -176,3 +176,46 @@ async def test_brand_without_a_catalogue_posts_brand_content_end_to_end(se_db, t
     assert f"periodic:sync_catalog_incremental:{se_db}" in states
     assert f"periodic:sync_catalog_incremental:{store_id}" not in states
     assert f"periodic:evaluate_campaigns:{store_id}" in states
+
+
+JOEBAINS_FILE = Path(__file__).parent / "brands" / "joebains.json"
+
+
+def test_the_joebains_brand_file_is_valid():
+    brand = read_brand_file(JOEBAINS_FILE)
+    settings = EngineSettings.model_validate(brand.settings)
+    kinds = prompts.content_kinds(settings.voice)
+    campaign = brand.campaigns[0]
+    assert brand.store.id == "joebains" and brand.postiz_group == "Joe Bains"
+    assert settings.catalog.source == "none" and settings.guards.health_claim_checks is True
+    assert settings.schedule.posts_per_channel_per_day == 1 and campaign.config["posts_per_day"] == 1
+    assert len(brand.campaigns) == 1 and not campaign.providers, "one post a day, on the brand's own channels only"
+    assert set(campaign.config["kinds"]) <= set(kinds)
+    from services.social_engine.creatives.library import get_builtin
+
+    for key in campaign.config["kinds"]:
+        assert get_builtin(kinds[key].template_key), f"{key}: template {kinds[key].template_key!r} exists"
+    assert all(o.url.startswith("https://") and o.url.endswith(".joebains.com") for o in settings.voice.offerings)
+
+
+@pytest.mark.asyncio
+async def test_a_brand_can_be_added_before_its_channels_are_connected(se_db, tmp_path):
+    """The Postiz group exists but is empty: the brand is set up and switched on, sees no other brand's
+    channels, plans nothing, and starts by itself once a channel appears in its group."""
+    data = json.loads(JOEBAINS_FILE.read_text())
+    data["postiz_group"] = "Dry Run Empty Group"
+    data["settings"]["publisher"] = "dry_run"
+    data["settings"]["ai"] = {"ai_review": False, "ai_decisions": False}
+    await save_settings(se_db, {"enabled": True, "publisher": "dry_run"})
+
+    result = await apply_brand(BrandFile.model_validate(data))
+    store_id = result["store_id"]
+    assert any("No channels in the Postiz group" in line for line in result["done"]), result
+    settings = await load_settings(store_id)
+    assert settings.enabled and settings.postiz.customer_id == "dry-empty"
+    assert await config_store.list_channels(store_id) == [], "no other brand's channels leak in"
+
+    campaign = (await config_store.list_campaigns(store_id))[0]
+    planned = await evaluate_campaign(store_id, campaign["id"], seed=1)
+    assert planned["planned"] == 0 and "No usable channels" in planned["error"]
+    assert not await post_store.list_posts(store_id, limit=5), "nothing is written or scheduled without a channel"

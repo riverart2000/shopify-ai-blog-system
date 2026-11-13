@@ -6,7 +6,11 @@ brand on the account. Bio Luxe Lab uses 12 channels; the other two brands get ab
 Update 2026-11-10 (evening): Social Autopilot is now multi-brand. RevenueMindProAI is a brand of its own
 (`ai-blog-generator-python-server/brands/revenuemind.json`, how-to in `docs/social-engine/brands.md`): one
 value post a day on all its channels, written by Postiz AI, each asking for a booked call. The RSS auto-post
-below is still available for blog articles; joebains.com is the next brand to add the same way.
+below is still available for blog articles.
+
+Update 2026-11-13: Joe Bains is a brand too (`brands/joebains.json`): one post a day, only on the channels
+of the **Joe Bains** Postiz group. That group is still empty, so the brand waits; it starts by itself once
+channels are connected there. Section 4 below is superseded.
 
 ## 1. Keep the brands apart in Postiz: customers
 

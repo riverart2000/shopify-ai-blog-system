@@ -76,17 +76,17 @@ async def _postiz_group_id(store_id: str, group: str) -> str:
 
     publisher = get_publisher(await load_store_context(store_id), correlation_id=f"brand:{store_id}")
     try:
-        channels = await publisher.list_channels()
+        found = await publisher.list_groups()
     finally:
         await publisher.aclose()
-    groups = {norm(c.customer_name): c.customer_id for c in channels if c.customer_id}
+    groups = {norm(g.get("name")): str(g.get("id") or "") for g in found if g.get("id")}
     if norm(group) not in groups:
-        names = sorted({c.customer_name for c in channels if c.customer_name})
+        names = sorted(str(g.get("name") or "").strip() for g in found if str(g.get("name") or "").strip())
         raise ValidationError(
-            f"No channel in Postiz is in a group called '{group}' (groups with channels: {', '.join(names) or 'none'}). "
-            "Connect the brand's channels in Postiz and move them into that group first."
+            f"Postiz has no channel group called '{group}' (groups: {', '.join(names) or 'none'}). "
+            "Create it in Postiz first: a channel's menu, 'Move / add to group', type the name, Save."
         )
-    return str(groups[norm(group)])
+    return groups[norm(group)]
 
 
 async def apply_brand(brand: BrandFile) -> dict[str, Any]:
@@ -131,6 +131,10 @@ async def apply_brand(brand: BrandFile) -> dict[str, Any]:
         done.append("Channels found: " + ", ".join(synced["new"]))
 
     channels = await config_store.list_channels(store_id)
+    if not channels:
+        # Nothing is written or posted until a channel exists; the hourly channel sync picks new ones up.
+        done.append(f"No channels in the Postiz group '{brand.postiz_group}' yet: posting starts by itself "
+                    "once channels are connected there")
     by_name = {c["name"]: c for c in await config_store.list_campaigns(store_id)}
     for item in brand.campaigns:
         config = validate_campaign_config(item.rule_type, item.config)

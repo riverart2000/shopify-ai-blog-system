@@ -130,6 +130,13 @@ class DryRunPublisher:
         await self._record("integrations.list", "GET", response=[c.channel_id for c in channels])
         return channels
 
+    async def list_groups(self) -> list[dict[str, Any]]:
+        # The second group has no channels: a brand whose channels are not connected yet.
+        groups = [{"id": "dry-customer", "name": "Dry Run Customer"},
+                  {"id": "dry-empty", "name": "Dry Run Empty Group"}]
+        await self._record("groups.list", "GET", response=[g["id"] for g in groups])
+        return groups
+
     async def channel_rules(self, channel_id: str) -> ChannelRules:
         provider = next((c.provider for c in DRY_RUN_CHANNELS if c.channel_id == channel_id), "")
         profile = profile_for(provider)
