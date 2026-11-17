@@ -744,3 +744,47 @@ def insights_prompt(*, rollups: dict, content_types: list[str], hours: list[int]
 
 def join_lines(values: Iterable[str]) -> str:
     return "\n".join(f"- {value}" for value in values if value)
+
+
+# ---------------------------------------------------------------------------
+# Platform problems (a network or Postiz refused a post)
+# ---------------------------------------------------------------------------
+
+def failure_diagnosis_system() -> str:
+    return (
+        "You are the operations engineer for an automatic social media posting system. A network or the "
+        "scheduling service (Postiz) refused a post. You decide what the system does next, choosing only from the "
+        "responses you are given, and you reply with one JSON object only."
+    )
+
+
+def failure_diagnosis_prompt(
+    *, provider: str, message: str, error_type: str, stage: str, attempts: int, scheduled_local: str,
+    recent_same_network: list[dict], min_minutes: int, max_minutes: int,
+) -> str:
+    return "\n".join([
+        f"Network: {provider}",
+        f"When it was due: {scheduled_local}",
+        f"Where it failed: {stage}",
+        f"Error type: {error_type or 'unknown'}",
+        f"Error message, word for word: {message!r}",
+        f"Automatic retries already made for this post: {attempts}",
+        f"The same network's last results: {compact_json(recent_same_network, 1500)}",
+        "",
+        "Choose ONE response:",
+        f'- "retry_later": the message itself shows the problem is temporary (a timeout, a server error, "try '
+        f'again later", a short-lived rate limit). Give wait_minutes between {min_minutes} and {max_minutes}.',
+        '- "retry_next_day": a daily limit or allowance ran out and comes back tomorrow.',
+        '- "needs_person": the post itself was rejected (too long, wrong format, invalid title or tags, policy), '
+        "the account needs attention (login, permission, reconnect, verification, billing), the post may already "
+        "have been published, or the message does not say enough to be sure.",
+        "",
+        "Rules:",
+        "- Sending the same post again cannot fix a rejected post or an account problem. Never retry those.",
+        "- If a retry could publish the post twice, choose needs_person.",
+        "- When in doubt, choose needs_person.",
+        "- cause: one plain sentence a shop owner understands, no jargon.",
+        "- advice: for needs_person, the one thing the owner should do; otherwise an empty string.",
+        "",
+        'Reply with: {"response": "...", "wait_minutes": 0, "cause": "...", "advice": "..."}',
+    ])

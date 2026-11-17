@@ -12,6 +12,8 @@ from ..errors import SocialEngineError
 
 logger = logging.getLogger("ai_blog_server.social_engine.pipeline")
 
+_NOTIFICATIONS_REMEMBERED = 2000   # ids of Postiz notifications already shown, newest last
+
 
 async def sync_channels(store_id: str, *, with_rules: bool = True) -> dict[str, Any]:
     from ..publishers import get_publisher, server_name
@@ -124,7 +126,10 @@ async def poll_notifications(store_id: str) -> dict[str, Any]:
     sctx = await load_store_context(store_id)
     publisher = get_publisher(sctx, correlation_id=f"notifications:{store_id}")
     key = f"notifications:seen:{store_id}"
-    seen = set(await observability.get_state(key, []) or [])
+    # Kept in the order they were first seen, so the oldest are the ones dropped. (Sorting the ids dropped
+    # whichever came first alphabetically, and those were reported again on every poll.)
+    remembered = [str(i) for i in await observability.get_state(key, []) or []]
+    seen = set(remembered)
     fresh = 0
     try:
         items = await publisher.notifications(page=0)
@@ -134,9 +139,10 @@ async def poll_notifications(store_id: str) -> dict[str, Any]:
         if not item.external_id or item.external_id in seen:
             continue
         seen.add(item.external_id)
+        remembered.append(item.external_id)
         fresh += 1
         await record(store_id, "postiz", item.external_id, f"Postiz: {item.content}",
                      level="error" if item.level == "error" else "warning" if item.level == "warning" else "info",
                      stage="notification", data={"link": item.link})
-    await observability.set_state(key, sorted(seen)[-500:])
+    await observability.set_state(key, remembered[-_NOTIFICATIONS_REMEMBERED:])
     return {"new": fresh, "total": len(items)}

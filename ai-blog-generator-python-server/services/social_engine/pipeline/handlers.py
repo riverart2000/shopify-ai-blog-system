@@ -240,7 +240,23 @@ async def posts_reconcile(ctx: JobContext) -> dict:
     result = await reconcile_store(ctx.store_id, post_ids=ctx.payload.get("post_ids") or None)
     if not ctx.payload.get("post_ids"):
         result["freshness"] = await sweep_scheduled(ctx.store_id)
+        from .problems import protect_scheduled
+
+        result["protected"] = await protect_scheduled(ctx.store_id)
     return result
+
+
+@job("post.problems", lane="llm", max_attempts=3, timeout_seconds=900, backoff_base=300)
+async def post_problems(ctx: JobContext) -> dict:
+    """Decide what to do about refused posts no rule recognises (the AI model reads the error)."""
+    from .problems import handle_failures
+
+    target_ids = [str(t) for t in ctx.payload.get("target_ids") or []]
+    post_id = ctx.payload.get("post_id")
+    if post_id:
+        post = await post_store.get_post(ctx.store_id, post_id)
+        target_ids += [t["id"] for t in (post or {}).get("targets", []) if t["status"] == "failed"]
+    return await handle_failures(ctx.store_id, sorted(set(target_ids)), allow_ai=True)
 
 
 @job("postiz.webhook", lane="default", max_attempts=3, timeout_seconds=120)

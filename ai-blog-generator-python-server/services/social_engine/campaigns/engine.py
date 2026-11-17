@@ -22,6 +22,7 @@ from ..activity import record
 from ..context import StoreContext, load_store_context
 from ..errors import ConfigurationError, NotFoundError, ValidationError
 from ..jobs.queue import enqueue
+from ..scheduling.allowance import windows_for
 from ..scheduling.slots import SlotPlanner
 from .base import PlanItem, ProductFilter, RuleContext, ScheduleConfig, get_rule
 
@@ -76,7 +77,7 @@ async def build_rule_context(
         sctx.store_id, scheduled_from=ts - 2 * 86400, scheduled_to=ts + 23 * 86400,
     )
     planner = SlotPlanner(sctx.settings.schedule, channels, existing, now=now,
-                          rng=random.Random(seed if seed is not None else ts))
+                          rng=random.Random(seed if seed is not None else ts), windows=await windows_for(channels))
     schedule = ScheduleConfig.model_validate((campaign.get("config") or {}).get("schedule") or {})
     state = await observability.get_state(_state_key(str(campaign["id"])), {}) or {}
     return RuleContext(

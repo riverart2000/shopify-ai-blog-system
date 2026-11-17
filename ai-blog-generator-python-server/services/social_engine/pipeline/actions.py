@@ -16,6 +16,7 @@ from ..context import load_store_context
 from ..errors import NotFoundError, ValidationError
 from ..jobs.queue import enqueue
 from ..models import EDITABLE_POST_STATUSES, ContentType
+from ..scheduling.allowance import windows_for
 from ..scheduling.slots import SlotPlanner
 from .publish import refresh_post_status
 
@@ -241,7 +242,7 @@ async def create_manual_post(
         existing += await post_store.planned_channel_times(
             store_id, scheduled_from=now - 86400, scheduled_to=now + 22 * 86400,
         )
-        planner = SlotPlanner(sctx.settings.schedule, channels, existing)
+        planner = SlotPlanner(sctx.settings.schedule, channels, existing, windows=await windows_for(channels))
         for when, cids in planner.plan([str(c["channel_id"]) for c in channels]):
             channel_times.update({cid: int(when.timestamp()) for cid in cids})
         if not channel_times:

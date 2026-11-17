@@ -4,7 +4,9 @@ Given the posts already scheduled per channel, find a time that:
 * falls on an allowed weekday inside the posting window (store timezone),
 * keeps every channel under its daily cap (overflow rolls to the next day),
 * keeps a minimum gap from that channel's other posts,
-* prefers each network's best times, otherwise a random minute in the window.
+* prefers each network's best times, otherwise a random minute in the window,
+* keeps a network inside its platform allowance (`windows`: the hours in which
+  e.g. YouTube's shared upload allowance is known to last, see allowance.py).
 
 A single time is chosen for all channels of a post so they can be created in
 one Postiz request (one request = one `date`).
@@ -12,12 +14,13 @@ one Postiz request (one request = one `date`).
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from ..models import profile_for
 from ..settings import ScheduleSettings
+from .allowance import AllowanceWindow
 
 _GRANULARITY_MINUTES = 5
 _MAX_LOOKAHEAD_DAYS = 21
@@ -47,6 +50,7 @@ class _ChannelState:
     daily_cap: int
     min_gap_seconds: int
     times: list[int] = field(default_factory=list)
+    window: AllowanceWindow | None = None   # platform allowance: only these hours are usable
 
 
 class SlotPlanner:
@@ -58,6 +62,7 @@ class SlotPlanner:
         *,
         now: datetime | None = None,
         rng: random.Random | None = None,
+        windows: dict[str, AllowanceWindow] | None = None,
     ) -> None:
         self.schedule = schedule
         self.tz = ZoneInfo(schedule.timezone)
@@ -77,6 +82,7 @@ class SlotPlanner:
             self.channels[str(channel["channel_id"])] = _ChannelState(
                 channel_id=str(channel["channel_id"]), provider=provider,
                 daily_cap=max(0, int(cap)), min_gap_seconds=max(0, int(gap)) * 60,
+                window=(windows or {}).get(str(channel["channel_id"])),
             )
         for target in existing_targets:
             state = self.channels.get(str(target.get("channel_id")))
@@ -98,6 +104,8 @@ class SlotPlanner:
 
     def _channel_free(self, state: _ChannelState, when: datetime) -> bool:
         ts = int(when.timestamp())
+        if state.window is not None and not state.window.allows(when):
+            return False
         if self._count_on_day(state, when.astimezone(self.tz).date()) >= state.daily_cap:
             return False
         return all(abs(ts - other) >= state.min_gap_seconds for other in state.times)
@@ -199,8 +207,32 @@ class SlotPlanner:
 
         Returns [(utc_time, [channel_ids...]), ...] and reserves the times.
         Channels that cannot be placed at all are omitted.
+
+        A channel with a platform allowance never drags the other networks into
+        its hours: the others are placed first, it joins them when their time
+        suits it, and otherwise gets a time of its own inside its allowance.
         """
         remaining = [cid for cid in channel_ids if cid in self.channels]
+        limited = [cid for cid in remaining if self.channels[cid].window is not None]
+        if not limited or len(limited) == len(remaining):
+            return self._plan_group(remaining, flexible=bool(limited), **kwargs)
+        groups = self._plan_group([cid for cid in remaining if cid not in limited], **kwargs)
+        for when, cids in groups:
+            joining = [cid for cid in limited if self._channel_free(self.channels[cid], when)]
+            if joining:
+                self.reserve(joining, when)
+                cids.extend(joining)
+                limited = [cid for cid in limited if cid not in joining]
+        return groups + self._plan_group(limited, flexible=True, **kwargs)
+
+    def _plan_group(
+        self, channel_ids: list[str], *, flexible: bool = False, **kwargs,
+    ) -> list[tuple[datetime, list[str]]]:
+        """Place these channels together, splitting off the most constrained when they can't share a time.
+
+        `flexible`: a campaign's fixed time of day is dropped for a channel it would put outside its allowance.
+        """
+        remaining = list(channel_ids)
         groups: list[tuple[datetime, list[str]]] = []
         while remaining:
             when = self.next_slot(remaining, **kwargs)
@@ -212,6 +244,9 @@ class SlotPlanner:
             # Place the most constrained channel alone, then retry the rest together.
             for cid in sorted(remaining, key=lambda c: self.channels[c].daily_cap):
                 single = self.next_slot([cid], **kwargs)
+                window = kwargs.get("window")
+                if single is None and flexible and window is not None and window.fixed_time:
+                    single = self.next_slot([cid], **{**kwargs, "window": replace(window, fixed_time=None)})
                 if single is not None:
                     self.reserve([cid], single)
                     groups.append((single, [cid]))

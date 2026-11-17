@@ -40,6 +40,7 @@ async def reconcile_store(store_id: str, *, post_ids: list[str] | None = None) -
     counts = {"checked": len(targets), "published": 0, "failed": 0, "rescheduled": 0,
               "missing": 0, "uncertain_resolved": 0, "unchanged": 0}
     touched_posts: set[str] = set()
+    refused: list[str] = []
     try:
         # 1) Uncertain targets first (needs per-target lookups).
         for post_id in sorted({t["post_id"] for t in targets if t["status"] == "uncertain"}):
@@ -70,11 +71,18 @@ async def reconcile_store(store_id: str, *, post_ids: list[str] | None = None) -
                 if changed:
                     counts[changed] = counts.get(changed, 0) + 1
                     touched_posts.add(target["post_id"])
+                    if changed == "failed":
+                        refused.append(target["id"])
                 else:
                     counts["unchanged"] += 1
     finally:
         await publisher.aclose()
 
+    if refused:
+        # Known problems are answered now (e.g. wait for an allowance to reset); unknown ones go to the AI model.
+        from .problems import handle_failures
+
+        counts["problems"] = await handle_failures(store_id, refused, allow_ai=False)
     for post_id in touched_posts:
         await refresh_post_status(store_id, post_id)
     return counts

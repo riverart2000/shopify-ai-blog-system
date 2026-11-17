@@ -17,6 +17,7 @@ from db.social_engine import posts as post_store
 
 from ..activity import record
 from ..settings import load_settings
+from .allowance import windows_for
 from .slots import SlotPlanner
 
 CAPACITY_STATUSES = ("pending", "publishing", "uncertain", "draft", "scheduled", "published")
@@ -79,7 +80,7 @@ async def reslot_missed_approvals(store_id: str) -> dict[str, int]:
         ]
         if t["post_id"] not in waiting_ids
     ]
-    planner = SlotPlanner(settings.schedule, channels, existing)
+    planner = SlotPlanner(settings.schedule, channels, existing, windows=await windows_for(channels))
     moved = expired = 0
     for row in waiting:
         post = await post_store.get_post(store_id, row["id"])

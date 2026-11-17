@@ -189,6 +189,28 @@ async def cmd_reconcile(args) -> None:
     _print(await reconcile_store(await _store_id(args.store)))
 
 
+async def cmd_problems(args) -> None:
+    """What the engine has learned about platform limits; optionally handle recent failures now."""
+    from .pipeline.problems import handle_backlog, protect_scheduled
+    from .scheduling.allowance import learned_state, load_rules, rules_file
+
+    store_id = await _store_id(args.store)
+    out: dict = {}
+    if args.backlog_days:
+        out["backlog"] = await handle_backlog(store_id, days=args.backlog_days, provider=args.provider)
+    if args.protect:
+        out["protected"] = await protect_scheduled(store_id)
+    rules = load_rules()
+    out["rules_file"] = str(rules_file())
+    out["rules"] = [{"key": r.key, "networks": r.providers or "all", "response": r.response} for r in rules.rules]
+    out["allowances"] = [
+        {**row, "used_up_until": _fmt_time(row["used_up_until"]) if row["used_up_until"] else "",
+         "last_used_up_at": _fmt_time(row["last_used_up_at"]) if row["last_used_up_at"] else ""}
+        for row in await learned_state()
+    ]
+    _print(out)
+
+
 async def cmd_preview(args) -> None:
     from .creatives import render_preview
 
@@ -271,6 +293,12 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("reconcile", help="sync post status from Postiz")
     p.set_defaults(func=cmd_reconcile)
+
+    p = sub.add_parser("problems", help="platform limits learned so far; handle recent failed posts")
+    p.add_argument("--backlog-days", type=int, default=0, help="also handle posts that failed in the last N days")
+    p.add_argument("--provider", default="", help="with --backlog-days: only this network, e.g. youtube")
+    p.add_argument("--protect", action="store_true", help="also move scheduled posts out of risky times now")
+    p.set_defaults(func=cmd_problems)
 
     p = sub.add_parser("preview", help="render a template preview")
     p.add_argument("template")

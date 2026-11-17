@@ -40,6 +40,7 @@ from ..creatives.storage import file_digest, media_root, safe_segment
 from ..errors import ExternalServiceError, RateLimited, SocialEngineError, ValidationError
 from ..jobs.queue import enqueue
 from ..models import ContentType, MediaFormat
+from ..scheduling.allowance import windows_for
 from ..scheduling.slots import SlotPlanner
 
 logger = logging.getLogger("ai_blog_server.social_engine.founder")
@@ -156,7 +157,7 @@ async def _plan_times(sctx: StoreContext, channels: list[dict], *, earliest: dat
     )
     existing += await post_store.planned_channel_times(sctx.store_id, scheduled_from=now_ts - 86400,
                                                        scheduled_to=now_ts + 30 * 86400)
-    planner = SlotPlanner(sctx.settings.schedule, channels, existing)
+    planner = SlotPlanner(sctx.settings.schedule, channels, existing, windows=await windows_for(channels))
     kwargs: dict[str, Any] = {"earliest": earliest} if earliest else {}
     times: dict[str, int] = {}
     for when, cids in planner.plan([str(c["channel_id"]) for c in channels], **kwargs):

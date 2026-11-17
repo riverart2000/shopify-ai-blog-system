@@ -16,6 +16,7 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from db.social_engine import config_store
 from db.social_engine import posts as post_store
@@ -29,6 +30,7 @@ from ..errors import (
 )
 from ..jobs.queue import enqueue
 from ..models import CONTENT_TYPE_LABELS, profile_for
+from ..scheduling.allowance import windows_for
 
 logger = logging.getLogger("ai_blog_server.social_engine.pipeline")
 
@@ -167,12 +169,30 @@ async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
 
         now = int(time.time())
         mode = post.get("publish_mode") or "schedule"
+        windows = await windows_for(pending)   # is there room on the network at that time?
+        held_back: set[str] = set()
         for target in pending:
             when = int(target.get("scheduled_at") or 0)
             if mode == "now":
                 when = now
             elif when < now + _MIN_LEAD_SECONDS:
                 when = now + _MIN_LEAD_SECONDS
+            window = windows.get(target["channel_id"])
+            # "Publish now" is the owner's call unless the allowance is known to be gone for today.
+            if window and mode != "draft" and (
+                window.used_up_at(_utc(when)) or (mode != "now" and not window.allows(_utc(when)))
+            ):
+                moved = int(window.next_open(_utc(when)).timestamp())
+                zone = ZoneInfo(sctx.settings.schedule.timezone)
+                await record(
+                    store_id, "post", post_id,
+                    f"{target['provider']}: no room at {_utc(when).astimezone(zone):%a %H:%M} "
+                    f"(safe hours {window.describe(zone, _utc(moved))}); sending it "
+                    f"{_utc(moved).astimezone(zone):%a %d %b %H:%M} instead.",
+                    level="warning", stage="publish", data={"rule": window.rule_key, "from": when, "to": moved},
+                )
+                when = moved
+                held_back.add(target["id"])
             if when != target.get("scheduled_at"):
                 await post_store.update_target(target["id"], scheduled_at=when)
             target["scheduled_at"] = when
@@ -212,8 +232,10 @@ async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
                     comments=comments, settings=settings,
                     title=target.get("title", ""), link_url=target.get("link_url", ""),
                 ))
+            group_mode = "schedule" if any(t["id"] in held_back for t in group) else mode
             request = OutboundPost(
-                post_id=post_id, group=post_id, mode=mode if mode in ("schedule", "now", "draft") else "schedule",
+                post_id=post_id, group=post_id,
+                mode=group_mode if group_mode in ("schedule", "now", "draft") else "schedule",
                 targets=outbound, tags=tags, short_links=sctx.settings.postiz.short_links,
             )
             for target in group:
@@ -272,6 +294,8 @@ async def publish_post(store_id: str, post_id: str) -> dict[str, Any]:
                     raise
                 await record(store_id, "post", post_id, f"Publishing failed: {exc.message}",
                              level="error", stage="publish")
+                await enqueue("post.problems", {"post_id": post_id}, store_id=store_id, run_in=60,
+                              dedupe_key=f"problems:{post_id}", correlation_id=post_id)
                 continue
 
             by_target = {r.target_id: r for r in results}
@@ -312,3 +336,5 @@ async def mark_publish_failed(store_id: str, post_id: str, exc: BaseException) -
     await refresh_post_status(store_id, post_id)
     await record(store_id, "post", post_id, f"Publishing gave up: {error_type}: {message}",
                  level="error", stage="publish")
+    await enqueue("post.problems", {"post_id": post_id}, store_id=store_id, run_in=60,
+                  dedupe_key=f"problems:{post_id}", correlation_id=post_id)

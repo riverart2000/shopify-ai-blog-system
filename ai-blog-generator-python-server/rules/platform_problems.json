@@ -1,0 +1,52 @@
+{
+  "about": "How Social Autopilot responds when a network or Postiz refuses a post. A problem that matches a rule below gets that rule's response at once. A problem no rule knows is read by the AI model, which picks a response from the same list. Guide: docs/social-engine/platform-problems.md",
+
+  "max_auto_retries": 2,
+  "retry_max_age_days": 7,
+  "retry_spacing_minutes": 30,
+  "extra_posts_per_day": 1,
+  "leave_alone_minutes_before_posting": 20,
+
+  "never_retry": [
+    "may have already published",
+    "already been published",
+    "duplicate"
+  ],
+  "ignore_error_types": ["MissingInPostiz", "Expired"],
+
+  "ai": {
+    "enabled": true,
+    "min_retry_minutes": 15,
+    "max_retry_minutes": 720,
+    "remember_days": 30
+  },
+
+  "rules": [
+    {
+      "key": "youtube_daily_allowance",
+      "label": "YouTube's daily upload allowance (shared by everyone on the same Postiz) ran out",
+      "providers": ["youtube"],
+      "match": ["daily upload quota is exhausted"],
+      "response": "wait_for_reset",
+      "allowance": {
+        "resets_at": "00:00",
+        "timezone": "America/Los_Angeles",
+        "earliest_minutes_after_reset": 15,
+        "latest_minutes_after_reset": 600,
+        "floor_minutes_after_reset": 180,
+        "ceiling_minutes_after_reset": 780,
+        "safety_margin_minutes": 60,
+        "relax_after_clean_days": 7,
+        "relax_step_minutes": 30
+      }
+    },
+    {
+      "key": "temporary_platform_error",
+      "label": "The network had a temporary problem",
+      "providers": [],
+      "match": ["try again later", "temporarily unavailable"],
+      "response": "retry_later",
+      "retry_after_minutes": 60
+    }
+  ]
+}
