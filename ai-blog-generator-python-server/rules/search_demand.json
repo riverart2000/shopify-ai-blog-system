@@ -1,0 +1,40 @@
+{
+  "about": "How real search phrases from Google Search Console are used: existing blog posts that nearly rank are refreshed for the phrase people use, and the blog title generator is told which real phrases have no good page yet. Guide: docs/seo-growth/search-demand.md",
+
+  "enabled": true,
+  "period_days": 90,
+  "run_every_days": 7,
+  "model_setting": "title_gen_model_id",
+
+  "phrases": {
+    "min_words": 2,
+    "max_words": 8,
+    "ignore_containing": ["bioluxe", "bio luxe"],
+    "ask_model_if_real": true,
+    "model_batch_size": 40,
+    "remember_days": 60
+  },
+
+  "refresh": {
+    "enabled": true,
+    "position_from": 3,
+    "position_to": 20,
+    "min_impressions": 50,
+    "posts_per_run": 3,
+    "model_attempts": 3,
+    "wait_days_before_touching_again": 42,
+    "seo_title_max_chars": 60,
+    "meta_description_max_chars": 155,
+    "answer_min_words": 50,
+    "answer_max_words": 130,
+    "article_chars_for_model": 7000
+  },
+
+  "new_posts": {
+    "enabled": true,
+    "no_page_within_position": 20,
+    "min_impressions": 20,
+    "same_topic_word_overlap": 0.6,
+    "max_phrases_in_prompt": 12
+  }
+}

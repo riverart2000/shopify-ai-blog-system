@@ -112,7 +112,10 @@ async def fetch_titles(store_id: str) -> dict:
             "error": "No title-generation prompt configured.",
         }
 
-    full_prompt = f"{prompt_text}{_JSON_FORMAT_INSTRUCTION}"
+    from services.seo_growth.search_demand import title_prompt_addition
+
+    # Real searches with no good page yet (Search Console); "" when not connected or switched off.
+    full_prompt = f"{prompt_text}{await title_prompt_addition(store_id)}{_JSON_FORMAT_INSTRUCTION}"
 
     try:
         model = providers.ModelRecord.from_dict(model_row)
