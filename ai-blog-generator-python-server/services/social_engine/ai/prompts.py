@@ -760,7 +760,7 @@ def failure_diagnosis_system() -> str:
 
 def failure_diagnosis_prompt(
     *, provider: str, message: str, error_type: str, stage: str, attempts: int, scheduled_local: str,
-    recent_same_network: list[dict], min_minutes: int, max_minutes: int,
+    recent_same_network: list[dict], min_minutes: int, max_minutes: int, content: dict, can_fix: bool,
 ) -> str:
     return "\n".join([
         f"Network: {provider}",
@@ -770,21 +770,66 @@ def failure_diagnosis_prompt(
         f"Error message, word for word: {message!r}",
         f"Automatic retries already made for this post: {attempts}",
         f"The same network's last results: {compact_json(recent_same_network, 1500)}",
+        f"The post that was refused: {compact_json(content, 3500)}",
         "",
         "Choose ONE response:",
         f'- "retry_later": the message itself shows the problem is temporary (a timeout, a server error, "try '
         f'again later", a short-lived rate limit). Give wait_minutes between {min_minutes} and {max_minutes}.',
         '- "retry_next_day": a daily limit or allowance ran out and comes back tomorrow.',
-        '- "needs_person": the post itself was rejected (too long, wrong format, invalid title or tags, policy), '
-        "the account needs attention (login, permission, reconnect, verification, billing), the post may already "
-        "have been published, or the message does not say enough to be sure.",
+        *([
+            '- "fix_post": the message shows the post\'s own TEXT was refused (caption or title too long, too many '
+            "hashtags or mentions, a word, character or link the network does not accept, a missing or invalid "
+            "title) and changing that text would get it accepted. Say in `fix` exactly what to change, as an "
+            "instruction to the writer who will rewrite it.",
+        ] if can_fix else []),
+        '- "needs_person": the picture or video was rejected (size, length, format, shape), the post breaks a '
+        "policy, the account needs attention (login, permission, reconnect, verification, billing), the post "
+        "may already have been published, or the message does not say enough to be sure.",
         "",
         "Rules:",
-        "- Sending the same post again cannot fix a rejected post or an account problem. Never retry those.",
+        "- Sending the same post again unchanged cannot fix a rejected post or an account problem. Never retry those.",
+        "- Only the text can be changed automatically. A problem with the picture or video is needs_person.",
         "- If a retry could publish the post twice, choose needs_person.",
         "- When in doubt, choose needs_person.",
         "- cause: one plain sentence a shop owner understands, no jargon.",
         "- advice: for needs_person, the one thing the owner should do; otherwise an empty string.",
+        "- fix: for fix_post, what to change in the text; otherwise an empty string.",
         "",
-        'Reply with: {"response": "...", "wait_minutes": 0, "cause": "...", "advice": "..."}',
+        'Reply with: {"response": "...", "wait_minutes": 0, "cause": "...", "advice": "...", "fix": "..."}',
+    ])
+
+
+def post_repair_system() -> str:
+    return (
+        "You are the copy editor for an automatic social media posting system. A network refused a post because "
+        "of its text. You make the smallest change that gets it accepted and reply with one JSON object only."
+    )
+
+
+def post_repair_prompt(
+    *, network: str, error: str, instruction: str, caption: str, title: str, length_now: int, limit: int,
+    title_max: int, style: str,
+) -> str:
+    return "\n".join([
+        f"Network: {network}",
+        f"Why it was refused, word for word: {error!r}",
+        f"What to change: {instruction}",
+        f"Caption limit: {limit} characters (the refused caption counts {length_now}).",
+        *([f"Title limit: {title_max} characters."] if title_max > 0 else []),
+        *([f"House style for this network: {style}"] if style else []),
+        "",
+        "The refused caption, between the lines:",
+        "-----",
+        caption,
+        "-----",
+        *([f"The refused title: {title!r}"] if title_max > 0 else []),
+        "",
+        "Rules:",
+        "- Change only what the refusal is about. Keep the meaning, the tone, the language and the layout.",
+        "- Keep every link exactly as it is, character for character.",
+        "- Add no new facts, claims, prices, offers or hashtags.",
+        "- Stay inside the limits above.",
+        "",
+        'Reply with: {"caption": "the corrected caption"'
+        + (', "title": "the corrected title"}' if title_max > 0 else "}"),
     ])

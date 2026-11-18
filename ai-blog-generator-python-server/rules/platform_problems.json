@@ -1,5 +1,5 @@
 {
-  "about": "How Social Autopilot responds when a network or Postiz refuses a post. A problem that matches a rule below gets that rule's response at once. A problem no rule knows is read by the AI model, which picks a response from the same list. Guide: docs/social-engine/platform-problems.md",
+  "about": "How Social Autopilot responds when a network or Postiz refuses a post. A problem that matches a rule below gets that rule's response at once (first match wins). A problem no rule knows is read by the AI model, which picks a response from the same list. Guide: docs/social-engine/platform-problems.md",
 
   "max_auto_retries": 2,
   "retry_max_age_days": 7,
@@ -19,6 +19,13 @@
     "min_retry_minutes": 15,
     "max_retry_minutes": 720,
     "remember_days": 30
+  },
+
+  "fix": {
+    "max_auto_fixes": 2,
+    "resend_after_minutes": 10,
+    "shorten_step_percent": 10,
+    "ai_rewrite": true
   },
 
   "rules": [
@@ -47,6 +54,23 @@
       "match": ["try again later", "temporarily unavailable"],
       "response": "retry_later",
       "retry_after_minutes": 60
+    },
+    {
+      "key": "text_too_long",
+      "label": "Its text was too long for the network",
+      "providers": [],
+      "match": ["post is too long"],
+      "response": "fix_post",
+      "fix": "shorten"
+    },
+    {
+      "key": "no_reason_given",
+      "label": "The network refused it without saying why",
+      "providers": [],
+      "match": ["no message from postiz", "unknown error"],
+      "response": "retry_later",
+      "retry_after_minutes": 60,
+      "max_retries": 1
     }
   ]
 }

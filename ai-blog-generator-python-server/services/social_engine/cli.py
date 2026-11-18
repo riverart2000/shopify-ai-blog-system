@@ -202,7 +202,10 @@ async def cmd_problems(args) -> None:
         out["protected"] = await protect_scheduled(store_id)
     rules = load_rules()
     out["rules_file"] = str(rules_file())
-    out["rules"] = [{"key": r.key, "networks": r.providers or "all", "response": r.response} for r in rules.rules]
+    out["rules"] = [{"key": r.key, "networks": r.providers or "all", "response": r.response,
+                     **({"fix": r.fix} if r.fix else {}),
+                     **({"max_retries": r.max_retries} if r.max_retries is not None else {})} for r in rules.rules]
+    out["fix"] = rules.fix.model_dump()
     out["allowances"] = [
         {**row, "used_up_until": _fmt_time(row["used_up_until"]) if row["used_up_until"] else "",
          "last_used_up_at": _fmt_time(row["last_used_up_at"]) if row["last_used_up_at"] else ""}

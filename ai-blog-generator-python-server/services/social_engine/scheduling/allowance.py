@@ -39,7 +39,7 @@ RULES_FILE_ENV = "SOCIAL_PROBLEM_RULES_FILE"   # tests point this at their own c
 _STATE_PREFIX = "allowance:"
 _MAIN_SERVER = "main"
 
-Response = Literal["wait_for_reset", "retry_later", "retry_next_day", "needs_person"]
+Response = Literal["wait_for_reset", "retry_later", "retry_next_day", "fix_post", "needs_person"]
 
 
 class _Strict(BaseModel):
@@ -78,6 +78,8 @@ class ProblemRule(_Strict):
     match: list[str] = Field(min_length=1)  # any of these inside the error message (case ignored)
     response: Response
     retry_after_minutes: int | None = Field(None, ge=1, le=10080)
+    max_retries: int | None = Field(None, ge=0, le=10)   # this problem's own cap; absent = max_auto_retries
+    fix: Literal["shorten"] | None = None                # what "fix_post" changes before sending again
     allowance: Allowance | None = None
 
     @model_validator(mode="after")
@@ -86,6 +88,8 @@ class ProblemRule(_Strict):
             raise ValueError(f"Rule '{self.key}' waits for a reset, so it needs an 'allowance'.")
         if self.response == "retry_later" and self.retry_after_minutes is None:
             raise ValueError(f"Rule '{self.key}' retries later, so it needs 'retry_after_minutes'.")
+        if self.response == "fix_post" and self.fix is None:
+            raise ValueError(f"Rule '{self.key}' fixes the post, so it needs 'fix'.")
         return self
 
     def covers(self, provider: str) -> bool:
@@ -103,6 +107,14 @@ class AIDiagnosisRules(_Strict):
     remember_days: int = Field(ge=1, le=365)
 
 
+class FixRules(_Strict):
+    """How a refused post is changed before it is sent again."""
+    max_auto_fixes: int = Field(ge=0, le=10)             # per channel version
+    resend_after_minutes: int = Field(ge=1, le=1440)     # wait before a fixed (or innocent) version goes again
+    shorten_step_percent: int = Field(ge=1, le=90)       # how much shorter when our count already fits
+    ai_rewrite: bool                                     # may the model rewrite text the network refused?
+
+
 class ProblemRules(_Strict):
     about: str = ""
     max_auto_retries: int = Field(ge=0, le=10)
@@ -113,6 +125,7 @@ class ProblemRules(_Strict):
     never_retry: list[str]
     ignore_error_types: list[str]
     ai: AIDiagnosisRules
+    fix: FixRules
     rules: list[ProblemRule]
 
     def match(self, provider: str, message: str) -> ProblemRule | None:

@@ -7,15 +7,21 @@
    it and send the post again after the reset);
 2. a message no rule knows is read by the AI model (`ai/diagnose.py`), which
    picks from the same responses; its answer is remembered for that message;
-3. anything that can't be fixed by sending the post again is left failed with
-   a plain explanation of what the owner should do.
+3. a post whose own text was refused ("fix_post") is changed before it goes
+   again: shortened without the model for a known "too long", otherwise
+   rewritten by the model and checked (`ai/repair.py`);
+4. anything else is left failed with a plain explanation of what the owner
+   should do.
+
+Postiz refuses a whole request when one channel version in it is wrong. The
+error names that network; the other versions are sent again as they were.
 
 `protect_scheduled` is the look-ahead: posts already waiting in Postiz at a
 time their network is now known to refuse are moved before they fail.
 
-Automatic retries are capped (`max_auto_retries`), never made for a post that
-may already be live (`never_retry`), and never for a post older than
-`retry_max_age_days`.
+Automatic retries and fixes are capped (`max_auto_retries`, a rule's own
+`max_retries`, `fix.max_auto_fixes`), never made for a post that may already
+be live (`never_retry`), and never for a post older than `retry_max_age_days`.
 """
 from __future__ import annotations
 
@@ -32,8 +38,9 @@ from db.social_engine import posts as post_store
 
 from ..activity import record
 from ..context import load_store_context
-from ..errors import SocialEngineError, describe
+from ..errors import SocialEngineError, ValidationError, describe
 from ..jobs.queue import enqueue
+from ..models import profile_for
 from ..scheduling.allowance import (
     AllowanceWindow, ProblemRule, ProblemRules, load_rules, note_used_up, relax_windows, window_for, windows_for,
 )
@@ -43,12 +50,14 @@ from ..scheduling.slots import SlotPlanner
 logger = logging.getLogger("ai_blog_server.social_engine.pipeline")
 
 RETRIES_KEY = "problem_retries"   # post options: target id → automatic retries already made
+FIXES_KEY = "problem_fixes"       # post options: target id → automatic changes already made to its text
 NOTED_KEY = "problem_noted"       # post options: problems already explained to the owner (said once)
 _DIAGNOSIS_PREFIX = "problem:diagnosis:"
 _EXTRAS_PREFIX = "problem:extras:"   # engine state: times of the posts added to a channel's days by a retry
 _STEP_SECONDS = 300
 _SEARCH_DAYS = 14
 _RETRY_RESPONSES = ("wait_for_reset", "retry_later", "retry_next_day")
+_BLAMED = re.compile(r'"provider"\s*:\s*"([^"]+)"')   # Postiz names the network whose version it refused
 
 
 def _utc(ts: int) -> datetime:
@@ -62,6 +71,11 @@ def _local(ts: int, zone: ZoneInfo) -> str:
 def _hhmm(value: str) -> tuple[int, int]:
     hours, minutes = value.split(":", 1)
     return int(hours), int(minutes)
+
+
+def _blamed_provider(message: str) -> str:
+    found = _BLAMED.search(message or "")
+    return found.group(1).strip().lower() if found else ""
 
 
 def _message_key(provider: str, message: str) -> str:
@@ -164,7 +178,7 @@ async def _retry_start(
 # ---------------------------------------------------------------------------
 
 async def _diagnose(sctx, rules: ProblemRules, target: dict, made: int, *, allow_ai: bool) -> dict | None:
-    """{"response", "wait_minutes", "cause", "advice"} from memory or the model; None = not decided yet."""
+    """{"response", "wait_minutes", "cause", "advice", "fix"} from memory or the model; None = not decided yet."""
     key = _DIAGNOSIS_PREFIX + _message_key(target["provider"], target.get("error_message") or "")
     remembered, saved_at = await observability.get_state_with_time(key)
     if isinstance(remembered, dict) and saved_at and time.time() - saved_at < rules.ai.remember_days * 86400:
@@ -183,6 +197,14 @@ async def _diagnose(sctx, rules: ProblemRules, target: dict, made: int, *, allow
          **({"error": (r.get("error_message") or "")[:160]} if r["status"] == "failed" else {})}
         for r in recent[-8:] if r.get("scheduled_at") and r["id"] != target["id"]
     ]
+    limit, measure = _text_limit(target, await config_store.get_channel(sctx.store_id, target["channel_id"]))
+    profile = profile_for(target["provider"])
+    kinds = sorted({a["kind"] for a in await post_store.get_assets(target.get("media_ids") or [])})
+    content = {
+        "caption": target.get("caption") or "", "caption_length": measure((target.get("caption") or "").strip()),
+        "caption_limit": limit, "title": target.get("title") or "", "title_limit": profile.title_max,
+        "first_comment": (target.get("first_comment") or "")[:300], "media": kinds, "format": target.get("format") or "",
+    }
     diagnosis = await diagnose_failure(
         sctx, provider=target["provider"], message=target.get("error_message") or "",
         error_type=target.get("error_type") or "",
@@ -190,7 +212,7 @@ async def _diagnose(sctx, rules: ProblemRules, target: dict, made: int, *, allow
         else "Postiz refused it when it was sent for scheduling",
         attempts=made, scheduled_local=_local(int(target.get("scheduled_at") or now), zone),
         recent_same_network=history, min_minutes=rules.ai.min_retry_minutes, max_minutes=rules.ai.max_retry_minutes,
-        subject_id=target["id"],
+        content=content, can_fix=rules.fix.ai_rewrite, subject_id=target["id"],
     )
     answer = diagnosis.model_dump()
     await observability.set_state(key, answer)
@@ -211,7 +233,10 @@ async def _note_once(store_id: str, post: dict, note_key: str, message: str, *, 
     await record(store_id, "post", post["id"], message, level=level, stage="problem")
 
 
-async def _requeue(store_id: str, post: dict, target: dict, when: int, *, from_status: str, made: int | None) -> bool:
+async def _requeue(store_id: str, post: dict, target: dict, when: int, *, from_status: str,
+                   count: tuple[str, int] | None) -> bool:
+    """Queue the channel version again for `when`. `count` = (options key, new number) for a retry or a fix
+    after a failure; None for a protective move, which is neither."""
     moved = await post_store.transition_target(
         target["id"], from_statuses=(from_status,), to_status="pending", scheduled_at=int(when),
         error_type="", error_message="", external_id="", external_group="", release_url="",
@@ -222,13 +247,53 @@ async def _requeue(store_id: str, post: dict, target: dict, when: int, *, from_s
     options = dict(fresh.get("options") or {})
     options["channel_times"] = {**(options.get("channel_times") or {}), target["channel_id"]: int(when)}
     fields: dict[str, Any] = {"options": options, "publish_mode": "schedule"}
-    if made is not None:     # a retry after a failure (a protective move is not a retry)
-        options[RETRIES_KEY] = {**(options.get(RETRIES_KEY) or {}), target["id"]: made + 1}
+    if count is not None:
+        options[count[0]] = {**(options.get(count[0]) or {}), target["id"]: count[1]}
         fields.update(status="approved", error_type="", error_message="")
     await post_store.update_post(store_id, post["id"], **fields)
     await enqueue("post.publish", {"post_id": post["id"]}, store_id=store_id, run_in=30,
                   dedupe_key=f"publish-problem:{target['id']}:{int(when)}", correlation_id=post["id"])
     return True
+
+
+def _text_limit(target: dict, channel: dict | None):
+    """(caption limit, how Postiz counts it) for this channel version."""
+    from ..ai.text import measure_for
+
+    limit = profile_for(target["provider"]).max_length
+    own = int((channel or {}).get("max_length") or 0)
+    return (min(limit, own) if own > 0 else limit), measure_for(target["provider"])
+
+
+async def _fix_text(sctx, rules: ProblemRules, target: dict, channel: dict, *, kind: str, instruction: str,
+                    ) -> tuple[dict[str, str], str] | str:
+    """The changed fields and a few words on what was done, or the reason nothing could be changed."""
+    from ..ai import repair
+
+    limit, measure = _text_limit(target, channel)
+    caption = str(target.get("caption") or "")
+    before = measure(caption.strip())
+    if kind == "shorten":
+        goal = repair.shorter_goal(caption, limit, measure, rules.fix.shorten_step_percent)
+        shorter = repair.shorten_caption(caption, goal, measure)
+        if not shorter or shorter == caption.strip():
+            return "its text could not be made any shorter"
+        return {"caption": shorter}, f"Shortened its text from {before} to {measure(shorter)} characters"
+    if not rules.fix.ai_rewrite:
+        return "rewriting text automatically is switched off"
+    try:
+        draft = await repair.rewrite_refused(
+            sctx, target=target, limit=limit, profile=profile_for(target["provider"]), measure=measure,
+            error=str(target.get("error_message") or ""), instruction=instruction,
+        )
+    except ValidationError as exc:     # the model had no version that may go out
+        return f"no corrected version passed the checks ({exc.message[:200]})"
+    changed = {"caption": draft.caption}
+    done = f"Rewrote its text ({before} → {measure(draft.caption)} characters)"
+    if draft.title != (target.get("title") or ""):
+        changed["title"] = draft.title
+        done += " and title"
+    return changed, done
 
 
 async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool = True) -> dict[str, Any]:
@@ -257,10 +322,16 @@ async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool 
             "Check the account before posting it again.", level="error")
         return {"response": "needs_person", "reason": "may already be live"}
 
-    rule: ProblemRule | None = rules.match(provider, message)
+    blamed = _blamed_provider(message)
+    innocent = bool(blamed) and blamed != provider.strip().lower()
+    rule: ProblemRule | None = None if innocent else rules.match(provider, message)
     window: AllowanceWindow | None = await window_for(provider, target["channel_id"])
-    learned = ""
-    if rule is not None:
+    learned = fix_kind = instruction = ""
+    if innocent:    # the request was refused because of another network's version
+        response, wait_minutes, advice = "retry_later", rules.fix.resend_after_minutes, ""
+        cause = f"Postiz refused the whole request because of the {blamed} version; this one was fine"
+    elif rule is not None:
+        fix_kind = rule.fix or ""
         response, wait_minutes, cause, advice = rule.response, int(rule.retry_after_minutes or 0), rule.label, ""
         if rule.response == "wait_for_reset":
             failed_at = int(target.get("last_synced_at") or target.get("scheduled_at") or now)
@@ -277,8 +348,12 @@ async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool 
         response = str(answer.get("response") or "needs_person")
         wait_minutes = int(answer.get("wait_minutes") or 0)
         cause, advice = str(answer.get("cause") or ""), str(answer.get("advice") or "")
+        instruction = str(answer.get("fix") or "")
+        if response == "fix_post" and not allow_ai:
+            return {"response": "undecided"}      # the rewrite needs the model: the post.problems job does it
 
-    if response not in _RETRY_RESPONSES:
+    key = rule.key if rule else ("innocent" if innocent else "ai")
+    if response not in (*_RETRY_RESPONSES, "fix_post"):
         await _note_once(store_id, post, note_key,
                          f"{provider} post needs you: {cause}{(' ' + advice) if advice else ''}", level="error")
         return {"response": "needs_person", "cause": cause, "advice": advice}
@@ -288,28 +363,58 @@ async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool 
                          f"{provider}: {cause}. The post is more than {rules.retry_max_age_days} days old, "
                          f"so it was not sent again.{learned}", level="warning")
         return {"response": "too_old", "cause": cause}
-    if made >= rules.max_auto_retries:
+    channel = await config_store.get_channel(store_id, target["channel_id"])
+    if not channel or not channel.get("enabled") or channel.get("disabled") or channel.get("missing_at"):
+        return {"response": "skipped", "reason": "channel is not connected or switched off"}
+
+    if response == "fix_post":
+        fixes = int(((post.get("options") or {}).get(FIXES_KEY) or {}).get(target_id) or 0)
+        if fixes >= rules.fix.max_auto_fixes:
+            await _note_once(store_id, post, note_key + ":gave_up",
+                             f"{provider} post needs you: {cause}, and it was refused again after {fixes} automatic "
+                             f"fix{'' if fixes == 1 else 'es'}.", level="error")
+            return {"response": "needs_person", "cause": cause, "reason": "fixes used up"}
+        fixed = await _fix_text(sctx, rules, target, channel, kind=fix_kind, instruction=instruction)
+        if isinstance(fixed, str):
+            await _note_once(store_id, post, note_key + ":unfixable",
+                             f"{provider} post needs you: {cause}. It was not fixed automatically: {fixed}."
+                             f"{(' ' + instruction) if instruction else ''}", level="error")
+            return {"response": "needs_person", "cause": cause, "reason": fixed}
+        changed, done = fixed
+        was = {name: target.get(name) or "" for name in changed}
+        await post_store.update_target(target_id, **changed)
+        when = await free_moment(store_id, channel, _utc(now + rules.fix.resend_after_minutes * 60), window=window,
+                                 rules=rules, settings=sctx.settings)
+        if not await _requeue(store_id, post, target, when, from_status="failed", count=(FIXES_KEY, fixes + 1)):
+            await post_store.update_target(target_id, **was)
+            return {"response": "skipped", "reason": "changed meanwhile"}
+        await record(
+            store_id, "post", post["id"],
+            f"{provider}: {cause}. {done}; sending it again {_local(when, zone)} (automatic fix {fixes + 1} of "
+            f"{rules.fix.max_auto_fixes}).",
+            level="warning", stage="problem",
+            data={"rule": key, "response": response, "retry_at": when, "before": was, "after": changed},
+        )
+        return {"response": response, "retry_at": when, "rule": key, "cause": cause, "changed": sorted(changed)}
+
+    cap = rule.max_retries if rule is not None and rule.max_retries is not None else rules.max_auto_retries
+    if made >= cap:
         await _note_once(store_id, post, note_key + ":gave_up",
                          f"{provider} post needs you: {cause}, and it failed again after {made} automatic "
                          f"retr{'y' if made == 1 else 'ies'}.{learned}", level="error")
         return {"response": "needs_person", "cause": cause, "reason": "retries used up"}
 
-    channel = await config_store.get_channel(store_id, target["channel_id"])
-    if not channel or not channel.get("enabled") or channel.get("disabled") or channel.get("missing_at"):
-        return {"response": "skipped", "reason": "channel is not connected or switched off"}
     start = await _retry_start(response, now=now, wait_minutes=wait_minutes, window=window,
                                schedule=sctx.settings.schedule)
     when = await free_moment(store_id, channel, start, window=window, rules=rules, settings=sctx.settings)
-    if not await _requeue(store_id, post, target, when, from_status="failed", made=made):
+    if not await _requeue(store_id, post, target, when, from_status="failed", count=(RETRIES_KEY, made + 1)):
         return {"response": "skipped", "reason": "changed meanwhile"}
     await record(
         store_id, "post", post["id"],
-        f"{provider}: {cause}. Sending it again {_local(when, zone)} (automatic retry {made + 1} of "
-        f"{rules.max_auto_retries}).{learned}",
-        level="warning", stage="problem",
-        data={"rule": rule.key if rule else "ai", "response": response, "retry_at": when},
+        f"{provider}: {cause}. Sending it again {_local(when, zone)} (automatic retry {made + 1} of {cap}).{learned}",
+        level="warning", stage="problem", data={"rule": key, "response": response, "retry_at": when},
     )
-    return {"response": response, "retry_at": when, "rule": rule.key if rule else "ai", "cause": cause}
+    return {"response": response, "retry_at": when, "rule": key, "cause": cause}
 
 
 async def handle_failures(store_id: str, target_ids: list[str], *, allow_ai: bool = True) -> dict[str, Any]:
@@ -410,7 +515,7 @@ async def protect_scheduled(store_id: str) -> dict[str, Any]:
                              level="warning", stage="problem")
                 continue
             planner.reserve([channel_id], _utc(when))
-            if not await _requeue(store_id, post, target, when, from_status="scheduled", made=None):
+            if not await _requeue(store_id, post, target, when, from_status="scheduled", count=None):
                 continue
             moved += 1
             await record(
