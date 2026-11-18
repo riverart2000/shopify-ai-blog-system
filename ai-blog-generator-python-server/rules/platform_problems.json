@@ -25,6 +25,8 @@
     "max_auto_fixes": 2,
     "resend_after_minutes": 10,
     "shorten_step_percent": 10,
+    "strip_markup": true,
+    "clean_scheduled_markup_for": ["x"],
     "ai_rewrite": true
   },
 

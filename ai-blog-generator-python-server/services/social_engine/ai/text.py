@@ -194,6 +194,29 @@ def strip_html(text: str) -> str:
     return tidy(html.unescape(value))
 
 
+_MARKUP = re.compile(r"</?(?:p|br|div|span|strong|em|b|i|u|a|ul|ol|li|h[1-6])\b[^>]*>", re.I)
+_LIST_START = re.compile(r"<\s*(?:ul|ol)\b[^>]*>", re.I)
+_PARAGRAPH_END = re.compile(r"<\s*/(?:p|div|h[1-6]|ul|ol)\s*>", re.I)
+
+
+def has_markup(text: str) -> bool:
+    """True when the text carries HTML tags a writer left in (a caption is plain text)."""
+    return bool(_MARKUP.search(text or ""))
+
+
+def plain_from_markup(text: str) -> str:
+    """A caption a writer returned as HTML, as plain text: paragraphs become blank lines, breaks and list items
+    new lines, other tags go, entities (&amp;) are decoded. Text without tags comes back untouched."""
+    value = str(text or "")
+    if not has_markup(value):
+        return value
+    value = _PARAGRAPH_END.sub("\n\n", value)
+    value = _LIST_START.sub("\n", value)
+    value = _HTML_BREAK.sub("\n", value)
+    value = _MARKUP.sub("", value)
+    return tidy(html.unescape(value))
+
+
 def strip_urls(text: str) -> str:
     return tidy(URL_RE.sub("", text or ""))
 

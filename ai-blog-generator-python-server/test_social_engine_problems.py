@@ -32,7 +32,8 @@ RULES = {
     "never_retry": ["may have already published"],
     "ignore_error_types": ["MissingInPostiz"],
     "ai": {"enabled": True, "min_retry_minutes": 15, "max_retry_minutes": 720, "remember_days": 30},
-    "fix": {"max_auto_fixes": 2, "resend_after_minutes": 10, "shorten_step_percent": 10, "ai_rewrite": True},
+    "fix": {"max_auto_fixes": 2, "resend_after_minutes": 10, "shorten_step_percent": 10, "strip_markup": True, "clean_scheduled_markup_for": ["x"],
+            "ai_rewrite": True},
     "rules": [
         {
             "key": "youtube_daily_allowance", "label": "YouTube's daily upload allowance ran out",
@@ -532,3 +533,67 @@ def test_diagnosis_only_fixes_when_offered_and_told_what_to_change():
     from services.social_engine.ai import diagnose
 
     assert diagnose.Diagnosis(response="fix_post", cause="Too many tags", fix=" Remove  five ").fix == "Remove five"
+
+
+# ------------------------------------------------------------------ HTML tags left in a caption
+
+TAGGED = "<p>A simple addition to your routine. 👣</p><p>Soft &amp; adjustable.</p>\n\nShop Now: https://shop.example/p\n\n#FootCare"
+
+
+def test_a_writer_answering_in_html_gives_plain_text():
+    from services.social_engine.ai.captions import ChannelDraft
+    from services.social_engine.ai.text import plain_from_markup
+
+    assert ChannelDraft(caption=TAGGED).caption == (
+        "A simple addition to your routine. 👣\n\nSoft & adjustable.\n\nShop Now: https://shop.example/p\n\n#FootCare")
+    assert plain_from_markup("Under 5 mins <3 & easy") == "Under 5 mins <3 & easy"      # no tags: untouched
+    assert plain_from_markup("One<br>Two<ul><li>a</li><li>b</li></ul>") == "One\nTwo\na\nb"   # list after a line
+
+
+@pytest.mark.asyncio
+async def test_a_post_refused_without_a_reason_is_cleaned_of_tags_instead_of_sent_again_as_it_was(se_db):
+    await _channels(se_db)
+    post_id, target_id = await _failed(se_db, provider="x", channel="x", caption=TAGGED,
+                                       message="The platform rejected this post (no message from Postiz).")
+    outcome = await problems.handle_failed_target(se_db, target_id, allow_ai=False)
+    assert outcome["response"] == "fix_post" and outcome["rule"] == "markup" and outcome["changed"] == ["caption"]
+    target = await post_store.get_target(target_id)
+    assert target["status"] == "pending" and "<p>" not in target["caption"] and "Soft & adjustable." in target["caption"]
+    assert "https://shop.example/p" in target["caption"]
+
+    # The allowance rule still wins: a quota refusal is not a text problem.
+    _, yt = await _failed(se_db, caption=TAGGED)
+    assert (await problems.handle_failed_target(se_db, yt))["response"] == "wait_for_reset"
+
+
+@pytest.mark.asyncio
+async def test_waiting_x_posts_with_tags_are_cleaned_before_they_fail(se_db, monkeypatch):
+    from services.social_engine import publishers
+
+    await _channels(se_db)
+    when = int(time.time()) + 6 * 3600
+    post_id, _ = await post_store.create_post(se_db, {
+        "content_type": "single_product", "product_ids": [], "status": "scheduled", "scheduled_at": when,
+        "options": {"channel_ids": ["x", "fb"]},
+    })
+    ids = await post_store.replace_targets(se_db, post_id, [
+        {"channel_id": "x", "provider": "x", "caption": TAGGED, "scheduled_at": when},
+        {"channel_id": "fb", "provider": "facebook", "caption": TAGGED, "scheduled_at": when},
+    ])
+    for target_id in ids:
+        await post_store.update_target(target_id, status="scheduled", external_id=f"ext-{target_id}")
+    deleted = []
+
+    class Publisher:
+        async def delete_post(self, external_id):
+            deleted.append(external_id)
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(publishers, "get_publisher", lambda *a, **k: Publisher())
+    result = await problems.protect_scheduled(se_db)
+    assert result["cleaned"] == 1 and deleted == [f"ext-{ids[0]}"]
+    x, fb = await post_store.get_target(ids[0]), await post_store.get_target(ids[1])
+    assert x["status"] == "pending" and "<p>" not in x["caption"] and x["scheduled_at"] == when
+    assert fb["status"] == "scheduled" and fb["caption"] == TAGGED            # only the networks named in the rules

@@ -112,6 +112,8 @@ class FixRules(_Strict):
     max_auto_fixes: int = Field(ge=0, le=10)             # per channel version
     resend_after_minutes: int = Field(ge=1, le=1440)     # wait before a fixed (or innocent) version goes again
     shorten_step_percent: int = Field(ge=1, le=90)       # how much shorter when our count already fits
+    strip_markup: bool                                   # take HTML tags out of a refused post's text, whatever the error
+    clean_scheduled_markup_for: list[str]                # networks whose waiting posts are cleaned of tags before they fail
     ai_rewrite: bool                                     # may the model rewrite text the network refused?
 
 

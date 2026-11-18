@@ -40,6 +40,11 @@ Limits on every automatic retry:
 
 Only text is changed, and only on the channel version that was refused.
 
+- **HTML tags left in the text** (no model involved): a caption writer sometimes answers in HTML
+  (`<p>…</p>`). X refuses such a post without giving a reason. The tags are taken out and the post is sent
+  again, whatever the error message says (`fix.strip_markup`). Posts already waiting in Postiz for the
+  networks in `fix.clean_scheduled_markup_for` are cleaned before they fail. New captions are now stored
+  as plain text, so this only matters for posts written earlier.
 - **Too long** (rule `text_too_long`, no model involved): the wording before the link is cut at a sentence
   or word end. The link and signature stay; hashtags stay when there is room. When our own count said the
   text fitted and the network still refused it, the text is cut to `fix.shorten_step_percent` under what

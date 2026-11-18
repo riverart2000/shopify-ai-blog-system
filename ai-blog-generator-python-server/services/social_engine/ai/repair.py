@@ -1,10 +1,12 @@
 """Change a refused post's text so the network accepts it.
 
-Two repairs, both for one channel version (the others are not touched):
+Three repairs, each for one channel version (the others are not touched):
 
 * `shorten_caption` — no model involved: the wording before the link is cut at
   a sentence or word end; the link, the signature and (when there is room) the
   hashtags stay as they were.
+* `without_markup` — no model involved: HTML tags a writer left in a caption
+  are taken out.
 * `rewrite_refused` — the model rewrites the caption and title from the
   diagnosis ("what to change"). Its answer is only used when it fits the
   network's limits, still carries every link, differs from what was refused
@@ -25,7 +27,7 @@ from . import prompts
 from .base import LLMRequest
 from .guard import claim_issues
 from .llm import get_router
-from .text import URL_RE, find_terms, trim_to_limit, truncate_words
+from .text import URL_RE, find_terms, has_markup, plain_from_markup, trim_to_limit, truncate_words
 
 _PARAGRAPHS = re.compile(r"\n\s*\n")
 _MIN_BODY = 40      # the same floor the caption writer keeps for the wording (captions.assemble)
@@ -71,6 +73,14 @@ def shorten_caption(caption: str, goal: int, measure: Callable[[str], int]) -> s
             if measure(result) <= goal:
                 return result
     return trim_to_limit(value, goal, measure)
+
+
+def without_markup(target: dict) -> dict[str, str]:
+    """The text fields of a channel version that carry HTML tags, as plain text ({} = nothing to clean).
+
+    X refuses such a post without saying why; other networks show the tags or drop them."""
+    return {name: plain_from_markup(str(target.get(name) or "")) for name in ("caption", "title", "first_comment")
+            if has_markup(str(target.get(name) or ""))}
 
 
 class RepairDraft(BaseModel):

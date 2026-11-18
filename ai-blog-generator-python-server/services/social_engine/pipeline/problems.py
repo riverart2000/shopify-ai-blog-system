@@ -256,6 +256,12 @@ async def _requeue(store_id: str, post: dict, target: dict, when: int, *, from_s
     return True
 
 
+def _has_markup(target: dict) -> bool:
+    from ..ai.text import has_markup
+
+    return any(has_markup(str(target.get(name) or "")) for name in ("caption", "title", "first_comment"))
+
+
 def _text_limit(target: dict, channel: dict | None):
     """(caption limit, how Postiz counts it) for this channel version."""
     from ..ai.text import measure_for
@@ -273,6 +279,9 @@ async def _fix_text(sctx, rules: ProblemRules, target: dict, channel: dict, *, k
     limit, measure = _text_limit(target, channel)
     caption = str(target.get("caption") or "")
     before = measure(caption.strip())
+    if kind == "markup":
+        cleaned = repair.without_markup(target)
+        return (cleaned, "Took the HTML tags out of its text") if cleaned else "its text has no HTML tags to remove"
     if kind == "shorten":
         goal = repair.shorter_goal(caption, limit, measure, rules.fix.shorten_step_percent)
         shorter = repair.shorten_caption(caption, goal, measure)
@@ -330,6 +339,10 @@ async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool 
     if innocent:    # the request was refused because of another network's version
         response, wait_minutes, advice = "retry_later", rules.fix.resend_after_minutes, ""
         cause = f"Postiz refused the whole request because of the {blamed} version; this one was fine"
+    elif rules.fix.strip_markup and _has_markup(target) and not (rule and rule.response == "wait_for_reset"):
+        # A defect in the text we can see ourselves beats whatever the error message says (X gives no reason).
+        response, wait_minutes, advice, fix_kind, rule = "fix_post", 0, "", "markup", None
+        cause = "Its text contained HTML tags, which the network does not accept"
     elif rule is not None:
         fix_kind = rule.fix or ""
         response, wait_minutes, cause, advice = rule.response, int(rule.retry_after_minutes or 0), rule.label, ""
@@ -352,7 +365,7 @@ async def handle_failed_target(store_id: str, target_id: str, *, allow_ai: bool 
         if response == "fix_post" and not allow_ai:
             return {"response": "undecided"}      # the rewrite needs the model: the post.problems job does it
 
-    key = rule.key if rule else ("innocent" if innocent else "ai")
+    key = rule.key if rule else ("innocent" if innocent else "markup" if fix_kind == "markup" else "ai")
     if response not in (*_RETRY_RESPONSES, "fix_post"):
         await _note_once(store_id, post, note_key,
                          f"{provider} post needs you: {cause}{(' ' + advice) if advice else ''}", level="error")
@@ -455,6 +468,44 @@ async def handle_backlog(store_id: str, *, days: int, provider: str = "") -> dic
 # Look ahead: move what is about to be refused
 # ---------------------------------------------------------------------------
 
+async def _clean_scheduled_markup(store_id: str, targets: list[dict]) -> int:
+    """Posts waiting in Postiz whose text carries HTML tags, on networks known to refuse that: the text is
+    cleaned and the post sent again for the same time, before it fails."""
+    if not targets:
+        return 0
+    from ..ai import repair
+    from ..publishers import get_publisher
+
+    sctx = await load_store_context(store_id)
+    publisher = get_publisher(sctx, correlation_id=f"markup:{store_id}")
+    cleaned = 0
+    try:
+        for target in targets:
+            post = await post_store.get_post(store_id, target["post_id"], with_children=False)
+            changed = repair.without_markup(target)
+            if not post or not changed:
+                continue
+            try:
+                await publisher.delete_post(target["external_id"])
+            except SocialEngineError as exc:
+                await record(store_id, "post", target["post_id"],
+                             f"Could not clean the {target['provider']} post's text before it goes out: {exc.message}",
+                             level="warning", stage="problem")
+                continue
+            await post_store.update_target(target["id"], **changed)
+            if not await _requeue(store_id, post, target, int(target["scheduled_at"]), from_status="scheduled", count=None):
+                continue
+            cleaned += 1
+            await record(store_id, "post", target["post_id"],
+                         f"{target['provider']}: took HTML tags out of its text before it goes out "
+                         f"({_local(int(target['scheduled_at']), ZoneInfo(sctx.settings.schedule.timezone))}); "
+                         "the network refuses posts that carry them.",
+                         level="info", stage="problem", data={"rule": "markup", "before": {k: target.get(k) for k in changed}})
+    finally:
+        await publisher.aclose()
+    return cleaned
+
+
 async def protect_scheduled(store_id: str) -> dict[str, Any]:
     """Move posts waiting in Postiz at a time their network's allowance is known not to cover."""
     rules = load_rules()
@@ -466,8 +517,12 @@ async def protect_scheduled(store_id: str) -> dict[str, Any]:
     at_risk = [t for t in scheduled if t.get("external_id") and t["channel_id"] in windows
                and not windows[t["channel_id"]].allows(_utc(t["scheduled_at"]))]
     relaxed = await relax_windows(now)
+    cleaned = await _clean_scheduled_markup(store_id, [
+        t for t in scheduled if t.get("external_id") and t["provider"] in rules.fix.clean_scheduled_markup_for
+        and t not in at_risk and _has_markup(t)
+    ])
     if not at_risk:
-        return {"moved": 0, "relaxed": relaxed}
+        return {"moved": 0, "relaxed": relaxed, "cleaned": cleaned}
 
     from ..publishers import get_publisher
 
@@ -527,4 +582,4 @@ async def protect_scheduled(store_id: str) -> dict[str, Any]:
             )
     finally:
         await publisher.aclose()
-    return {"moved": moved, "at_risk": len(at_risk), "relaxed": relaxed}
+    return {"moved": moved, "at_risk": len(at_risk), "relaxed": relaxed, "cleaned": cleaned}

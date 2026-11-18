@@ -36,7 +36,7 @@ from .guard import CLAIM_CODES, check_captions
 from .llm import get_router
 from .text import (
     URL_RE, extract_hashtags, limit_emojis, measure_for, normalise_hashtag, normalise_hashtags, remove_link_in_bio,
-    remove_terms, remove_urls, strip_emojis, strip_html, tidy, trim_to_limit, truncate_words,
+    plain_from_markup, remove_terms, remove_urls, strip_emojis, strip_html, tidy, trim_to_limit, truncate_words,
 )
 
 logger = logging.getLogger("ai_blog_server.social_engine.ai")
@@ -70,7 +70,7 @@ def _as_text(value: Any) -> str:
         return " ".join(_as_text(item) for item in value)
     if isinstance(value, dict):
         return _as_text(value.get("text") or value.get("caption") or "")
-    return str(value)
+    return plain_from_markup(str(value))     # some writers answer in HTML (<p>…</p>); a caption is plain text
 
 
 class ChannelDraft(BaseModel):
