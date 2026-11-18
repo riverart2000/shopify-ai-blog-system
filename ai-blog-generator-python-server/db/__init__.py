@@ -51,6 +51,9 @@ from .seo_growth import (
     upsert_backlink_prospect, list_backlink_prospects, delete_backlink_prospect,
     get_stores_due_for_seo_growth, fail_interrupted_seo_growth_runs,
 )
+from .seo_health import (
+    set_index_status, list_index_status, forget_index_status, add_health_run, list_health_runs, health_run_before,
+)
 from .seo_refresh import (
     record_seo_refresh, list_seo_refreshes, get_seo_refresh, mark_seo_refresh_restored,
 )
@@ -108,6 +111,8 @@ __all__ = [
     "upsert_backlink_prospect", "list_backlink_prospects", "delete_backlink_prospect",
     "get_stores_due_for_seo_growth", "fail_interrupted_seo_growth_runs",
     # SEO repairs
+    "set_index_status", "list_index_status", "forget_index_status", "add_health_run", "list_health_runs",
+    "health_run_before",
     "record_seo_refresh", "list_seo_refreshes", "get_seo_refresh", "mark_seo_refresh_restored",
     "create_seo_repair_job", "get_latest_seo_repair_job", "get_seo_repair_job",
     "update_seo_repair_job", "begin_seo_repair_phase",

@@ -292,6 +292,27 @@ CREATE TABLE IF NOT EXISTS seo_backlink_prospects (
 CREATE INDEX IF NOT EXISTS idx_seo_backlink_prospects_store
     ON seo_backlink_prospects(store_id, status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS seo_index_status (
+    store_id        TEXT NOT NULL,
+    path            TEXT NOT NULL,
+    coverage_state  TEXT NOT NULL DEFAULT '',
+    verdict         TEXT NOT NULL DEFAULT '',
+    last_crawl      TEXT NOT NULL DEFAULT '',
+    state_since     INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    checked_at      INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+    PRIMARY KEY (store_id, path)
+);
+
+CREATE TABLE IF NOT EXISTS seo_health_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id      TEXT NOT NULL,
+    summary_json  TEXT NOT NULL DEFAULT '{}',
+    created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_seo_health_runs_store
+    ON seo_health_runs(store_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS seo_refreshes (
     id            TEXT PRIMARY KEY,
     store_id      TEXT NOT NULL,

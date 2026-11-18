@@ -71,6 +71,7 @@ from services.intelligence_service import run_scheduled_scans
 from services.seo_growth import run_scheduled_scans as run_scheduled_seo_scans
 from services.seo_growth.orchestrator import _scheduled_tasks as _seo_tasks, launch_background
 from services.seo_growth.search_demand import run_scheduled as run_scheduled_search_demand
+from services.seo_growth.search_health import run_scheduled as run_scheduled_search_health
 from services.system_events import install_logging_handler
 
 _POLL_INTERVAL = 60  # seconds between ticks
@@ -293,6 +294,8 @@ async def _tick() -> None:
         await run_scheduled_seo_scans()
         if not any(task.get_name() == "search-demand" for task in _seo_tasks):
             launch_background(run_scheduled_search_demand(), _seo_tasks).set_name("search-demand")
+        if not any(task.get_name() == "search-health" for task in _seo_tasks):
+            launch_background(run_scheduled_search_health(), _seo_tasks).set_name("search-health")
 
 
 # ---------------------------------------------------------------------------

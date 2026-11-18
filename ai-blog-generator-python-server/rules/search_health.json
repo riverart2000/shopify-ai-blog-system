@@ -1,0 +1,28 @@
+{
+  "about": "The daily check on how Google and Bing see the shop: sitemaps, which blog posts are indexed, crawl errors. What it can put right it does; the rest is reported once as an alert on System Health. Guide: docs/seo-growth/search-health.md",
+
+  "enabled": true,
+  "run_every_hours": 24,
+  "keep_days": 400,
+
+  "google": {
+    "enabled": true,
+    "inspect_posts_per_run": 150,
+    "sitemap_stale_days": 7,
+    "seconds_between_inspections": 0.5
+  },
+
+  "bing": {
+    "enabled": true,
+    "api_key_setting": "bing_webmaster_api_key",
+    "site_setting": "bing_site_url",
+    "resubmit_sitemap_on_error": true,
+    "server_errors_alert_above": 20
+  },
+
+  "alerts": {
+    "indexed_drop_percent": 15,
+    "compare_with_days_ago": 7,
+    "repeat_after_days": 7
+  }
+}
