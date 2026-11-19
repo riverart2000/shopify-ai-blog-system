@@ -26,7 +26,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -96,12 +96,20 @@ class NewPostRules(_Strict):
     max_phrases_in_prompt: int = Field(ge=1, le=100)
 
 
+class ModelRules(_Strict):
+    # "local": the Mac's shared local model (~/.config/local-ai/model.json). "store_setting": the model from the
+    # Models page that the store setting in `store_setting` names. The first that answers is used.
+    try_in_order: list[Literal["local", "store_setting"]] = Field(min_length=1)
+    store_setting: str = Field(min_length=1)
+    local_max_tokens: int = Field(ge=200, le=8000)
+
+
 class SearchDemandRules(_Strict):
     about: str = ""
     enabled: bool
     period_days: int = Field(ge=28, le=365)
     run_every_days: int = Field(ge=1, le=90)
-    model_setting: str = Field(min_length=1)     # the store setting that names the model to use
+    models: ModelRules
     phrases: PhraseRules
     refresh: RefreshRules
     new_posts: NewPostRules
@@ -170,12 +178,61 @@ def passes_word_rules(phrase: str, rules: PhraseRules) -> bool:
     return not any(part.lower() in phrase for part in rules.ignore_containing)
 
 
+class _LocalModel:
+    """The Mac's shared local model, asked through Social Autopilot's client so the two take turns on it."""
+
+    def __init__(self, store_id: str, max_tokens: int) -> None:
+        self.store_id, self.max_tokens = store_id, max_tokens
+
+    async def generate_raw(self, prompt: str, system_prompt: str = "") -> str:
+        from services.social_engine.ai.base import LLMRequest
+        from services.social_engine.ai.llm import primary_provider
+        from services.social_engine.errors import SocialEngineError
+        from services.social_engine.http import CallContext
+        from services.social_engine.settings import load_settings
+
+        ai = (await load_settings(self.store_id)).ai
+        request = LLMRequest(prompt=prompt, system=system_prompt, json_mode=True,
+                             temperature=ai.decision_temperature, max_tokens=self.max_tokens)
+        try:
+            reply = await primary_provider(ai).complete(
+                request, CallContext(store_id=self.store_id), operation="search_demand")
+        except SocialEngineError as exc:
+            raise providers.ProviderError(f"the local model did not answer: {exc}") from exc
+        return reply.text
+
+
+class _FirstToAnswer:
+    """The models in the order of the rules: the next one is asked only when the one before gave no answer."""
+
+    def __init__(self, models: list[tuple[str, Any]]) -> None:
+        self.models = models
+
+    async def generate_raw(self, prompt: str, system_prompt: str = "") -> str:
+        for position, (name, model) in enumerate(self.models):
+            try:
+                return await model.generate_raw(prompt, system_prompt)
+            except (httpx.HTTPError, providers.ProviderError) as exc:
+                if position == len(self.models) - 1:
+                    raise
+                logger.warning("Search demand: %s gave no answer (%s); asking %s.",
+                               name, f"{type(exc).__name__}: {exc}".rstrip(": "), self.models[position + 1][0])
+        raise RuntimeError("No model to ask.")
+
+
 async def _model(store_id: str, rules: SearchDemandRules):
-    model_id = await db.get_store_setting(store_id, rules.model_setting, "")
-    row = await db.get_model(model_id) if model_id else None
-    if not row or row.get("store_id") != store_id:
-        raise RuntimeError(f"No model is set for search demand (store setting '{rules.model_setting}').")
-    return providers.get_text_provider(providers.ModelRecord.from_dict(row))
+    models: list[tuple[str, Any]] = []
+    for source in dict.fromkeys(rules.models.try_in_order):
+        if source == "local":
+            models.append(("the local model", _LocalModel(store_id, rules.models.local_max_tokens)))
+            continue
+        model_id = await db.get_store_setting(store_id, rules.models.store_setting, "")
+        row = await db.get_model(model_id) if model_id else None
+        if row and row.get("store_id") == store_id:
+            models.append((row.get("name") or model_id, providers.get_text_provider(providers.ModelRecord.from_dict(row))))
+    if not models:
+        raise RuntimeError(f"No model is set for search demand (store setting '{rules.models.store_setting}').")
+    return _FirstToAnswer(models)
 
 
 def _json_object(raw: str) -> dict[str, Any]:

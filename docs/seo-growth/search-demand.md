@@ -24,7 +24,10 @@ counts when:
 - with `phrases.ask_model_if_real`, the model agrees a person would type it to find the page it is shown
   with. Each verdict is remembered for `phrases.remember_days`.
 
-The model is the one named by the store setting in `model_setting` (the blog title model).
+The models are asked in the order of `models.try_in_order`; the next is asked only when the one before gave
+no answer. `local` is the Mac's shared local model (`~/.config/local-ai/model.json`, the one Social Autopilot
+uses; the two take turns on it). `store_setting` is the model named by the store setting in
+`models.store_setting` (the blog title model).
 
 ## Refreshing a post
 

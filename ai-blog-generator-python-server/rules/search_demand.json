@@ -4,7 +4,11 @@
   "enabled": true,
   "period_days": 90,
   "run_every_days": 7,
-  "model_setting": "title_gen_model_id",
+  "models": {
+    "try_in_order": ["local", "store_setting"],
+    "store_setting": "title_gen_model_id",
+    "local_max_tokens": 1500
+  },
 
   "phrases": {
     "min_words": 2,

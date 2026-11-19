@@ -225,3 +225,50 @@ async def test_a_model_that_does_not_answer_is_asked_again(world):
     world["model"].generate_raw = flaky
     done = await sd.run_cycle(world["store"])
     assert done["results"][0]["status"] == "applied" and calls["n"] >= 3
+
+
+class _Silent:
+    async def generate_raw(self, prompt, system_prompt=""):
+        raise sd.providers.ProviderError("timed out")
+
+
+class _Answers:
+    def __init__(self):
+        self.asked = 0
+
+    async def generate_raw(self, prompt, system_prompt=""):
+        self.asked += 1
+        return '{"ok": true}'
+
+
+@pytest.mark.asyncio
+async def test_the_next_model_is_asked_only_when_the_first_gives_no_answer():
+    second = _Answers()
+    assert await sd._FirstToAnswer([("first", _Silent()), ("second", second)]).generate_raw("p") == '{"ok": true}'
+    assert second.asked == 1
+    first, spare = _Answers(), _Answers()
+    await sd._FirstToAnswer([("first", first), ("spare", spare)]).generate_raw("p")
+    assert (first.asked, spare.asked) == (1, 0)
+    with pytest.raises(sd.providers.ProviderError):
+        await sd._FirstToAnswer([("only", _Silent())]).generate_raw("p")
+
+
+@pytest.mark.asyncio
+async def test_the_local_model_comes_first_by_the_rules(se_db, monkeypatch):
+    rules = sd.load_rules()
+    assert rules.models.try_in_order[0] == "local"
+    chain = await sd._model(se_db, rules)
+    assert isinstance(chain.models[0][1], sd._LocalModel)
+
+    from services.social_engine.ai import llm
+    from services.social_engine.ai.base import LLMResponse
+    seen = {}
+
+    async def complete(self, request, ctx, *, operation="llm.complete"):
+        seen.update(model=self.model, system=request.system, max_tokens=request.max_tokens, store=ctx.store_id)
+        return LLMResponse(text='{"real": [1]}', model=self.model, provider="gemma")
+
+    monkeypatch.setattr(llm.OpenAICompatibleProvider, "complete", complete)
+    assert await chain.generate_raw("which are real?", "judge") == '{"real": [1]}'
+    assert seen["system"] == "judge" and seen["max_tokens"] == rules.models.local_max_tokens and seen["store"] == se_db
+    assert seen["model"]
